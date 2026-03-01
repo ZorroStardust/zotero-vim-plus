@@ -1406,6 +1406,64 @@ var ZoteroVim = {
   },
 
   /**
+   * Collect client rects for exactly the selected text in `range`, avoiding
+   * the spurious full-element rects that range.getClientRects() produces when
+   * the selection spans multiple PDF.js text layers (one per page).
+   *
+   * Strategy: walk every text node covered by the range, create a precise
+   * sub-range for each one's selected portion, and collect those rects.
+   * Text-node rects are always tight bounds around actual glyphs.
+   */
+  _getRangeTextRects(range, doc) {
+    const rects = [];
+    const startNode = range.startContainer;
+    const endNode   = range.endContainer;
+
+    // Fast path: single text node.
+    if (startNode === endNode && startNode.nodeType === 3) {
+      for (const r of range.getClientRects()) {
+        if (r.width > 1 && r.height > 1) rects.push(r);
+      }
+      return rects;
+    }
+
+    // Walk all text nodes under the common ancestor, collecting rects for
+    // the selected portion of each one.
+    const root   = range.commonAncestorContainer;
+    const walker = doc.createTreeWalker(
+      root.nodeType === 3 ? root.parentNode : root,
+      0x4,  // SHOW_TEXT
+      null
+    );
+
+    let started = false;
+    let node;
+    while ((node = walker.nextNode())) {
+      if (!started) {
+        if (node !== startNode) continue;
+        started = true;
+      }
+
+      const startOff = (node === startNode) ? range.startOffset : 0;
+      const endOff   = (node === endNode)   ? range.endOffset   : node.length;
+
+      if (startOff < endOff) {
+        try {
+          const sub = doc.createRange();
+          sub.setStart(node, startOff);
+          sub.setEnd(node, endOff);
+          for (const r of sub.getClientRects()) {
+            if (r.width > 1 && r.height > 1) rects.push(r);
+          }
+        } catch (_) {}
+      }
+
+      if (node === endNode) break;
+    }
+    return rects;
+  },
+
+  /**
    * Walk the text-layer tree to find the next or previous text node adjacent
    * to `node`.  Used by _extendByChar to cross span boundaries.
    */
@@ -1548,9 +1606,9 @@ var ZoteroVim = {
     }
     try {
       const range = sel.getRangeAt(0);
-      // Snapshot everything synchronously before any await.
-      const clientRects = Array.from(range.getClientRects())
-        .filter(r => r.width > 1 && r.height > 1);
+      // Use text-node-level rects to avoid the spurious full-page rects that
+      // range.getClientRects() emits for cross-page selections.
+      const clientRects = this._getRangeTextRects(range, pdfWin.document);
       Zotero.debug('[ZoteroVim] _createAnnotation: clientRects=' + clientRects.length);
       if (clientRects.length === 0) {
         this._showStatus(state, '✗ no rects');
@@ -1560,132 +1618,120 @@ var ZoteroVim = {
       const text = sel.toString().normalize('NFKC').replace(/\n/g, ' ').replace(/ {2,}/g, ' ').trim();
       Zotero.debug('[ZoteroVim] _createAnnotation: text="' + text.slice(0, 60) + '"');
 
-      // Walk up from the selection start to find the .page element.
-      let node = range.startContainer;
-      if (node.nodeType === 3) node = node.parentElement;
-      let pageEl = node;
-      while (pageEl && !pageEl.dataset?.pageNumber) {
-        pageEl = pageEl.parentElement;
-      }
-      if (!pageEl) {
-        Zotero.debug('[ZoteroVim] _createAnnotation: no page element found');
-        this._showStatus(state, '✗ no page el');
-        return;
-      }
-
-      const pageIndex  = parseInt(pageEl.dataset.pageNumber) - 1;
-      Zotero.debug('[ZoteroVim] _createAnnotation: pageIndex=' + pageIndex);
-
-      const pdfViewer  = pdfWin.PDFViewerApplication?.pdfViewer;
-      Zotero.debug('[ZoteroVim] _createAnnotation: pdfViewer=' + !!pdfViewer);
-      if (!pdfViewer) {
-        this._showStatus(state, '✗ no pdfViewer');
-        return;
-      }
-
-      // PDF.js exposes page views in ._pages or via getPageView()
-      const pageView = pdfViewer._pages?.[pageIndex] ??
-                       pdfViewer.getPageView?.(pageIndex);
-      Zotero.debug('[ZoteroVim] _createAnnotation: pageView=' + !!pageView + ' viewport=' + !!(pageView?.viewport));
-
-      let scale, pdfPageH;
-      if (pageView?.viewport) {
-        scale    = pageView.viewport.scale;
-        pdfPageH = pageView.viewport.height / scale;
-        Zotero.debug('[ZoteroVim] _createAnnotation: using viewport scale=' + scale + ' pdfPageH=' + pdfPageH);
-      } else {
-        // Async fallback: get page dimensions from the raw PDF document.
-        Zotero.debug('[ZoteroVim] _createAnnotation: no viewport, trying pdfDocument.getPage()');
-        try {
-          const pdfDoc = pdfWin.PDFViewerApplication?.pdfDocument;
-          if (!pdfDoc) {
-            Zotero.debug('[ZoteroVim] _createAnnotation: pdfDocument is null');
-            this._showStatus(state, '✗ no pdfDocument');
-            return;
-          }
-          const pdfPage = await pdfDoc.getPage(pageIndex + 1);
-          const vp      = pdfPage.getViewport({ scale: 1 });
-          pdfPageH      = vp.height;
-          // Use canvas width for accurate scale (avoids page-div padding).
-          const canvas    = pageEl.querySelector('canvas');
-          const renderedW = canvas
-            ? canvas.getBoundingClientRect().width
-            : pageEl.getBoundingClientRect().width;
-          scale = renderedW / vp.width;
-          Zotero.debug('[ZoteroVim] _createAnnotation: async scale=' + scale + ' pdfPageH=' + pdfPageH);
-        } catch (e) {
-          Zotero.debug('[ZoteroVim] _createAnnotation: cannot get viewport: ' + e);
-          this._showStatus(state, '✗ viewport err');
-          return;
-        }
-      }
-
-      const pageRect = pageEl.getBoundingClientRect();
-      Zotero.debug('[ZoteroVim] _createAnnotation: scale=' + scale + ' pdfPageH=' + pdfPageH +
-                   ' pageRect=[' + [pageRect.left, pageRect.top, pageRect.right, pageRect.bottom].map(v => v.toFixed(1)).join(',') + ']');
-
-      if (!isFinite(scale) || scale <= 0 || !isFinite(pdfPageH) || pdfPageH <= 0) {
-        this._showStatus(state, '✗ bad scale=' + scale.toFixed(3));
-        return;
-      }
-
-      // Convert screen rects → PDF coordinate rects [x1,y1,x2,y2].
-      // PDF origin is bottom-left; DOM origin is top-left.
-      // If PDF.js exposes convertToPdfPoint use it (handles rotation/transforms);
-      // otherwise compute manually.
-      const vp = pageView?.viewport;
-      const pdfRects = clientRects.map(r => {
-        let x1, y1, x2, y2;
-        if (vp?.convertToPdfPoint) {
-          // convertToPdfPoint takes CSS px relative to page top-left corner.
-          [x1, y2] = vp.convertToPdfPoint(r.left - pageRect.left, r.top    - pageRect.top);
-          [x2, y1] = vp.convertToPdfPoint(r.right- pageRect.left, r.bottom - pageRect.top);
-        } else {
-          x1 = (r.left  - pageRect.left) / scale;
-          y1 = pdfPageH - (r.bottom - pageRect.top) / scale;
-          x2 = (r.right  - pageRect.left) / scale;
-          y2 = pdfPageH - (r.top    - pageRect.top) / scale;
-        }
-        // Ensure x1≤x2 and y1≤y2 (y increases upward in PDF space).
-        return [
-          Math.round(Math.min(x1, x2) * 1000) / 1000,
-          Math.round(Math.min(y1, y2) * 1000) / 1000,
-          Math.round(Math.max(x1, x2) * 1000) / 1000,
-          Math.round(Math.max(y1, y2) * 1000) / 1000,
-        ];
-      });
-
-      Zotero.debug('[ZoteroVim] _createAnnotation: first pdfRect=' + JSON.stringify(pdfRects[0]));
+      const pdfViewer = pdfWin.PDFViewerApplication?.pdfViewer;
+      if (!pdfViewer) { this._showStatus(state, '✗ no pdfViewer'); return; }
 
       const attachment = Zotero.Items.get(reader.itemID);
-      if (!attachment) {
-        Zotero.debug('[ZoteroVim] _createAnnotation: attachment not found for itemID=' + reader.itemID);
-        this._showStatus(state, '✗ no attachment');
-        return;
-      }
+      if (!attachment) { this._showStatus(state, '✗ no attachment'); return; }
 
-      // Validate and clip rects to page bounds.
-      const validRects = pdfRects.filter(r =>
-        r.length === 4 && r.every(v => isFinite(v)) &&
-        r[2] > r[0] && r[3] > r[1]
+      // ── Group client rects by page ─────────────────────────────────────────
+      // Match each screen rect to the .page element whose bounding rect
+      // contains the rect's centre-y.
+      const allPageEls = Array.from(
+        pdfWin.document.querySelectorAll('.page[data-page-number]')
       );
-      if (!validRects.length) {
-        Zotero.debug('[ZoteroVim] _createAnnotation: no valid rects: ' + JSON.stringify(pdfRects));
-        this._showStatus(state, '✗ bad rects (see debug)');
+      const pageBounds = allPageEls.map(el => ({
+        el,
+        pageIndex: parseInt(el.dataset.pageNumber) - 1,
+        bounds: el.getBoundingClientRect(),
+      }));
+      const pageGroupMap = new Map();
+      for (const rect of clientRects) {
+        const cy = (rect.top + rect.bottom) / 2;
+        for (const { el, pageIndex, bounds } of pageBounds) {
+          if (cy >= bounds.top && cy <= bounds.bottom) {
+            if (!pageGroupMap.has(pageIndex)) pageGroupMap.set(pageIndex, { el, rects: [] });
+            pageGroupMap.get(pageIndex).rects.push(rect);
+            break;
+          }
+        }
+      }
+      // Sort in document order; Zotero supports at most 2 pages per annotation.
+      const pageGroups = [...pageGroupMap.entries()]
+        .sort(([a], [b]) => a - b)
+        .slice(0, 2)
+        .map(([pageIndex, { el, rects }]) => ({ pageIndex, el, rects }));
+
+      if (pageGroups.length === 0) { this._showStatus(state, '✗ no page el'); return; }
+      Zotero.debug('[ZoteroVim] _createAnnotation: spanning ' + pageGroups.length + ' page(s)');
+
+      // ── Convert screen rects → PDF coords for one page group ──────────────
+      const toPdfRects = async ({ pageIndex, el: pageEl, rects: pageRects }) => {
+        const pageView = pdfViewer._pages?.[pageIndex] ?? pdfViewer.getPageView?.(pageIndex);
+        let scale, pdfPageH;
+        if (pageView?.viewport) {
+          scale    = pageView.viewport.scale;
+          pdfPageH = pageView.viewport.height / scale;
+        } else {
+          const pdfDoc = pdfWin.PDFViewerApplication?.pdfDocument;
+          if (!pdfDoc) return [];
+          try {
+            const pdfPage = await pdfDoc.getPage(pageIndex + 1);
+            const vp      = pdfPage.getViewport({ scale: 1 });
+            pdfPageH      = vp.height;
+            const canvas    = pageEl.querySelector('canvas');
+            const renderedW = canvas
+              ? canvas.getBoundingClientRect().width
+              : pageEl.getBoundingClientRect().width;
+            scale = renderedW / vp.width;
+          } catch (e) {
+            Zotero.debug('[ZoteroVim] _createAnnotation: viewport err page ' + pageIndex + ': ' + e);
+            return [];
+          }
+        }
+        if (!isFinite(scale) || scale <= 0 || !isFinite(pdfPageH) || pdfPageH <= 0) return [];
+        const pageRect = pageEl.getBoundingClientRect();
+        const vp       = pageView?.viewport;
+        return pageRects.map(r => {
+          let x1, y1, x2, y2;
+          if (vp?.convertToPdfPoint) {
+            [x1, y2] = vp.convertToPdfPoint(r.left  - pageRect.left, r.top    - pageRect.top);
+            [x2, y1] = vp.convertToPdfPoint(r.right - pageRect.left, r.bottom - pageRect.top);
+          } else {
+            x1 = (r.left  - pageRect.left) / scale;
+            y1 = pdfPageH - (r.bottom - pageRect.top) / scale;
+            x2 = (r.right - pageRect.left) / scale;
+            y2 = pdfPageH - (r.top    - pageRect.top) / scale;
+          }
+          return [
+            Math.round(Math.min(x1, x2) * 1000) / 1000,
+            Math.round(Math.min(y1, y2) * 1000) / 1000,
+            Math.round(Math.max(x1, x2) * 1000) / 1000,
+            Math.round(Math.max(y1, y2) * 1000) / 1000,
+          ];
+        }).filter(r => r[2] > r[0] && r[3] > r[1]);
+      };
+
+      // ── Build a single annotation matching Zotero's format ─────────────────
+      // Single-page:  { pageIndex, rects }
+      // Two-page:     { pageIndex, rects, nextPageRects }  (Zotero's own format)
+      const firstGroup    = pageGroups[0];
+      const firstPdfRects = await toPdfRects(firstGroup);
+      if (firstPdfRects.length === 0) {
+        this._showStatus(state, '✗ bad rects');
         return;
       }
 
-      // sortIndex: pageIndex | yFromPageTop | xLeft (Zotero convention, capped to digit widths)
-      const yTop  = Math.min(999999, Math.max(0, Math.round((pdfPageH - validRects[0][3]) * 100)));
-      const xLeft = Math.min(99999,  Math.max(0, Math.round(validRects[0][0] * 100)));
+      const position = { pageIndex: firstGroup.pageIndex, rects: firstPdfRects };
+
+      if (pageGroups.length === 2) {
+        const nextPdfRects = await toPdfRects(pageGroups[1]);
+        if (nextPdfRects.length > 0) position.nextPageRects = nextPdfRects;
+      }
+
+      // sortIndex from the first rect on the first page
+      const pdfPageH0 = (() => {
+        const pv = pdfViewer._pages?.[firstGroup.pageIndex] ?? pdfViewer.getPageView?.(firstGroup.pageIndex);
+        return pv?.viewport ? pv.viewport.height / pv.viewport.scale : 0;
+      })();
+      const yTop  = Math.min(999999, Math.max(0, Math.round((pdfPageH0 - firstPdfRects[0][3]) * 100)));
+      const xLeft = Math.min(99999,  Math.max(0, Math.round(firstPdfRects[0][0] * 100)));
       const sortIndex =
-        String(pageIndex).padStart(5, '0') + '|' +
+        String(firstGroup.pageIndex).padStart(5, '0') + '|' +
         String(yTop).padStart(6, '0') + '|' +
         String(xLeft).padStart(5, '0');
 
-      Zotero.debug('[ZoteroVim] _createAnnotation: creating item libraryID=' + attachment.libraryID + ' parentID=' + attachment.id);
       const annotItem = new Zotero.Item('annotation');
-      // libraryID must be set before parentID
       annotItem.libraryID            = attachment.libraryID;
       annotItem.parentID             = attachment.id;
       annotItem.annotationType       = type;
@@ -1694,11 +1740,9 @@ var ZoteroVim = {
       annotItem.annotationComment    = '';
       annotItem.annotationIsExternal = false;
       annotItem.annotationSortIndex  = sortIndex;
-      annotItem.annotationPosition   = JSON.stringify({ pageIndex, rects: validRects });
+      annotItem.annotationPosition   = JSON.stringify(position);
 
       Zotero.debug('[ZoteroVim] _createAnnotation: pos=' + annotItem.annotationPosition);
-      Zotero.debug('[ZoteroVim] _createAnnotation: sort=' + annotItem.annotationSortIndex);
-      Zotero.debug('[ZoteroVim] _createAnnotation: calling saveTx()');
       try {
         await annotItem.saveTx();
       } catch (saveErr) {
@@ -1709,8 +1753,7 @@ var ZoteroVim = {
       }
 
       Zotero.debug('[ZoteroVim] Created ' + type + ' id=' + annotItem.id +
-                   ' page=' + (pageIndex + 1) +
-                   ' rects=' + pdfRects.length + ' text="' + text.slice(0, 40) + '"');
+                   ' pages=' + pageGroups.map(g => g.pageIndex + 1).join('+'));
 
       state.lastAnnotationKey = annotItem.key;
       this._showStatus(state, '✓ annotated', 1200);

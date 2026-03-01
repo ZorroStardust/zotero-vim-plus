@@ -49,9 +49,13 @@ var ZoteroVim = {
     'normal:dd':      'deleteAnnotation',
     'normal:y':       'yankAnnotation',
     'normal:yy':      'yankAnnotationComment',
+    'normal:zy':      'recolorYellow',
+    'normal:zr':      'recolorRed',
+    'normal:zg':      'recolorGreen',
+    'normal:zb':      'recolorBlue',
+    'normal:zp':      'recolorPurple',
     'normal:zt':      'scrollTop',
     'normal:zz':      'scrollCenter',
-    'normal:zb':      'scrollBottom',
     'normal:v':       'enterVisual',
     'normal:i':       'enterInsert',
     'normal:escape':  'clearSearch',
@@ -564,27 +568,35 @@ var ZoteroVim = {
     const scrollBy  = (dy) => { try { getContainer()?.scrollBy(0, dy); } catch (_) {} };
     const viewportH = () => { try { return getContainer()?.clientHeight || 600; } catch (_) { return 600; } };
 
+    // Scrolling / page navigation clears any active annotation selection so that
+    // zb (recolorBlue) correctly falls through to the scroll-to-bottom path.
+    const clearAnnotation = () => { state.lastAnnotationKey = null; };
+
     switch (action) {
-      case 'scrollDown':    scrollBy(step);                         break;
-      case 'scrollUp':      scrollBy(-step);                        break;
-      case 'halfPageDown':  scrollBy(Math.round(viewportH() / 2)); break;
-      case 'halfPageUp':    scrollBy(-Math.round(viewportH() / 2));break;
-      case 'fullPageDown':  scrollBy(viewportH());                  break;
-      case 'fullPageUp':    scrollBy(-viewportH());                 break;
-      case 'scrollTop':    this._scrollToPagePosition(pdfWin, 'top');    break;
-      case 'scrollCenter': this._scrollToPagePosition(pdfWin, 'center'); break;
-      case 'scrollBottom': this._scrollToPagePosition(pdfWin, 'bottom'); break;
+      case 'scrollDown':    clearAnnotation(); scrollBy(step);                         break;
+      case 'scrollUp':      clearAnnotation(); scrollBy(-step);                        break;
+      case 'halfPageDown':  clearAnnotation(); scrollBy(Math.round(viewportH() / 2)); break;
+      case 'halfPageUp':    clearAnnotation(); scrollBy(-Math.round(viewportH() / 2));break;
+      case 'fullPageDown':  clearAnnotation(); scrollBy(viewportH());                  break;
+      case 'fullPageUp':    clearAnnotation(); scrollBy(-viewportH());                 break;
+      case 'scrollTop':    clearAnnotation(); this._scrollToPagePosition(pdfWin, 'top');    break;
+      case 'scrollCenter': clearAnnotation(); this._scrollToPagePosition(pdfWin, 'center'); break;
+      case 'scrollBottom': clearAnnotation(); this._scrollToPagePosition(pdfWin, 'bottom'); break;
 
       case 'prevPage':
+        clearAnnotation();
         try { reader._internalReader.navigateToPreviousPage(); } catch (e) {
           Zotero.debug('[ZoteroVim] prevPage: ' + e); } break;
       case 'nextPage':
+        clearAnnotation();
         try { reader._internalReader.navigateToNextPage(); } catch (e) {
           Zotero.debug('[ZoteroVim] nextPage: ' + e); } break;
       case 'firstPage':
+        clearAnnotation();
         try { reader._internalReader.navigateToFirstPage(); } catch (e) {
           Zotero.debug('[ZoteroVim] firstPage: ' + e); } break;
       case 'lastPage':
+        clearAnnotation();
         try { reader._internalReader.navigateToLastPage(); } catch (e) {
           Zotero.debug('[ZoteroVim] lastPage: ' + e); } break;
 
@@ -592,7 +604,18 @@ var ZoteroVim = {
       case 'prevAnnotation':  this._navigateAnnotation(state, reader, -1); break;
       case 'nextAnnotation':  this._navigateAnnotation(state, reader, +1); break;
       case 'editAnnotation':    this._editAnnotation(state, reader);         break;
-      case 'deleteAnnotation':  this._deleteAnnotation(state, reader);      break;
+      case 'deleteAnnotation':  this._deleteAnnotation(state, reader);                        break;
+      case 'recolorYellow':   this._recolorAnnotation(state, reader, this.COLORS.yellow); break;
+      case 'recolorRed':      this._recolorAnnotation(state, reader, this.COLORS.red);    break;
+      case 'recolorGreen':    this._recolorAnnotation(state, reader, this.COLORS.green);  break;
+      case 'recolorBlue':
+        if (state.lastAnnotationKey) {
+          this._recolorAnnotation(state, reader, this.COLORS.blue);
+        } else {
+          this._scrollToPagePosition(pdfWin, 'bottom');
+        }
+        break;
+      case 'recolorPurple':   this._recolorAnnotation(state, reader, this.COLORS.purple); break;
       case 'yankAnnotation':        this._yankAnnotation(state, reader);          break;
       case 'yankAnnotationComment': this._yankAnnotationComment(state, reader);  break;
       case 'yankParagraph':         this._yankParagraph(state, pdfWin);           break;
@@ -1479,7 +1502,7 @@ var ZoteroVim = {
       item.parentID             = attachment.id;
       item.annotationType       = type;
       if (color) item.annotationColor = color;
-      item.annotationText       = ann.text  || '';
+      item.annotationText       = (ann.text || '').normalize('NFKC').replace(/\n/g, ' ').replace(/ {2,}/g, ' ').trim();
       item.annotationComment    = '';
       item.annotationIsExternal = false;
       if (ann.sortIndex) item.annotationSortIndex = ann.sortIndex;
@@ -1488,10 +1511,19 @@ var ZoteroVim = {
 
       await item.saveTx();
       Zotero.debug('[ZoteroVim] Created ' + type + ' id=' + item.id + ' color=' + color);
+      state.lastAnnotationKey = item.key;
       this._showStatus(state, '✓ annotated', 1200);
       setTimeout(() => {
         this._setMode(state, 'normal');
         try { state.pdfWin?.focus(); } catch (_) {}
+        try {
+          const Cu = Components.utils;
+          const readerWin = reader._iframeWindow;
+          const ir = reader._internalReader;
+          if (typeof ir?.setSelectedAnnotations === 'function' && readerWin) {
+            ir.setSelectedAnnotations(Cu.cloneInto([item.key], readerWin));
+          }
+        } catch (_) {}
       }, 100);
     } catch (e) {
       Zotero.debug('[ZoteroVim] _createAnnotationFromParams error: ' + e);
@@ -1525,7 +1557,7 @@ var ZoteroVim = {
         return;
       }
 
-      const text = sel.toString();
+      const text = sel.toString().normalize('NFKC').replace(/\n/g, ' ').replace(/ {2,}/g, ' ').trim();
       Zotero.debug('[ZoteroVim] _createAnnotation: text="' + text.slice(0, 60) + '"');
 
       // Walk up from the selection start to find the .page element.
@@ -1680,11 +1712,20 @@ var ZoteroVim = {
                    ' page=' + (pageIndex + 1) +
                    ' rects=' + pdfRects.length + ' text="' + text.slice(0, 40) + '"');
 
+      state.lastAnnotationKey = annotItem.key;
       this._showStatus(state, '✓ annotated', 1200);
       try { pdfWin.getSelection()?.removeAllRanges(); } catch (_) {}
       setTimeout(() => {
         this._setMode(state, 'normal');
         try { pdfWin.focus(); } catch (_) {}
+        try {
+          const Cu = Components.utils;
+          const readerWin = reader._iframeWindow;
+          const ir = reader._internalReader;
+          if (typeof ir?.setSelectedAnnotations === 'function' && readerWin) {
+            ir.setSelectedAnnotations(Cu.cloneInto([annotItem.key], readerWin));
+          }
+        } catch (_) {}
       }, 100);
     } catch (e) {
       Zotero.debug('[ZoteroVim] _createAnnotationFromSelection error: ' + e);
@@ -2058,6 +2099,32 @@ var ZoteroVim = {
       Zotero.debug('[ZoteroVim] deleted annotation key=' + key);
     } catch (e) {
       Zotero.debug('[ZoteroVim] _deleteAnnotation error: ' + e);
+      this._showStatus(state, '✗ ' + String(e).slice(0, 35), 3000);
+    }
+  },
+
+  /**
+   * Change the colour of the currently-selected annotation (zy/zr/zg/zb/zp in
+   * normal mode after [ / ] navigation).
+   */
+  async _recolorAnnotation(state, reader, color) {
+    const key = state.lastAnnotationKey;
+    if (!key) { this._showStatus(state, '✗ navigate first with [ / ]', 2000); return; }
+    try {
+      const attachment = Zotero.Items.get(reader.itemID);
+      if (!attachment) { this._showStatus(state, '✗ no attachment', 2000); return; }
+
+      const target = attachment.getAnnotations().find(a => a.key === key);
+      if (!target) { this._showStatus(state, '✗ annotation not found', 2000); return; }
+
+      const colorName = Object.entries(this.COLORS).find(([, v]) => v === color)?.[0] || color;
+      target.annotationColor = color;
+      await target.saveTx();
+
+      this._showStatus(state, '✓ → ' + colorName, 1200);
+      Zotero.debug('[ZoteroVim] recolorAnnotation key=' + key + ' color=' + color);
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] _recolorAnnotation error: ' + e);
       this._showStatus(state, '✗ ' + String(e).slice(0, 35), 3000);
     }
   },

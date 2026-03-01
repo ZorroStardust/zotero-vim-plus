@@ -12,13 +12,13 @@
   "browser_specific_settings": {
     "gecko": {
       "id": "zotero-vim@zotero-vim",
-      "update_url": "https://example.com/zotero-vim/updates.json"
+      "update_url": "https://codeberg.org/alexfink/zotero-vim/raw/branch/main/updates.json"
     }
   },
   "applications": {
     "zotero": {
       "id": "zotero-vim@zotero-vim",
-      "update_url": "https://example.com/zotero-vim/updates.json",
+      "update_url": "https://codeberg.org/alexfink/zotero-vim/raw/branch/main/updates.json",
       "strict_min_version": "7.999",
       "strict_max_version": "9.*"
     }

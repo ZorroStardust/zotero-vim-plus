@@ -3,6 +3,8 @@
 Vim-style keybindings for the Zotero 7/8 PDF reader. Navigate, scroll,
 annotate, and copy text without touching the mouse.
 
+Vibe coded with Claude Sonnet 4.5.
+
 ---
 
 ## Contents
@@ -163,6 +165,11 @@ highlighted in the PDF and scrolled to in the sidebar.
 | `y` | Copy the annotation's **highlighted text** to the clipboard |
 | `yy` | Copy the annotation's **comment text** to the clipboard |
 | `dd` | Delete the selected annotation |
+| `zy` | Change annotation colour → Yellow |
+| `zr` | Change annotation colour → Red |
+| `zg` | Change annotation colour → Green |
+| `zb` | Change annotation colour → Blue |
+| `zp` | Change annotation colour → Purple |
 
 > **Tip:** `y` vs `yy` — the plugin waits up to 800 ms for the second `y`
 > before firing the single-`y` action. Typing `yy` quickly always wins.
@@ -304,6 +311,11 @@ Open **Edit → Preferences** (macOS: **Zotero → Settings**) and navigate to t
 | `nextAnnotation` | Jump to next annotation |
 | `editAnnotation` | Focus annotation comment field (Enter) |
 | `deleteAnnotation` | Delete selected annotation |
+| `recolorYellow` | Change selected annotation colour to Yellow |
+| `recolorRed` | Change selected annotation colour to Red |
+| `recolorGreen` | Change selected annotation colour to Green |
+| `recolorBlue` | Change selected annotation colour to Blue |
+| `recolorPurple` | Change selected annotation colour to Purple |
 | `yankAnnotation` | Copy annotation highlighted text |
 | `yankAnnotationComment` | Copy annotation comment text |
 | `enterVisual` | Enter Visual mode |

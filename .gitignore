@@ -10,6 +10,7 @@ zotero-vim.xpi
 # Editor directories and files
 .idea/
 .vscode/
+.claude/
 *.swp
 *.swo
 *~

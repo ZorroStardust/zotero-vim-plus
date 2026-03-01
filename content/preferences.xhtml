@@ -1,0 +1,140 @@
+<vbox
+  xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
+  xmlns:html="http://www.w3.org/1999/xhtml"
+  id="zotero-vim-prefs"
+  style="padding: 16px; min-width: 500px;"
+>
+
+  <html:style>
+    /* ── Keybinding table mode-row colours ─── */
+    #zv-bindings-table tbody tr[data-mode="normal"] { background-color: #e8f0fe; }
+    #zv-bindings-table tbody tr[data-mode="visual"] { background-color: #e8f5e9; }
+    #zv-bindings-table tbody tr[data-mode="insert"] { background-color: #fff8e1; }
+
+    @media (prefers-color-scheme: dark) {
+      /* Table header */
+      #zv-bindings-table thead tr {
+        background-color: #2c2c2c !important;
+        color: #d0d0d0 !important;
+        border-bottom-color: #555 !important;
+      }
+      /* Mode rows — dark tints that keep text readable */
+      #zv-bindings-table tbody tr[data-mode="normal"] {
+        background-color: #1e2d50 !important;
+        color: #c8d8ff;
+      }
+      #zv-bindings-table tbody tr[data-mode="visual"] {
+        background-color: #1a3020 !important;
+        color: #b8e8c0;
+      }
+      #zv-bindings-table tbody tr[data-mode="insert"] {
+        background-color: #332800 !important;
+        color: #e8d870;
+      }
+      /* Table border and generic text */
+      #zv-bindings-table {
+        border-color: #555;
+        color: #d0d0d0;
+      }
+      /* Scrollable container border */
+      #zv-bindings-table { border-collapse: collapse; }
+      /* Help text paragraphs */
+      #zotero-vim-prefs html|p { color: #999; }
+    }
+  </html:style>
+
+  <!-- ── Modes ──────────────────────────────────────────────────────── -->
+  <groupbox>
+    <label value="Modes" style="font-weight: bold;" />
+
+    <hbox align="center" style="margin-top: 8px;">
+      <checkbox id="zv-visual-enabled"
+        label="Enable Visual mode (v — select text and annotate)" />
+    </hbox>
+    <hbox align="center" style="margin-top: 4px;">
+      <checkbox id="zv-insert-enabled"
+        label="Enable Insert / passthrough mode (i — disable vim keys temporarily)" />
+    </hbox>
+  </groupbox>
+
+  <!-- ── Scroll ─────────────────────────────────────────────────────── -->
+  <groupbox>
+    <label value="Scroll" style="font-weight: bold;" />
+    <html:p style="margin: 4px 0 10px; font-size: 0.9em; color: #666;">
+      Number of pixels scrolled per j / k keypress.
+    </html:p>
+    <hbox align="center">
+      <html:label for="zv-scroll-step"
+        style="min-width: 180px; font-weight: 600;">Scroll step (pixels)</html:label>
+      <html:input type="number" id="zv-scroll-step"
+        min="10" max="500" step="10"
+        style="width: 80px; padding: 3px 6px;" />
+    </hbox>
+  </groupbox>
+
+  <!-- ── Default highlight colour ───────────────────────────────────── -->
+  <groupbox>
+    <label value="Default highlight colour" style="font-weight: bold;" />
+    <html:p style="margin: 4px 0 10px; font-size: 0.9em; color: #666;">
+      Used when no explicit colour prefix is given (zh in the default bindings, if bound).
+    </html:p>
+    <hbox align="center">
+      <html:label for="zv-default-color"
+        style="min-width: 180px; font-weight: 600;">Default colour</html:label>
+      <html:select id="zv-default-color" style="padding: 2px 6px;">
+        <html:option value="yellow">Yellow  (#FFD400)</html:option>
+        <html:option value="red">Red     (#FF6666)</html:option>
+        <html:option value="green">Green   (#5FB236)</html:option>
+        <html:option value="blue">Blue    (#2EA8E5)</html:option>
+        <html:option value="purple">Purple  (#A28AE5)</html:option>
+      </html:select>
+    </hbox>
+  </groupbox>
+
+  <!-- ── Keybindings ────────────────────────────────────────────────── -->
+  <groupbox>
+    <label value="Keybindings" style="font-weight: bold;" />
+    <html:p style="margin: 4px 0 8px; font-size: 0.9em; color: #666;">
+      Each row binds a key sequence in a given mode to an action.
+      Click a <html:strong>Key sequence</html:strong> cell to edit it.
+      Use lowercase letters; prefix with <html:code>ctrl+</html:code> for Ctrl/Cmd.
+      Multi-key sequences such as <html:code>gg</html:code> or <html:code>zy</html:code> are supported.
+    </html:p>
+
+    <hbox style="margin-bottom: 6px;">
+      <html:button id="zv-add-binding" style="padding: 2px 10px;">+ Add binding</html:button>
+      <html:button id="zv-reset-bindings" style="padding: 2px 10px; margin-left: 8px;">Reset to defaults</html:button>
+    </hbox>
+
+    <!-- Keybinding table -->
+    <html:div style="max-height: 400px; overflow-y: auto; border: 1px solid #ccc; border-radius: 3px;">
+      <html:table id="zv-bindings-table"
+        style="width: 100%; border-collapse: collapse; font-size: 0.9em;">
+        <html:thead>
+          <html:tr style="background: #f0f0f0; position: sticky; top: 0;">
+            <html:th style="padding: 6px 10px; text-align: left; border-bottom: 1px solid #ccc; width: 80px;">Mode</html:th>
+            <html:th style="padding: 6px 10px; text-align: left; border-bottom: 1px solid #ccc; width: 140px;">Key sequence</html:th>
+            <html:th style="padding: 6px 10px; text-align: left; border-bottom: 1px solid #ccc;">Action</html:th>
+            <html:th style="padding: 6px 10px; border-bottom: 1px solid #ccc; width: 50px;"></html:th>
+          </html:tr>
+        </html:thead>
+        <html:tbody id="zv-bindings-body">
+          <!-- Populated by prefs.js -->
+        </html:tbody>
+      </html:table>
+    </html:div>
+  </groupbox>
+
+  <!-- ── Keybinding apply ───────────────────────────────────────────── -->
+  <!-- Modes/scroll/colour save live on change.
+       Keybindings need an explicit "Apply" because the table is edited. -->
+  <hbox style="margin-top: 12px; justify-content: flex-end; align-items: center;">
+    <html:p style="font-size: 0.85em; color: #888; margin: 0 12px 0 0;">
+      Mode, scroll, and colour settings save automatically.
+    </html:p>
+    <html:button id="zv-save" style="padding: 4px 16px; font-weight: bold;">Apply bindings</html:button>
+    <html:span id="zv-save-status"
+      style="margin-left: 10px; font-size: 0.9em; color: #5FB236;"></html:span>
+  </hbox>
+
+</vbox>

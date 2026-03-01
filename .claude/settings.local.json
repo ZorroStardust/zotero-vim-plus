@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:forums.zotero.org)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:gist.github.com)",
+      "WebFetch(domain:windingwind.github.io)",
+      "WebFetch(domain:tridactyl.xyz)",
+      "WebSearch"
+    ]
+  }
+}

@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48">
+  <!-- Background rounded square -->
+  <rect width="48" height="48" rx="8" ry="8" fill="#1d4e00"/>
+  <!-- Vim diamond logo shape (simplified) -->
+  <polygon points="24,6 42,16 42,32 24,42 6,32 6,16" fill="#5fb236" opacity="0.3"/>
+  <!-- VIM text -->
+  <text x="24" y="31" text-anchor="middle"
+        font-family="monospace,sans-serif" font-size="16" font-weight="bold"
+        fill="#7ee67e" letter-spacing="1">VIM</text>
+</svg>

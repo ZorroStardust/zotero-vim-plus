@@ -1,0 +1,26 @@
+{
+  "manifest_version": 2,
+  "name": "Zotero Vim",
+  "version": "1.0.0",
+  "description": "Vim-like keybindings for the Zotero PDF reader. Navigate, scroll, and annotate with keyboard shortcuts inspired by Tridactyl/Vim.",
+  "author": "Alex Fink",
+  "homepage_url": "https://codeberg.org/alexfink/zotero-vim",
+  "icons": {
+    "48": "icons/vim-48.png",
+    "96": "icons/vim-96.png"
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "zotero-vim@zotero-vim",
+      "update_url": "https://example.com/zotero-vim/updates.json"
+    }
+  },
+  "applications": {
+    "zotero": {
+      "id": "zotero-vim@zotero-vim",
+      "update_url": "https://example.com/zotero-vim/updates.json",
+      "strict_min_version": "7.999",
+      "strict_max_version": "9.*"
+    }
+  }
+}

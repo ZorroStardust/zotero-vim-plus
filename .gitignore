@@ -1,0 +1,29 @@
+# Built plugin artifact
+zotero-vim.xpi
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Editor directories and files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Vim session / undo files
+*.un~
+Session.vim
+
+# Node (if tooling is ever added)
+node_modules/
+npm-debug.log*
+yarn-error.log*
+
+# Temporary files
+*.tmp
+*.bak
+*.orig

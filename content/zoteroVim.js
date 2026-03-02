@@ -299,6 +299,7 @@ var ZoteroVim = {
     const state = {
       mode: 'normal',
       keyBuffer: '',
+      countBuffer: '',      // digit prefix typed before a command (e.g. "10" in "10G")
       keyTimeout: null,
       selectionParams: null,
       indicatorEl: null,
@@ -438,13 +439,14 @@ var ZoteroVim = {
     if (!state.indicatorEl) return;
     const mode   = state.mode;
     const buffer = bufferOverride !== undefined ? bufferOverride : state.keyBuffer;
-    if (mode === 'normal' && !buffer) {
+    if (mode === 'normal' && !buffer && !state.countBuffer) {
       state.indicatorEl.style.display = 'none';
       return;
     }
     state.indicatorEl.style.display = 'block';
+    const prefix = (state.countBuffer && mode === 'normal') ? state.countBuffer : '';
     state.indicatorEl.textContent =
-      '-- ' + mode.toUpperCase() + ' --' + (buffer ? '  ' + buffer : '');
+      '-- ' + mode.toUpperCase() + ' --' + (prefix || buffer ? '  ' + prefix + buffer : '');
     state.indicatorEl.style.background =
       mode === 'visual' ? 'rgba(80,120,200,0.85)' :
       mode === 'insert' ? 'rgba(50,150,80,0.85)'  : 'rgba(0,0,0,0.65)';
@@ -488,6 +490,17 @@ var ZoteroVim = {
     const keyStr = this._keyString(event);
     if (!keyStr) return;
 
+    // Accumulate a count prefix (1–9 to start, 0 to extend) in normal mode.
+    if (state.mode === 'normal' && /^\d$/.test(keyStr)) {
+      if (keyStr !== '0' || state.countBuffer) {
+        state.countBuffer = (state.countBuffer || '') + keyStr;
+        event.preventDefault();
+        event.stopPropagation();
+        this._updateIndicator(state);
+        return;
+      }
+    }
+
     const newBuffer = state.keyBuffer + keyStr;
     const bindings  = this.getBindings();
     const modePrefix = state.mode + ':';
@@ -497,6 +510,7 @@ var ZoteroVim = {
 
     if (possible.length === 0 && !exact) {
       state.keyBuffer = '';
+      state.countBuffer = '';
       clearTimeout(state.keyTimeout);
       state.keyTimeout = null;
       const sp = Object.keys(bindings).filter(k => k.startsWith(modePrefix + keyStr));
@@ -518,8 +532,10 @@ var ZoteroVim = {
 
     if (exact && longerPossible.length === 0) {
       state.keyBuffer = '';
+      const count = state.countBuffer ? parseInt(state.countBuffer, 10) : 0;
+      state.countBuffer = '';
       this._updateIndicator(state);   // clear buffer display before action
-      this._executeAction(bindings[modePrefix + buffer], reader, state, pdfWin);
+      this._executeAction(bindings[modePrefix + buffer], reader, state, pdfWin, count);
       return;
     }
     if (exact && longerPossible.length > 0) {
@@ -527,8 +543,10 @@ var ZoteroVim = {
       this._updateIndicator(state);
       state.keyTimeout = setTimeout(() => {
         state.keyBuffer = '';
+        const count = state.countBuffer ? parseInt(state.countBuffer, 10) : 0;
+        state.countBuffer = '';
         this._updateIndicator(state);
-        this._executeAction(exact, reader, state, pdfWin);
+        this._executeAction(exact, reader, state, pdfWin, count);
       }, 800);
       return;
     }
@@ -537,11 +555,13 @@ var ZoteroVim = {
       this._updateIndicator(state);   // show pending buffer (e.g. "z" waiting for next key)
       state.keyTimeout = setTimeout(() => {
         state.keyBuffer = '';
+        state.countBuffer = '';
         this._updateIndicator(state);
       }, 1200);
       return;
     }
     state.keyBuffer = '';
+    state.countBuffer = '';
     this._updateIndicator(state);
   },
 
@@ -558,8 +578,8 @@ var ZoteroVim = {
 
   // ── Action dispatcher ─────────────────────────────────────────────────────
 
-  _executeAction(action, reader, state, pdfWin) {
-    Zotero.debug('[ZoteroVim] Action: ' + action + ' (mode:' + state.mode + ')');
+  _executeAction(action, reader, state, pdfWin, count = 0) {
+    Zotero.debug('[ZoteroVim] Action: ' + action + ' (mode:' + state.mode + ', count:' + count + ')');
 
     const step = this.getScrollStep();
     const getContainer = () =>
@@ -597,8 +617,18 @@ var ZoteroVim = {
           Zotero.debug('[ZoteroVim] firstPage: ' + e); } break;
       case 'lastPage':
         clearAnnotation();
-        try { reader._internalReader.navigateToLastPage(); } catch (e) {
-          Zotero.debug('[ZoteroVim] lastPage: ' + e); } break;
+        if (count > 0) {
+          try {
+            const readerWin = reader._iframeWindow;
+            reader._internalReader.navigate(Cu.cloneInto({ pageIndex: count - 1 }, readerWin));
+            Zotero.debug('[ZoteroVim] navigate pageIndex=' + (count - 1));
+          } catch (e) {
+            Zotero.debug('[ZoteroVim] goToPage: ' + e); }
+        } else {
+          try { reader._internalReader.navigateToLastPage(); } catch (e) {
+            Zotero.debug('[ZoteroVim] lastPage: ' + e); }
+        }
+        break;
 
       case 'openSearch':      this._openSearch(reader, pdfWin);           break;
       case 'prevAnnotation':  this._navigateAnnotation(state, reader, -1); break;
@@ -1811,81 +1841,25 @@ var ZoteroVim = {
   // ── Search helpers ────────────────────────────────────────────────────────
 
   _openSearch(reader, pdfWin) {
-    // 1. PDF.js built-in find bar (may not exist in Zotero's PDF.js).
-    try {
-      if (pdfWin?.PDFViewerApplication?.findBar?.open) {
-        pdfWin.PDFViewerApplication.findBar.open();
-        return;
-      }
-    } catch (_) {}
-
-    // 2. Try internal reader API — scan for likely method names.
+    // Primary: toggleFindPopup({open:true}) on _internalReader.
+    // The {open:true} object crosses the chrome→reader.html compartment boundary
+    // so it must be cloned.
     try {
       const ir = reader._internalReader;
-      if (ir) {
-        for (const m of ['toggleFindWidget', 'openFind', 'showFind', '_toggleFindBar',
-                         'find', 'setFindState']) {
-          if (typeof ir[m] === 'function') { ir[m](); return; }
-        }
-        const pv = ir._primaryView;
-        if (pv) {
-          for (const m of ['toggleFindWidget', 'openFind', 'find']) {
-            if (typeof pv[m] === 'function') { pv[m](); return; }
-          }
-        }
-      }
-    } catch (_) {}
-
-    // 3. Search the outer reader.html DOM for a find input / button.
-    try {
-      const outerDoc = reader._iframeWindow?.document;
-      if (outerDoc) {
-        // Try to find an input whose placeholder or class suggests search.
-        const inp = outerDoc.querySelector('input[class*="find"]') ||
-                    outerDoc.querySelector('input[class*="search"]') ||
-                    outerDoc.querySelector('.find-input') ||
-                    outerDoc.querySelector('input[placeholder*="ind"]') ||
-                    outerDoc.querySelector('input[placeholder*="earch"]');
-        if (inp) { inp.focus(); inp.select(); return; }
-
-        // Try a toolbar button (Zotero typically has a magnifier/find button).
-        const btn = outerDoc.querySelector('[class*="find"]') ||
-                    outerDoc.querySelector('[title*="ind"]') ||
-                    outerDoc.querySelector('[aria-label*="ind"]');
-        if (btn) { btn.click(); return; }
-      }
-    } catch (_) {}
-
-    // 4. Dispatch Ctrl+F to the outer reader.html window.
-    try {
-      const outerWin = reader._iframeWindow;
-      if (outerWin) {
-        outerWin.focus();
-        outerWin.document.dispatchEvent(new outerWin.KeyboardEvent('keydown', {
-          key: 'f', code: 'KeyF', keyCode: 70,
-          ctrlKey: true, bubbles: true, cancelable: true,
-        }));
-        // Also try bubbling to the outer reader's document element.
-        outerWin.document.documentElement.dispatchEvent(new outerWin.KeyboardEvent('keydown', {
-          key: 'f', code: 'KeyF', keyCode: 70,
-          ctrlKey: true, bubbles: true, cancelable: true,
-        }));
+      if (typeof ir?.toggleFindPopup === 'function') {
+        ir.toggleFindPopup(Cu.cloneInto({ open: true }, reader._iframeWindow));
+        Zotero.debug('[ZoteroVim] openSearch: toggleFindPopup OK');
         return;
       }
-    } catch (_) {}
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] openSearch toggleFindPopup error: ' + e);
+    }
 
-    // 5. Last resort: dispatch Ctrl+F from the main Zotero chrome window.
-    // Zotero handles Ctrl+F for the active tab at the application level.
+    // Fallback: focus the find-popup input in the reader.html DOM directly.
     try {
-      const mainWin = Services.wm.getMostRecentWindow('navigator:browser') ||
-                      Services.wm.getMostRecentWindow(null);
-      if (mainWin) {
-        mainWin.focus();
-        mainWin.document.dispatchEvent(new mainWin.KeyboardEvent('keydown', {
-          key: 'f', code: 'KeyF', keyCode: 70,
-          ctrlKey: true, bubbles: true, cancelable: true,
-        }));
-      }
+      const outerDoc = reader._iframeWindow?.document;
+      const inp = outerDoc?.querySelector('.primary-view .find-popup input');
+      if (inp) { inp.focus(); inp.select(); return; }
     } catch (_) {}
   },
 

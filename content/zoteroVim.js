@@ -56,6 +56,13 @@ var ZoteroVim = {
     'normal:zp':      'recolorPurple',
     'normal:zt':      'scrollTop',
     'normal:zz':      'scrollCenter',
+    // Normal mode — filter sidebar by annotation colour
+    'normal:Zy':      'filterYellow',
+    'normal:Zr':      'filterRed',
+    'normal:Zg':      'filterGreen',
+    'normal:Zb':      'filterBlue',
+    'normal:Zp':      'filterPurple',
+    'normal:Za':      'filterClear',
     'normal:v':       'enterVisual',
     'normal:i':       'enterInsert',
     'normal:escape':  'clearSearch',
@@ -80,6 +87,8 @@ var ZoteroVim = {
     'visual:za':      'addNote',
     'visual:y':       'copySelection',
     'visual:yy':      'yankParagraph',
+    // Visual mode — search selection
+    'visual:#':       'searchSelection',
     // Visual mode — swap anchor/focus
     'visual:o':       'swapVisualEnds',
     // Visual mode — exit
@@ -306,6 +315,7 @@ var ZoteroVim = {
       hintMode: false,
       hintMap: {},
       visualCursor: null,   // { textNode, offset } — restored if selection lost
+      filterColor: null,    // active colour filter hex string, or null for all
       reader: reader,       // reference for direct annotation creation
       pdfWin: pdfWin,       // stored for _setMode → _clearVisualHints
       cleanup: () => {},
@@ -646,6 +656,12 @@ var ZoteroVim = {
         }
         break;
       case 'recolorPurple':   this._recolorAnnotation(state, reader, this.COLORS.purple); break;
+      case 'filterYellow':    this._filterByColor(state, reader, this.COLORS.yellow); break;
+      case 'filterRed':       this._filterByColor(state, reader, this.COLORS.red);    break;
+      case 'filterGreen':     this._filterByColor(state, reader, this.COLORS.green);  break;
+      case 'filterBlue':      this._filterByColor(state, reader, this.COLORS.blue);   break;
+      case 'filterPurple':    this._filterByColor(state, reader, this.COLORS.purple); break;
+      case 'filterClear':     this._filterByColor(state, reader, null);               break;
       case 'yankAnnotation':        this._yankAnnotation(state, reader);          break;
       case 'yankAnnotationComment': this._yankAnnotationComment(state, reader);  break;
       case 'yankParagraph':         this._yankParagraph(state, pdfWin);           break;
@@ -688,6 +704,7 @@ var ZoteroVim = {
       case 'highlightPurple':  this._highlight(state, reader, pdfWin, this.COLORS.purple);  break;
       case 'addNote':          this._addNote(state, reader, pdfWin);                         break;
       case 'copySelection':    this._copySelection(state, pdfWin);                           break;
+      case 'searchSelection':  this._searchSelection(state, reader, pdfWin);                 break;
       case 'swapVisualEnds':   this._swapVisualEnds(state, pdfWin);                          break;
 
       default: Zotero.debug('[ZoteroVim] Unknown action: ' + action);
@@ -1838,6 +1855,49 @@ var ZoteroVim = {
     try { pdfWin.focus(); } catch (_) {}   // keep focus in PDF iframe
   },
 
+  _searchSelection(state, reader, pdfWin) {
+    try {
+      const sel = pdfWin.getSelection?.();
+      if (!sel || sel.isCollapsed) return;
+
+      let text = sel.toString()
+        .normalize('NFKC')
+        .replace(/\n/g, ' ')
+        .replace(/ {2,}/g, ' ')
+        .trim();
+      if (!text) return;
+
+      const readerWin = reader._iframeWindow;
+      const ir = reader._internalReader;
+
+      // Open the find popup. Internally it focuses the input after 100 ms.
+      if (typeof ir?.toggleFindPopup === 'function') {
+        ir.toggleFindPopup(Cu.cloneInto({ open: true }, readerWin));
+      }
+
+      // After the popup has rendered and focused the input (100 ms internally),
+      // set its value and fire an `input` event so React's onChange updates the
+      // query state and triggers the search.
+      setTimeout(() => {
+        try {
+          const inp = readerWin.document.querySelector('.primary-view .find-popup input');
+          if (!inp) { Zotero.debug('[ZoteroVim] find input not found'); return; }
+          inp.value = text;
+          inp.dispatchEvent(new readerWin.Event('input', { bubbles: true }));
+          Zotero.debug('[ZoteroVim] find input set: "' + text + '"');
+        } catch (e2) {
+          Zotero.debug('[ZoteroVim] fill find input error: ' + e2);
+        }
+      }, 200);
+
+      Zotero.debug('[ZoteroVim] searchSelection: "' + text + '"');
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] _searchSelection error: ' + e);
+    }
+    this._setMode(state, 'normal');
+    try { pdfWin.getSelection()?.removeAllRanges(); } catch (_) {}
+  },
+
   // ── Search helpers ────────────────────────────────────────────────────────
 
   _openSearch(reader, pdfWin) {
@@ -1898,6 +1958,11 @@ var ZoteroVim = {
         this._showStatus(state, '✗ getAnnotations: ' + String(e).slice(0, 30), 4000);
         Zotero.debug('[ZoteroVim] getAnnotations error: ' + e);
         return;
+      }
+
+      // Respect active colour filter — mirror what the sidebar is showing.
+      if (state.filterColor) {
+        annotations = annotations.filter(a => a.annotationColor === state.filterColor);
       }
 
       if (annotations.length === 0) {
@@ -2142,6 +2207,27 @@ var ZoteroVim = {
       Zotero.debug('[ZoteroVim] recolorAnnotation key=' + key + ' color=' + color);
     } catch (e) {
       Zotero.debug('[ZoteroVim] _recolorAnnotation error: ' + e);
+      this._showStatus(state, '✗ ' + String(e).slice(0, 35), 3000);
+    }
+  },
+
+  /**
+   * Filter the annotations sidebar to show only annotations of the given colour.
+   * Pass null to clear the colour filter.
+   */
+  _filterByColor(state, reader, color) {
+    try {
+      const readerWin = reader._iframeWindow;
+      const filter = Cu.cloneInto({ colors: color ? [color] : [] }, readerWin);
+      reader._internalReader.setFilter(filter);
+      state.filterColor = color || null;
+      const colorName = color
+        ? (Object.entries(this.COLORS).find(([, v]) => v === color)?.[0] || color)
+        : null;
+      this._showStatus(state, colorName ? '✓ filter: ' + colorName : '✓ filter cleared', 1200);
+      Zotero.debug('[ZoteroVim] filterByColor: ' + (color || 'clear'));
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] _filterByColor error: ' + e);
       this._showStatus(state, '✗ ' + String(e).slice(0, 35), 3000);
     }
   },

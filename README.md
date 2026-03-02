@@ -151,6 +151,19 @@ Normal ──i──▶ Insert ──Escape────▶ Normal
 | `/` | Open the PDF find bar |
 | `Escape` | Clear / close search |
 
+#### Sidebar filter by colour
+
+| Key | Action |
+|-----|--------|
+| `Zy` | Filter sidebar → Yellow annotations only |
+| `Zr` | Filter sidebar → Red annotations only |
+| `Zg` | Filter sidebar → Green annotations only |
+| `Zb` | Filter sidebar → Blue annotations only |
+| `Zp` | Filter sidebar → Purple annotations only |
+| `Za` | Clear colour filter (show all annotations) |
+
+> **Tip:** `z` (lowercase) acts *on* an annotation (recolour). `Z` (uppercase) acts *on the sidebar view* (filter).
+
 #### Annotation navigation and editing
 
 Use `[` and `]` to move between annotations. The selected annotation is
@@ -219,6 +232,7 @@ keys.
 |-----|--------|
 | `y` | Copy the **current selection** to the clipboard |
 | `yy` | Copy the **whole paragraph** containing the selection to the clipboard |
+| `#` | Open the find bar and search for the **current selection** |
 
 All copy operations apply Unicode NFKC normalisation (resolves ligatures such
 as `ﬁ` → `fi`) and collapse PDF line-break newlines into spaces.
@@ -311,6 +325,12 @@ Open **Edit → Preferences** (macOS: **Zotero → Settings**) and navigate to t
 | `nextAnnotation` | Jump to next annotation |
 | `editAnnotation` | Focus annotation comment field (Enter) |
 | `deleteAnnotation` | Delete selected annotation |
+| `filterYellow` | Filter sidebar to Yellow annotations only |
+| `filterRed` | Filter sidebar to Red annotations only |
+| `filterGreen` | Filter sidebar to Green annotations only |
+| `filterBlue` | Filter sidebar to Blue annotations only |
+| `filterPurple` | Filter sidebar to Purple annotations only |
+| `filterClear` | Clear colour filter (show all annotations) |
 | `recolorYellow` | Change selected annotation colour to Yellow |
 | `recolorRed` | Change selected annotation colour to Red |
 | `recolorGreen` | Change selected annotation colour to Green |
@@ -338,6 +358,7 @@ Open **Edit → Preferences** (macOS: **Zotero → Settings**) and navigate to t
 | `highlightPurple` | Create purple highlight |
 | `addNote` | Add note annotation |
 | `copySelection` | Copy current selection to clipboard |
+| `searchSelection` | Open find bar and search for current selection |
 | `yankParagraph` | Copy whole paragraph to clipboard |
 | `swapVisualEnds` | Swap selection anchor and focus |
 

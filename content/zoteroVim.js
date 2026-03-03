@@ -1610,9 +1610,16 @@ var ZoteroVim = {
       item.annotationText       = (ann.text || '').normalize('NFKC').replace(/\n/g, ' ').replace(/ {2,}/g, ' ').trim();
       item.annotationComment    = '';
       item.annotationIsExternal = false;
-      if (ann.sortIndex) item.annotationSortIndex = ann.sortIndex;
-      if (ann.position)  item.annotationPosition  =
+      if (ann.sortIndex)   item.annotationSortIndex = ann.sortIndex;
+      if (ann.pageLabel)   item.annotationPageLabel = ann.pageLabel;
+      if (ann.position)    item.annotationPosition  =
         typeof ann.position === 'string' ? ann.position : JSON.stringify(ann.position);
+
+      Zotero.debug('[ZoteroVim] _createAnnotationFromParams:'
+        + ' sortIndex=' + JSON.stringify(ann.sortIndex)
+        + ' pageLabel=' + JSON.stringify(ann.pageLabel)
+        + ' item.annotationSortIndex=' + JSON.stringify(item.annotationSortIndex)
+        + ' item.annotationPageLabel=' + JSON.stringify(item.annotationPageLabel));
 
       await item.saveTx();
       Zotero.debug('[ZoteroVim] Created ' + type + ' id=' + item.id + ' color=' + color);
@@ -1766,17 +1773,30 @@ var ZoteroVim = {
         if (nextPdfRects.length > 0) position.nextPageRects = nextPdfRects;
       }
 
-      // sortIndex from the first rect on the first page
+      // sortIndex: Zotero's exact format is PPPPP|OOOOOO|TTTTT
+      //   PPPPP  — 0-based page index, 5 digits
+      //   OOOOOO — character offset within page chars array, 6 digits
+      //            (we lack that data from the DOM, so use 000000)
+      //   TTTTT  — floor(pageHeight - rect_top) in PDF user units, 5 digits
+      //            rect_top = firstPdfRects[0][3] (top edge in PDF coords)
       const pdfPageH0 = (() => {
         const pv = pdfViewer._pages?.[firstGroup.pageIndex] ?? pdfViewer.getPageView?.(firstGroup.pageIndex);
         return pv?.viewport ? pv.viewport.height / pv.viewport.scale : 0;
       })();
-      const yTop  = Math.min(999999, Math.max(0, Math.round((pdfPageH0 - firstPdfRects[0][3]) * 100)));
-      const xLeft = Math.min(99999,  Math.max(0, Math.round(firstPdfRects[0][0] * 100)));
+      const top = Math.min(99999, Math.max(0, Math.floor(pdfPageH0 - firstPdfRects[0][3])));
       const sortIndex =
         String(firstGroup.pageIndex).padStart(5, '0') + '|' +
-        String(yTop).padStart(6, '0') + '|' +
-        String(xLeft).padStart(5, '0');
+        '000000' + '|' +
+        String(top).padStart(5, '0');
+
+      // pageLabel: use PDF.js's own label array (handles roman numerals, etc.)
+      // or fall back to 1-based page number.
+      const pageLabel = (() => {
+        try {
+          return pdfWin.PDFViewerApplication?.pdfViewer?._pageLabels?.[firstGroup.pageIndex]
+            || String(firstGroup.pageIndex + 1);
+        } catch (_) { return String(firstGroup.pageIndex + 1); }
+      })();
 
       const annotItem = new Zotero.Item('annotation');
       annotItem.libraryID            = attachment.libraryID;
@@ -1787,7 +1807,18 @@ var ZoteroVim = {
       annotItem.annotationComment    = '';
       annotItem.annotationIsExternal = false;
       annotItem.annotationSortIndex  = sortIndex;
+      annotItem.annotationPageLabel  = pageLabel;
       annotItem.annotationPosition   = JSON.stringify(position);
+
+      Zotero.debug('[ZoteroVim] _createAnnotationFromSelection:'
+        + ' pageIndex=' + firstGroup.pageIndex
+        + ' pdfPageH0=' + pdfPageH0
+        + ' rect[3]=' + (firstPdfRects[0]?.[3])
+        + ' top=' + top
+        + ' sortIndex=' + sortIndex
+        + ' pageLabel=' + pageLabel
+        + ' item.annotationSortIndex=' + JSON.stringify(annotItem.annotationSortIndex)
+        + ' item.annotationPageLabel=' + JSON.stringify(annotItem.annotationPageLabel));
 
       Zotero.debug('[ZoteroVim] _createAnnotation: pos=' + annotItem.annotationPosition);
       try {

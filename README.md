@@ -5,6 +5,8 @@ annotate, and copy text without touching the mouse.
 
 Vibe coded with Claude Sonnet 4.5.
 
+![Brief Demo Video (no audio)](BriefDemoVideo.gif)
+
 ---
 
 ## Contents

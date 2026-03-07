@@ -72,6 +72,12 @@ const ZV_DEFAULT_BINDINGS = {
   "normal:v":       "enterVisual",
   "normal:i":       "enterInsert",
   "normal:escape":  "clearSearch",
+  // Normal mode — space-chord bindings (delegate to main window)
+  "normal: ff":  "mainFuzzyAll",
+  "normal: fb":  "mainFuzzyCollection",
+  "normal: yy":  "mainYankCitekey",
+  "normal: o":   "mainOpenPDF",
+  "normal: q":   "mainClosePDF",
   "visual:j":       "extendDown",
   "visual:k":       "extendUp",
   "visual:h":       "extendLeft",
@@ -95,6 +101,25 @@ const ZV_DEFAULT_BINDINGS = {
   "visual:v":       "exitMode",
   "visual:escape":  "exitMode",
   "insert:escape":  "exitMode",
+  // Main window — <space> chords
+  // The space key generates ' ' so the key part starts with a space character.
+  // Displayed as <space>xx in the UI to avoid confusion.
+  "main: ff":   "mainFuzzyAll",
+  "main: fb":   "mainFuzzyCollection",
+  "main: e":    "mainFocusTree",
+  "main: yy":   "mainYankCitekey",
+  "main: o":    "mainOpenPDF",
+  "main: q":    "mainClosePDF",
+  "main: /":    "mainFocusSearch",
+  "main: wh":   "mainFocusLeft",
+  "main: wl":   "mainFocusRight",
+  "main: ww":   "mainFocusItems",
+  // Main window — bare keys
+  "main:j":      "mainNavDown",
+  "main:k":      "mainNavUp",
+  "main:gg":     "mainNavFirst",
+  "main:G":      "mainNavLast",
+  "main:return": "mainActivate",
 };
 
 const ZV_ACTION_LABELS = {
@@ -153,6 +178,22 @@ const ZV_ACTION_LABELS = {
   yankAnnotation:          "Copy annotation highlighted text (y after [ / ])",
   yankAnnotationComment:   "Copy annotation comment text (yy after [ / ])",
   yankParagraph:           "Copy whole paragraph to clipboard (yy in visual)",
+  // Main window actions
+  mainFuzzyAll:        "Main window: fuzzy picker — all items (<space>ff)",
+  mainFuzzyCollection: "Main window: fuzzy picker — current collection (<space>fb)",
+  mainFocusTree:       "Main window: focus collection tree (<space>e)",
+  mainFocusLeft:       "Main window: focus collection tree (<space>wh)",
+  mainFocusRight:      "Main window: focus detail pane (<space>wl)",
+  mainFocusItems:      "Main window: focus items list (<space>ww)",
+  mainYankCitekey:     "Main window: copy BetterBibTeX citekey (<space>yy)",
+  mainOpenPDF:         "Main window: open PDF of selected item (<space>o)",
+  mainClosePDF:        "Main window: close active PDF tab (<space>q)",
+  mainFocusSearch:     "Main window: focus search bar (<space>/)",
+  mainNavDown:         "Main window: navigate down (j)",
+  mainNavUp:           "Main window: navigate up (k)",
+  mainNavFirst:        "Main window: go to first item (gg)",
+  mainNavLast:         "Main window: go to last item (G)",
+  mainActivate:        "Main window: open PDF of selected item (Enter)",
 };
 
 const ZV_ALL_ACTIONS = Object.keys(ZV_ACTION_LABELS).sort();
@@ -243,7 +284,7 @@ function _zvInit() {
 // ── Table helpers ─────────────────────────────────────────────────────────────
 
 function _zvBindingsToRows(bindings) {
-  const modeOrder = { normal: 0, visual: 1, insert: 2 };
+  const modeOrder = { normal: 0, visual: 1, insert: 2, main: 3 };
   return Object.entries(bindings)
     .map(([full, action]) => {
       const colon = full.indexOf(":");
@@ -253,6 +294,15 @@ function _zvBindingsToRows(bindings) {
       const d = (modeOrder[a.mode] ?? 9) - (modeOrder[b.mode] ?? 9);
       return d !== 0 ? d : a.key < b.key ? -1 : 1;
     });
+}
+
+// Convert a stored key (e.g. " ff") to a display string (e.g. "<space>ff").
+function _zvKeyToDisplay(key) {
+  return key.replace(/^ /, "<space>");
+}
+// Convert a display string back to a stored key.
+function _zvKeyFromDisplay(display) {
+  return display.replace(/^<space>/, " ");
 }
 
 function _zvMakeRow(mode, key, action, isNew) {
@@ -267,7 +317,7 @@ function _zvMakeRow(mode, key, action, isNew) {
   if (isNew) {
     const modeSel = document.createElement("select");
     modeSel.style.cssText = "padding:2px 4px;font-family:monospace;";
-    for (const m of ["normal", "visual", "insert"]) {
+    for (const m of ["normal", "visual", "insert", "main"]) {
       const o = document.createElement("option");
       o.value = m; o.textContent = m;
       if (m === mode) o.selected = true;
@@ -288,7 +338,7 @@ function _zvMakeRow(mode, key, action, isNew) {
   tdKey.style.cssText = "padding:5px 10px;";
   const keyInput = document.createElement("input");
   keyInput.type  = "text";
-  keyInput.value = key;
+  keyInput.value = _zvKeyToDisplay(key);   // ' ff' → '<space>ff'
   keyInput.style.cssText = "font-family:monospace;width:120px;padding:2px 4px;";
   tdKey.appendChild(keyInput);
   tr.appendChild(tdKey);
@@ -346,7 +396,12 @@ function _zvReadTable() {
     const modeTd   = tr.querySelector("td:first-child");
 
     const mode   = modeSel ? modeSel.value : (modeTd?.textContent.trim().toLowerCase() || "");
-    const key    = keyInput ? keyInput.value.trim().toLowerCase() : "";
+    // Convert display form back to stored form ('<space>ff' → ' ff'), then
+    // strip only trailing whitespace (leading space is the space-key leader).
+    const rawKey = keyInput ? _zvKeyFromDisplay(keyInput.value).replace(/\s+$/, "") : "";
+    // Preserve case for keys like G, Za, Zy etc. — only lowercase non-space chars
+    // that aren't part of the space alias (already handled above).
+    const key    = rawKey;   // keep original case from input
     const action = actSel  ? actSel.value : "";
 
     if (mode && key && action) result[mode + ":" + key] = action;

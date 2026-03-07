@@ -66,6 +66,12 @@ var ZoteroVim = {
     'normal:v':       'enterVisual',
     'normal:i':       'enterInsert',
     'normal:escape':  'clearSearch',
+    // Normal mode — space-chord bindings (delegate to main window)
+    'normal: ff':  'mainFuzzyAll',
+    'normal: fb':  'mainFuzzyCollection',
+    'normal: yy':  'mainYankCitekey',
+    'normal: o':   'mainOpenPDF',
+    'normal: q':   'mainClosePDF',
 
     // Visual mode — selection extension
     'visual:j':       'extendDown',
@@ -97,6 +103,25 @@ var ZoteroVim = {
 
     // Insert / passthrough mode
     'insert:escape':  'exitMode',
+
+    // Main window — <space> chords (LazyVim-inspired)
+    // Space key produces ' ' from _keyString, so <space>ff → buffer ' ff' → key 'main: ff'
+    'main: ff':   'mainFuzzyAll',         // <space>ff  — fuzzy picker, all items
+    'main: fb':   'mainFuzzyCollection',  // <space>fb  — fuzzy picker, current collection
+    'main: e':    'mainFocusTree',        // <space>e   — focus collection tree
+    'main: yy':   'mainYankCitekey',      // <space>yy  — copy citekey of selected item
+    'main: o':    'mainOpenPDF',          // <space>o   — open selected item's PDF
+    'main: q':    'mainClosePDF',         // <space>q   — close active PDF tab
+    'main: /':    'mainFocusSearch',      // <space>/   — focus Zotero search bar
+    'main: wh':   'mainFocusLeft',        // <space>wh  — focus collection tree
+    'main: wl':   'mainFocusRight',       // <space>wl  — focus detail pane
+    'main: ww':   'mainFocusItems',       // <space>ww  — focus items list
+    // Main window — panel-scoped navigation
+    'main:j':     'mainNavDown',
+    'main:k':     'mainNavUp',
+    'main:gg':    'mainNavFirst',
+    'main:G':     'mainNavLast',
+    'main:return':'mainActivate',         // Enter — open PDF of selected item
   },
 
   // ── State ─────────────────────────────────────────────────────────────────
@@ -110,6 +135,7 @@ var ZoteroVim = {
   _readerStateByItemID: new Map(),  // itemID → state  (fallback lookup)
   _windows: new Set(),
   _readerListenerIDs: [],
+  _mainWindowState: new Map(),   // win → mainWinState
 
   // Plugin-level cache: renderTextSelectionPopup params, regardless of which
   // reader fired them.  Used when per-reader state lookup fails.
@@ -149,6 +175,7 @@ var ZoteroVim = {
   addToWindow(win) {
     if (!win || this._windows.has(win)) return;
     this._windows.add(win);
+    this._injectIntoMainWindow(win);
   },
 
   removeFromWindow(win) {
@@ -156,7 +183,10 @@ var ZoteroVim = {
     this._windows.delete(win);
   },
 
-  _removeFromWindow(_win) {},
+  _removeFromWindow(win) {
+    const s = this._mainWindowState.get(win);
+    if (s) { try { s.cleanup(); } catch (_) {} this._mainWindowState.delete(win); }
+  },
 
   // ── Preferences ──────────────────────────────────────────────────────────
 
@@ -319,8 +349,10 @@ var ZoteroVim = {
       reader: reader,       // reference for direct annotation creation
       pdfWin: pdfWin,       // stored for _setMode → _clearVisualHints
       cleanup: () => {},
+      executeAction: null,  // set below
     };
     this._readerState.set(instanceID, state);
+    state.executeAction = (action, count) => this._executeAction(action, reader, state, pdfWin, count);
     if (reader.itemID) {
       this._readerStateByItemID.set(reader.itemID, state);
     }
@@ -347,6 +379,17 @@ var ZoteroVim = {
     };
     pdfWin.document.addEventListener('selectionchange', selectionHandler);
 
+    // Re-position the visual cursor when the user scrolls the PDF.
+    const scrollHandler = () => {
+      if (state.mode === 'visual') this._updateVisualCursor(state, pdfWin);
+    };
+    let scrollEl = null;
+    try {
+      scrollEl = pdfWin.document.getElementById('viewerContainer') ||
+                 pdfWin.document.querySelector('.pdfViewer');
+      if (scrollEl) scrollEl.addEventListener('scroll', scrollHandler, { passive: true });
+    } catch (_) {}
+
     // ── Outer reader.html: Escape returns from annotation comment editing ──
     // When the user focuses a comment textarea (in the outer reader.html doc),
     // Escape should blur it and return focus+mode to the PDF viewer.
@@ -371,8 +414,10 @@ var ZoteroVim = {
     state.cleanup = () => {
       pdfWin.removeEventListener('keydown', keyHandler, true);
       pdfWin.document.removeEventListener('selectionchange', selectionHandler);
+      if (scrollEl) scrollEl.removeEventListener('scroll', scrollHandler, { passive: true });
       if (outerDoc) outerDoc.removeEventListener('keydown', outerEscapeHandler, true);
       state.indicatorEl?.remove();
+      try { for (const el of pdfWin.document.querySelectorAll('[data-zv-cursor]')) el.remove(); } catch (_) {}
       clearTimeout(state.keyTimeout);
       if (reader.itemID) this._readerStateByItemID.delete(reader.itemID);
     };
@@ -410,6 +455,11 @@ var ZoteroVim = {
         '@media (prefers-color-scheme: dark) {',
         '  .textLayer ::selection { background: rgba(255, 180, 0, 0.75) !important; color: inherit !important; }',
         '}',
+        // Blinking cursor animation for visual mode.
+        '@keyframes zv-cursor-blink {',
+        '  0%, 100% { opacity: 1; }',
+        '  50% { opacity: 0; }',
+        '}',
       ].join('\n');
       (doc.head || doc.documentElement).appendChild(s);
     } catch (e) {
@@ -441,6 +491,12 @@ var ZoteroVim = {
     clearTimeout(state.keyTimeout);
     state.keyTimeout = null;
     if (state.hintMode) this._clearVisualHints(state, state.pdfWin);
+    // Remove visual cursor whenever leaving visual mode.
+    if (mode !== 'visual' && state.pdfWin) {
+      try {
+        for (const el of state.pdfWin.document.querySelectorAll('[data-zv-cursor]')) el.remove();
+      } catch (_) {}
+    }
     this._updateIndicator(state);
   },
 
@@ -526,16 +582,16 @@ var ZoteroVim = {
       const sp = Object.keys(bindings).filter(k => k.startsWith(modePrefix + keyStr));
       const se = bindings[modePrefix + keyStr];
       if (sp.length === 0 && !se) return;
-      this._processBuffer(keyStr, se, sp, modePrefix, bindings, state, reader, pdfWin, event);
+      this._processBuffer(keyStr, se, sp, modePrefix, bindings, state);
       return;
     }
 
     event.preventDefault();
     event.stopPropagation();
-    this._processBuffer(newBuffer, exact, possible, modePrefix, bindings, state, reader, pdfWin, event);
+    this._processBuffer(newBuffer, exact, possible, modePrefix, bindings, state);
   },
 
-  _processBuffer(buffer, exact, possible, modePrefix, bindings, state, reader, pdfWin, event) {
+  _processBuffer(buffer, exact, possible, modePrefix, bindings, state) {
     clearTimeout(state.keyTimeout);
     state.keyTimeout = null;
     const longerPossible = possible.filter(k => k.length > modePrefix.length + buffer.length);
@@ -545,7 +601,7 @@ var ZoteroVim = {
       const count = state.countBuffer ? parseInt(state.countBuffer, 10) : 0;
       state.countBuffer = '';
       this._updateIndicator(state);   // clear buffer display before action
-      this._executeAction(bindings[modePrefix + buffer], reader, state, pdfWin, count);
+      state.executeAction(bindings[modePrefix + buffer], count);
       return;
     }
     if (exact && longerPossible.length > 0) {
@@ -556,7 +612,7 @@ var ZoteroVim = {
         const count = state.countBuffer ? parseInt(state.countBuffer, 10) : 0;
         state.countBuffer = '';
         this._updateIndicator(state);
-        this._executeAction(exact, reader, state, pdfWin, count);
+        state.executeAction(exact, count);
       }, 800);
       return;
     }
@@ -690,8 +746,8 @@ var ZoteroVim = {
       case 'extendUp':                this._extendByLine(state, pdfWin, -1);  break;
       case 'extendRight':             this._extendByChar(state, pdfWin, +1);               break;
       case 'extendLeft':              this._extendByChar(state, pdfWin, -1);               break;
-      case 'extendWordForward':        this._selModify(pdfWin, 'extend', 'forward',  'word'); break;
-      case 'extendWordBackward':       this._selModify(pdfWin, 'extend', 'backward', 'word'); break;
+      case 'extendWordForward':        this._selModify(pdfWin, 'extend', 'forward',  'word'); this._updateVisualCursor(state, pdfWin); break;
+      case 'extendWordBackward':       this._selModify(pdfWin, 'extend', 'backward', 'word'); this._updateVisualCursor(state, pdfWin); break;
       case 'extendSentenceForward':    this._extendBySentence(state, pdfWin, +1);             break;
       case 'extendSentenceBackward':   this._extendBySentence(state, pdfWin, -1);             break;
       case 'extendParagraphForward':   this._extendByParagraph(state, pdfWin, +1);            break;
@@ -706,6 +762,14 @@ var ZoteroVim = {
       case 'copySelection':    this._copySelection(state, pdfWin);                           break;
       case 'searchSelection':  this._searchSelection(state, reader, pdfWin);                 break;
       case 'swapVisualEnds':   this._swapVisualEnds(state, pdfWin);                          break;
+
+      // Delegate main-window actions from reader context
+      case 'mainFuzzyAll':
+      case 'mainFuzzyCollection':
+      case 'mainYankCitekey':
+      case 'mainOpenPDF':
+      case 'mainClosePDF':
+        this._delegateToMainWindow(action, count); break;
 
       default: Zotero.debug('[ZoteroVim] Unknown action: ' + action);
     }
@@ -876,6 +940,64 @@ var ZoteroVim = {
     } catch (_) {}
   },
 
+  /**
+   * Place or update a blinking cursor element at the current selection focus
+   * in the PDF.js iframe.  Call this after every visual selection change.
+   *
+   * The cursor appears at the "active" (focus) end — the end that moves when
+   * the user presses j/k/h/l/w/b etc.  After pressing `o` to swap ends, the
+   * cursor jumps to the other end.
+   */
+  _updateVisualCursor(state, pdfWin) {
+    const doc = pdfWin.document;
+    for (const el of doc.querySelectorAll('[data-zv-cursor]')) el.remove();
+    if (state.mode !== 'visual') return;
+
+    // Prefer the selection's focus end; fall back to the saved anchor.
+    let focusNode = null, focusOffset = 0;
+    try {
+      const sel = pdfWin.getSelection();
+      if (sel?.focusNode) { focusNode = sel.focusNode; focusOffset = sel.focusOffset; }
+    } catch (_) {}
+    if (!focusNode && state.visualCursor) {
+      focusNode   = state.visualCursor.textNode;
+      focusOffset = state.visualCursor.offset;
+    }
+    if (!focusNode) return;
+
+    // Get the bounding rect of the character at the focus position.
+    let rect = null;
+    try {
+      if (focusNode.nodeType === 3 && focusNode.length > 0) {
+        const r   = doc.createRange();
+        const off = Math.min(focusOffset, focusNode.length - 1);
+        r.setStart(focusNode, off);
+        r.setEnd(focusNode, off + 1);
+        const rects = r.getClientRects();
+        if (rects.length > 0) rect = rects[0];
+      }
+    } catch (_) {}
+    if (!rect) {
+      const el = focusNode.nodeType === 3 ? focusNode.parentElement : focusNode;
+      rect = el?.getBoundingClientRect?.() || null;
+    }
+    if (!rect || rect.height < 1) return;
+
+    const cursor = doc.createElement('div');
+    cursor.setAttribute('data-zv-cursor', '1');
+    cursor.style.cssText =
+      'position:fixed;' +
+      'left:'   + Math.round(rect.left)   + 'px;' +
+      'top:'    + Math.round(rect.top)    + 'px;' +
+      'width:2px;' +
+      'height:' + Math.round(rect.height) + 'px;' +
+      'background:#ff4500;' +
+      'z-index:99998;' +
+      'pointer-events:none;' +
+      'animation:zv-cursor-blink 1s step-end infinite;';
+    doc.body.appendChild(cursor);
+  },
+
   _selectHint(state, pdfWin, letter) {
     const hint = state.hintMap?.[letter];
     this._clearVisualHints(state, pdfWin);
@@ -889,6 +1011,7 @@ var ZoteroVim = {
       sel.addRange(range);
       state.visualCursor = { textNode: hint.textNode, offset: hint.offset };
       pdfWin.focus();
+      this._updateVisualCursor(state, pdfWin);
       Zotero.debug('[ZoteroVim] Hint selected: ' + letter);
     } catch (e) {
       Zotero.debug('[ZoteroVim] _selectHint error: ' + e);
@@ -909,6 +1032,7 @@ var ZoteroVim = {
       sel.addRange(range);
       state.visualCursor = { textNode, offset: 0 };
       pdfWin.focus();
+      this._updateVisualCursor(state, pdfWin);
     } catch (e) {
       Zotero.debug('[ZoteroVim] _placeCursorAtFirstText error: ' + e);
     }
@@ -1035,6 +1159,7 @@ var ZoteroVim = {
         Zotero.debug('[ZoteroVim] _extendByLine: range set, len=' + selLen);
         // Show selection length so user can verify j/k is working visually.
         this._showStatus(state, '▶ ' + selLen + ' chars', 600);
+        this._updateVisualCursor(state, pdfWin);
       } catch (e) {
         Zotero.debug('[ZoteroVim] _extendByLine range error: ' + e);
         this._showStatus(state, '✗ range err: ' + String(e).slice(0, 25), 3000);
@@ -1065,6 +1190,7 @@ var ZoteroVim = {
       state.visualCursor = { textNode: sel.anchorNode, offset: sel.anchorOffset };
     }
     sel.modify('extend', direction > 0 ? 'forward' : 'backward', 'character');
+    this._updateVisualCursor(state, pdfWin);
   },
 
   /**
@@ -1181,6 +1307,7 @@ var ZoteroVim = {
         sel.addRange(range);
         const selLen = sel.toString().length;
         this._showStatus(state, '▶ ' + selLen + ' chars', 600);
+        this._updateVisualCursor(state, pdfWin);
         Zotero.debug('[ZoteroVim] _extendByParagraph dir=' + direction + ' len=' + selLen);
       } catch (e) {
         Zotero.debug('[ZoteroVim] _extendByParagraph range error: ' + e);
@@ -1358,6 +1485,7 @@ var ZoteroVim = {
         sel.addRange(range);
         const selLen = sel.toString().length;
         this._showStatus(state, '▶ ' + selLen + ' chars', 600);
+        this._updateVisualCursor(state, pdfWin);
         Zotero.debug('[ZoteroVim] _extendBySentence dir=' + direction +
                      ' focusIdx=' + focusIdx + ' len=' + selLen);
       } catch (e) {
@@ -1447,6 +1575,7 @@ var ZoteroVim = {
           Zotero.debug('[ZoteroVim] _swapVisualEnds: fallback also failed: ' + e2);
         }
       }
+      this._updateVisualCursor(state, pdfWin);
     } catch (e) {
       Zotero.debug('[ZoteroVim] _swapVisualEnds error: ' + e);
     }
@@ -2507,5 +2636,618 @@ var ZoteroVim = {
     };
 
     setTimeout(() => tryFocus(0), 350);
+  },
+
+  // ── Main window injection ─────────────────────────────────────────────────
+
+  _injectIntoMainWindow(win) {
+    Zotero.debug('[ZoteroVim] Injecting into main window');
+
+    // Main window is a XUL document — must use HTML namespace for HTML elements.
+    const _H = 'http://www.w3.org/1999/xhtml';
+    const statusEl = win.document.createElementNS(_H, 'div');
+    statusEl.setAttribute('style', [
+      'position:fixed', 'bottom:10px', 'right:14px', 'z-index:99999',
+      'font:bold 12px/1.4 monospace', 'color:#fff',
+      'background:rgba(0,0,0,0.65)', 'padding:2px 8px',
+      'border-radius:3px', 'pointer-events:none',
+      'display:none', 'user-select:none',
+    ].join(';'));
+    (win.document.body || win.document.documentElement).appendChild(statusEl);
+
+    const mainWinState = {
+      mode: 'main',
+      keyBuffer: '',
+      countBuffer: '',
+      keyTimeout: null,
+      indicatorEl: null,    // _updateIndicator no-ops for main window
+      statusEl,
+      activePanelFocus: 'items',  // 'items' | 'collections'
+      pickerOpen: false,
+      _pickerOverlay: null,
+      _pickerInput: null,
+      _pickerResults: null,
+      _pickerFiltered: [],
+      _pickerItems: [],
+      _pickerSelected: 0,
+      _pickerWin: win,
+      _pickerCleanup: null,
+      executeAction: null,  // set below
+      cleanup: () => {},
+    };
+    mainWinState.executeAction = (action, count) =>
+      this._executeMainAction(action, win, mainWinState, count);
+    this._mainWindowState.set(win, mainWinState);
+
+    const keyHandler = (e) => this._onMainKeyDown(e, win, mainWinState);
+    win.document.addEventListener('keydown', keyHandler, true);
+
+    mainWinState.cleanup = () => {
+      win.document.removeEventListener('keydown', keyHandler, true);
+      this._closeFuzzyPicker(win, mainWinState);
+      clearTimeout(mainWinState.keyTimeout);
+      clearTimeout(mainWinState._statusTimer);
+      try { statusEl.remove(); } catch (_) {}
+    };
+  },
+
+  _onMainKeyDown(e, win, winState) {
+    // When picker is open, all keys go to the picker handler (before any focus check)
+    if (winState.pickerOpen) {
+      this._onPickerKeyDown(e, win, winState);
+      return;
+    }
+
+    // Skip when any text input or editable is focused
+    const active = win.document.activeElement;
+    if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA'
+        || active.isContentEditable)) return;
+
+    // Skip when focus is inside an embedded browser element (PDF reader)
+    if (active && active.localName === 'browser') return;
+
+    // Skip when the selected tab is a reader tab, not the main library pane
+    try {
+      const tabID = win.Zotero_Tabs?.selectedID;
+      if (tabID && Zotero.Reader.getByTabID?.(tabID)) return;
+    } catch (_) {}
+
+    const keyStr = this._keyString(e);
+    if (!keyStr) return;
+
+    // Count prefix digits
+    if (/^\d$/.test(keyStr) && (keyStr !== '0' || winState.countBuffer)) {
+      winState.countBuffer = (winState.countBuffer || '') + keyStr;
+      e.preventDefault(); e.stopPropagation();
+      return;
+    }
+
+    const newBuffer  = winState.keyBuffer + keyStr;
+    const bindings   = this.getBindings();
+    const modePrefix = 'main:';
+
+    const possible = Object.keys(bindings).filter(k => k.startsWith(modePrefix + newBuffer));
+    const exact    = bindings[modePrefix + newBuffer];
+
+    if (possible.length === 0 && !exact) {
+      winState.keyBuffer = '';
+      winState.countBuffer = '';
+      clearTimeout(winState.keyTimeout);
+      winState.keyTimeout = null;
+      // Try single-key fallback
+      const sp = Object.keys(bindings).filter(k => k.startsWith(modePrefix + keyStr));
+      const se = bindings[modePrefix + keyStr];
+      if (sp.length === 0 && !se) return;
+      e.preventDefault(); e.stopPropagation();
+      this._processBuffer(keyStr, se, sp, modePrefix, bindings, winState);
+      return;
+    }
+
+    e.preventDefault(); e.stopPropagation();
+    this._processBuffer(newBuffer, exact, possible, modePrefix, bindings, winState);
+  },
+
+  _executeMainAction(action, win, winState, count) {
+    Zotero.debug('[ZoteroVim] Main action: ' + action + ' count:' + count);
+    switch (action) {
+      case 'mainFuzzyAll':         this._openFuzzyPicker(win, winState, 'all');         break;
+      case 'mainFuzzyCollection':  this._openFuzzyPicker(win, winState, 'collection');  break;
+      case 'mainFocusTree':
+      case 'mainFocusLeft':        this._mainFocusPanel(win, winState, 'collections');  break;
+      case 'mainFocusItems':
+      case 'mainFocusRight':       this._mainFocusPanel(win, winState, 'items');        break;
+      case 'mainYankCitekey':      this._mainYankCitekey(win, winState);               break;
+      case 'mainOpenPDF':
+      case 'mainActivate':         this._mainOpenPDF(win, winState);                   break;
+      case 'mainClosePDF':         this._mainClosePDF(win);                            break;
+      case 'mainFocusSearch':      this._mainFocusSearch(win);                         break;
+      case 'mainNavDown':          this._mainNavigate(win, winState, +1, count);       break;
+      case 'mainNavUp':            this._mainNavigate(win, winState, -1, count);       break;
+      case 'mainNavFirst':         this._mainNavigate(win, winState, 'first', 0);      break;
+      case 'mainNavLast':          this._mainNavigate(win, winState, 'last',  count);  break;
+      default: Zotero.debug('[ZoteroVim] Unknown main action: ' + action);
+    }
+  },
+
+  _delegateToMainWindow(action, count) {
+    const entry = [...this._mainWindowState.entries()][0];
+    if (!entry) return;
+    const [mainWin, mainState] = entry;
+    this._executeMainAction(action, mainWin, mainState, count);
+  },
+
+  _mainNavigate(win, winState, dir, count) {
+    try {
+      const zp = win.ZoteroPane;
+      if (winState.activePanelFocus === 'collections') {
+        const cv = zp.collectionsView;
+        if (!cv) return;
+        const cur  = cv.selection?.focused ?? 0;
+        const last = (cv.rowCount || 1) - 1;
+        const next = dir === 'first' ? 0
+                   : dir === 'last'  ? last
+                   : Math.max(0, Math.min(last, cur + dir * Math.max(1, count)));
+        cv.selection.select(next);
+        cv.ensureRowIsVisible?.(next);
+      } else {
+        const iv = zp.itemsView;
+        if (!iv) return;
+        const cur  = iv.selection?.focused ?? 0;
+        const last = (iv.rowCount || 1) - 1;
+        const next = dir === 'first' ? 0
+                   : dir === 'last'  ? (count > 0 ? Math.min(count - 1, last) : last)
+                   : Math.max(0, Math.min(last, cur + dir * Math.max(1, count)));
+        iv.selection.select(next);
+        iv.ensureRowIsVisible?.(next);
+      }
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] _mainNavigate error: ' + e);
+    }
+  },
+
+  _mainFocusPanel(win, winState, panel) {
+    winState.activePanelFocus = panel;
+    try {
+      const sel = panel === 'collections'
+        ? '#zotero-collections-tree'
+        : '#item-tree-main-default';
+      const el = win.document.querySelector(sel) ||
+                 win.document.querySelector('.virtualized-table');
+      if (el) el.focus();
+      Zotero.debug('[ZoteroVim] _mainFocusPanel: ' + panel);
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] _mainFocusPanel error: ' + e);
+    }
+  },
+
+  _mainOpenPDF(win, winState) {
+    try {
+      const items = win.ZoteroPane.getSelectedItems();
+      if (!items.length) { this._mainShowStatus(win, '✗ No item selected'); return; }
+      const item = items[0];
+      let attID;
+      if (item.isAttachment()) {
+        attID = item.id;
+      } else {
+        const atts = item.getAttachments()
+          .map(id => Zotero.Items.get(id))
+          .filter(a => a && a.isAttachment() && a.attachmentContentType === 'application/pdf');
+        if (!atts.length) { this._mainShowStatus(win, '✗ No PDF attachment'); return; }
+        attID = atts[0].id;
+      }
+      win.ZoteroPane.viewAttachment(attID);
+      Zotero.debug('[ZoteroVim] _mainOpenPDF: attID=' + attID);
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] _mainOpenPDF error: ' + e);
+      this._mainShowStatus(win, '✗ ' + String(e).slice(0, 40));
+    }
+  },
+
+  _mainClosePDF(win) {
+    try {
+      const tabs = win.Zotero_Tabs;
+      if (tabs) tabs.close(tabs.selectedID);
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] _mainClosePDF error: ' + e);
+    }
+  },
+
+  _mainFocusSearch(win) {
+    try {
+      const el = win.document.querySelector('#zotero-tb-search-input') ||
+                 win.document.querySelector('#zotero-tb-search input') ||
+                 win.document.querySelector('input[type="search"]');
+      if (el) { el.focus(); el.select(); }
+      else Zotero.debug('[ZoteroVim] _mainFocusSearch: search input not found');
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] _mainFocusSearch error: ' + e);
+    }
+  },
+
+  _mainYankCitekey(win, winState) {
+    try {
+      const items = win.ZoteroPane.getSelectedItems();
+      if (!items.length) { this._mainShowStatus(win, '✗ No item selected'); return; }
+      const item    = items[0];
+      const citekey = Zotero.BetterBibTeX?.KeyManager?.get(item.id)?.citationKey;
+      if (!citekey) { this._mainShowStatus(win, '✗ No citekey (BBT not ready?)'); return; }
+      const clip = Components.classes['@mozilla.org/widget/clipboardhelper;1']
+        .getService(Components.interfaces.nsIClipboardHelper);
+      clip.copyString(citekey);
+      this._mainShowStatus(win, '✓ @' + citekey);
+      Zotero.debug('[ZoteroVim] _mainYankCitekey: @' + citekey);
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] _mainYankCitekey error: ' + e);
+      this._mainShowStatus(win, '✗ ' + String(e).slice(0, 40));
+    }
+  },
+
+  _mainShowStatus(win, msg, ms = 2000) {
+    try {
+      const winState = this._mainWindowState.get(win);
+      const el = winState?.statusEl;
+      if (!el) return;
+      el.style.display = 'block';
+      el.textContent = msg;
+      el.style.background =
+        msg.startsWith('✓') ? 'rgba(50,150,50,0.9)'   :
+        msg.startsWith('→') ? 'rgba(60,100,180,0.9)'  :
+        msg.startsWith('▶') ? 'rgba(60,100,180,0.9)'  :
+                              'rgba(180,40,40,0.9)';
+      clearTimeout(winState._statusTimer);
+      winState._statusTimer = setTimeout(() => { el.style.display = 'none'; }, ms);
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] _mainShowStatus error: ' + e);
+    }
+  },
+
+  // ── Fuzzy picker ──────────────────────────────────────────────────────────
+
+  async _openFuzzyPicker(win, winState, scope) {
+    if (winState.pickerOpen) return;
+    winState.pickerOpen  = true;
+    winState._pickerWin  = win;
+
+    const doc  = win.document;
+    const root = doc.body || doc.documentElement;
+    // XUL document — must use HTML namespace so CSS (position:fixed, flex) works.
+    const H = 'http://www.w3.org/1999/xhtml';
+    const h = (tag) => doc.createElementNS(H, tag);
+
+    // ── Build overlay DOM ───────────────────────────────────────────────────
+    const overlay = h('div');
+    overlay.id = 'zv-picker-overlay';
+    overlay.style.cssText =
+      'position:fixed;top:0;left:0;right:0;bottom:0;' +
+      'background:rgba(0,0,0,0.6);z-index:99999;' +
+      'display:flex;align-items:flex-start;justify-content:center;padding-top:10vh;';
+
+    const modal = h('div');
+    modal.style.cssText =
+      'background:#1e1e2e;color:#cdd6f4;width:60vw;max-height:70vh;' +
+      'border-radius:8px;overflow:hidden;display:flex;flex-direction:column;' +
+      'box-shadow:0 20px 60px rgba(0,0,0,0.8);font:13px/1.4 monospace;';
+
+    const inputWrap = h('div');
+    inputWrap.style.cssText = 'padding:10px 12px;border-bottom:1px solid #313244;';
+
+    const input = h('input');
+    input.type = 'text';
+    input.placeholder = 'Search items…';
+    input.style.cssText =
+      'width:100%;box-sizing:border-box;background:#313244;color:#cdd6f4;' +
+      'border:none;outline:none;border-radius:4px;padding:6px 10px;font:13px/1 monospace;';
+
+    const results = h('div');
+    results.style.cssText = 'overflow-y:auto;flex:1;max-height:55vh;';
+    const loadingMsg = h('div');
+    loadingMsg.style.cssText = 'padding:12px;color:#6c7086';
+    loadingMsg.textContent = 'Loading…';
+    results.appendChild(loadingMsg);
+
+    const hintBar = h('div');
+    hintBar.style.cssText =
+      'padding:4px 12px;font-size:11px;color:#6c7086;border-top:1px solid #313244;flex-shrink:0;';
+    hintBar.textContent = 'j/k navigate  ·  Enter select  ·  y yank citation  ·  yy yank citekey  ·  Esc close';
+
+    inputWrap.appendChild(input);
+    modal.appendChild(inputWrap);
+    modal.appendChild(results);
+    modal.appendChild(hintBar);
+    overlay.appendChild(modal);
+    root.appendChild(overlay);
+
+    winState._pickerOverlay  = overlay;
+    winState._pickerInput    = input;
+    winState._pickerResults  = results;
+    winState._pickerSelected = 0;
+    winState._pickerFiltered = [];
+    winState._pickerLastKey  = null;
+    winState._pickerYTimer   = null;
+
+    // Dismiss on backdrop click
+    overlay.addEventListener('mousedown', (ev) => {
+      if (ev.target === overlay) this._closeFuzzyPicker(win, winState);
+    });
+
+    const onInput = () => {
+      winState._pickerSelected = 0;
+      this._filterAndRenderPicker(winState, input.value);
+    };
+
+    // Direct input listener: guaranteed to fire even if document-level capture
+    // doesn't propagate correctly in Zotero's XUL environment.
+    // For nav keys: preventDefault (stops typing) + call _onPickerKeyDown.
+    // For other keys: fall through so the character types and 'input' fires.
+    const NAV_KEYS = new Set(['Escape','Enter','j','k','ArrowDown','ArrowUp','y']);
+    const onInputKeyDown = (e) => {
+      if (!winState.pickerOpen) return;
+      if (NAV_KEYS.has(e.key) || (e.ctrlKey && (e.key === 'n' || e.key === 'p'))) {
+        e.preventDefault();
+        e.stopPropagation();
+        this._onPickerKeyDown(e, win, winState);
+      }
+    };
+
+    input.addEventListener('input', onInput);
+    input.addEventListener('keydown', onInputKeyDown, true);
+
+    winState._pickerCleanup = () => {
+      try { input.removeEventListener('input', onInput); } catch (_) {}
+      try { input.removeEventListener('keydown', onInputKeyDown, true); } catch (_) {}
+      clearTimeout(winState._pickerYTimer);
+    };
+
+    setTimeout(() => { try { input.focus(); } catch (_) {} }, 30);
+
+    // ── Load items ──────────────────────────────────────────────────────────
+    try {
+      const libID = Zotero.Libraries.userLibraryID;
+      let items;
+      if (scope === 'collection') {
+        const cv   = win.ZoteroPane.collectionsView;
+        const coll = cv?.getSelectedCollection?.();
+        // getChildItems is synchronous; getAll is async — must await
+        items = coll ? Array.from(coll.getChildItems(false, false) || [])
+                     : Array.from((await Zotero.Items.getAll(libID, false, true)) || []);
+      } else {
+        // Zotero.Items.getAll returns a Promise — must await
+        items = Array.from((await Zotero.Items.getAll(libID, false, true)) || []);
+      }
+      items = items.filter(item => !item.isAttachment() && !item.isNote());
+
+      winState._pickerItems = items.map(item => {
+        const citekey  = Zotero.BetterBibTeX?.KeyManager?.get(item.id)?.citationKey || '';
+        const title    = item.getField('title') || '';
+        const year     = item.getField('year')  || '';
+        const creators = item.getCreators?.() || [];
+        const author   = creators.length > 0
+          ? (creators[0].lastName || creators[0].name || '') : '';
+        return {
+          id: item.id, citekey, title, year, author,
+          searchStr: [citekey, title, author, year].join(' ').toLowerCase(),
+        };
+      });
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] _openFuzzyPicker load error: ' + e);
+      while (results.firstChild) results.removeChild(results.firstChild);
+      const errEl = doc.createElementNS('http://www.w3.org/1999/xhtml', 'div');
+      errEl.style.cssText = 'padding:12px;color:#f38ba8';
+      errEl.textContent = 'Error loading items: ' + String(e).slice(0, 80);
+      results.appendChild(errEl);
+      return;
+    }
+
+    this._filterAndRenderPicker(winState, '');
+  },
+
+  _filterAndRenderPicker(winState, query) {
+    const q = query.toLowerCase().trim();
+    if (!q) {
+      winState._pickerFiltered = winState._pickerItems.slice(0, 100);
+    } else {
+      // Sequential fuzzy: each character of the query must appear in order
+      winState._pickerFiltered = winState._pickerItems.filter(it => {
+        let idx = 0;
+        for (const c of q) {
+          const found = it.searchStr.indexOf(c, idx);
+          if (found < 0) return false;
+          idx = found + 1;
+        }
+        return true;
+      }).slice(0, 100);
+    }
+    this._renderPickerResults(winState);
+  },
+
+  _onPickerKeyDown(e, win, winState) {
+    if (e._zvPickerHandled) return;
+    e._zvPickerHandled = true;
+    const k = e.key;
+    const maxIdx = Math.max(0, (winState._pickerFiltered.length || 1) - 1);
+
+    if (k === 'Escape') {
+      e.preventDefault(); e.stopPropagation();
+      clearTimeout(winState._pickerYTimer);
+      winState._pickerLastKey = null;
+      this._closeFuzzyPicker(win, winState);
+      return;
+    }
+    if (k === 'Enter') {
+      e.preventDefault(); e.stopPropagation();
+      clearTimeout(winState._pickerYTimer);
+      winState._pickerLastKey = null;
+      this._pickerSelectItem(win, winState);
+      return;
+    }
+    if (k === 'j' || k === 'ArrowDown' || (e.ctrlKey && k === 'n')) {
+      e.preventDefault(); e.stopPropagation();
+      clearTimeout(winState._pickerYTimer);
+      winState._pickerLastKey = null;
+      winState._pickerSelected = Math.min(winState._pickerSelected + 1, maxIdx);
+      this._renderPickerResults(winState);
+      return;
+    }
+    if (k === 'k' || k === 'ArrowUp' || (e.ctrlKey && k === 'p')) {
+      e.preventDefault(); e.stopPropagation();
+      clearTimeout(winState._pickerYTimer);
+      winState._pickerLastKey = null;
+      winState._pickerSelected = Math.max(winState._pickerSelected - 1, 0);
+      this._renderPickerResults(winState);
+      return;
+    }
+    // y = yank full citation; yy = yank citekey only
+    if (k === 'y') {
+      e.preventDefault(); e.stopPropagation();
+      if (winState._pickerLastKey === 'y') {
+        clearTimeout(winState._pickerYTimer);
+        winState._pickerLastKey = null;
+        this._pickerYankCitekey(win, winState);
+      } else {
+        winState._pickerLastKey = 'y';
+        clearTimeout(winState._pickerYTimer);
+        winState._pickerYTimer = setTimeout(() => {
+          winState._pickerLastKey = null;
+          this._pickerYankCitation(win, winState);
+        }, 400);
+      }
+      return;
+    }
+    // All other keys fall through to the input for filtering
+    winState._pickerLastKey = null;
+    clearTimeout(winState._pickerYTimer);
+  },
+
+  _pickerYankCitation(win, winState) {
+    const item = (winState._pickerFiltered || [])[winState._pickerSelected];
+    if (!item) return;
+    const parts = [];
+    if (item.citekey) parts.push('@' + item.citekey);
+    if (item.title)   parts.push(item.title);
+    const meta = [item.author, item.year].filter(Boolean).join(', ');
+    if (meta) parts.push('(' + meta + ')');
+    const text = parts.join('  ');
+    try {
+      Components.classes['@mozilla.org/widget/clipboardhelper;1']
+        .getService(Components.interfaces.nsIClipboardHelper)
+        .copyString(text);
+      this._mainShowStatus(win, '✓ ' + (item.citekey ? '@' + item.citekey : item.title));
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] _pickerYankCitation error: ' + e);
+    }
+    this._closeFuzzyPicker(win, winState);
+  },
+
+  _renderPickerResults(winState) {
+    const container = winState._pickerResults;
+    if (!container) return;
+    const items    = winState._pickerFiltered || [];
+    const selected = winState._pickerSelected;
+    const doc = container.ownerDocument;
+    const H   = 'http://www.w3.org/1999/xhtml';
+    const h   = (tag) => doc.createElementNS(H, tag);
+
+    while (container.firstChild) container.removeChild(container.firstChild);
+
+    if (items.length === 0) {
+      const noEl = h('div');
+      noEl.style.cssText = 'padding:12px;color:#6c7086';
+      noEl.textContent = 'No results';
+      container.appendChild(noEl);
+      return;
+    }
+
+    const frag = doc.createDocumentFragment();
+    const win  = winState._pickerWin;
+
+    items.forEach((item, i) => {
+      const row = h('div');
+      const isSel = i === selected;
+      row.style.cssText =
+        'padding:6px 12px;cursor:pointer;border-left:3px solid ' +
+        (isSel ? '#89b4fa;background:#313244;' : 'transparent;');
+
+      const line1 = h('div');
+      const cite  = h('span');
+      cite.style.cssText = 'color:#89b4fa;font-weight:bold;margin-right:8px;';
+      cite.textContent   = item.citekey ? '@' + item.citekey : '(no citekey)';
+      const titleSpan = h('span');
+      titleSpan.style.cssText = 'color:#cdd6f4;';
+      titleSpan.textContent   = item.title.length > 72
+        ? item.title.slice(0, 72) + '…' : item.title;
+      line1.appendChild(cite);
+      line1.appendChild(titleSpan);
+
+      const meta = h('div');
+      meta.style.cssText = 'color:#6c7086;font-size:11px;margin-top:1px;padding-left:2px;';
+      meta.textContent   = [item.author, item.year].filter(Boolean).join(', ');
+
+      row.appendChild(line1);
+      row.appendChild(meta);
+      frag.appendChild(row);
+
+      row.addEventListener('click', () => {
+        winState._pickerSelected = i;
+        this._pickerSelectItem(win, winState);
+      });
+      row.addEventListener('mouseenter', () => {
+        winState._pickerSelected = i;
+        this._renderPickerResults(winState);
+      });
+    });
+
+    container.appendChild(frag);
+
+    // Scroll selected row into view
+    if (container.children[selected]) {
+      container.children[selected].scrollIntoView({ block: 'nearest' });
+    }
+  },
+
+  _pickerSelectItem(win, winState) {
+    const item = (winState._pickerFiltered || [])[winState._pickerSelected];
+    if (!item) return;
+    try {
+      win.ZoteroPane.selectItem(item.id);
+      Zotero.debug('[ZoteroVim] pickerSelectItem: id=' + item.id);
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] _pickerSelectItem error: ' + e);
+    }
+    this._closeFuzzyPicker(win, winState);
+  },
+
+  _pickerYankCitekey(win, winState) {
+    const item = (winState._pickerFiltered || [])[winState._pickerSelected];
+    if (!item) return;
+    if (!item.citekey) {
+      this._mainShowStatus(win, '✗ No citekey');
+      this._closeFuzzyPicker(win, winState);
+      return;
+    }
+    try {
+      Components.classes['@mozilla.org/widget/clipboardhelper;1']
+        .getService(Components.interfaces.nsIClipboardHelper)
+        .copyString(item.citekey);
+      this._mainShowStatus(win, '✓ @' + item.citekey);
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] _pickerYankCitekey error: ' + e);
+    }
+    this._closeFuzzyPicker(win, winState);
+  },
+
+  _closeFuzzyPicker(win, winState) {
+    if (!winState || !winState.pickerOpen) return;
+    winState.pickerOpen = false;
+    try { winState._pickerCleanup?.(); } catch (_) {}
+    try {
+      const ov = winState._pickerOverlay;
+      if (ov?.parentNode) ov.parentNode.removeChild(ov);
+    } catch (_) {}
+    winState._pickerOverlay  = null;
+    winState._pickerInput    = null;
+    winState._pickerResults  = null;
+    winState._pickerFiltered = [];
+    winState._pickerCleanup  = null;
+    winState._pickerLastKey  = null;
   },
 };

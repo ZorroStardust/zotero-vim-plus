@@ -2707,12 +2707,11 @@ var ZoteroVim = {
   },
 
   _onMainKeyDown(e, win, winState) {
-    // When picker is open, swallow all keys at the document level so Zotero's
-    // own handlers don't react.  The actual key routing is done solely by the
-    // input element's own keydown listener registered in _openFuzzyPicker.
+    // When picker is open, delegate to _onPickerKeyDown.  Nav keys get full
+    // preventDefault+stopPropagation; regular keys only get stopPropagation
+    // so they still reach the input element and filter results.
     if (winState.pickerOpen) {
-      e.preventDefault();
-      e.stopPropagation();
+      this._onPickerKeyDown(e, win, winState);
       return;
     }
 
@@ -2726,11 +2725,18 @@ var ZoteroVim = {
     if (active) {
       const tag = active.tagName  || '';
       const loc = active.localName || '';
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || active.isContentEditable) return;
-      if (loc === 'input' || loc === 'textarea' || loc === 'textbox' || loc === 'search') return;
-      // Also skip if focus is inside any shadow-DOM input (e.g. Zotero's search bar)
-      const shadow = active.shadowRoot;
-      if (shadow && shadow.querySelector('input, textarea')) return;
+      const isInput = tag === 'INPUT' || tag === 'TEXTAREA' || active.isContentEditable
+        || loc === 'input' || loc === 'textarea' || loc === 'textbox' || loc === 'search'
+        || (active.shadowRoot && active.shadowRoot.querySelector('input, textarea'));
+      if (isInput) {
+        // Allow Escape to blur the search bar and return to vim navigation
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          e.stopPropagation();
+          active.blur();
+        }
+        return;
+      }
     }
 
     // Skip when focus is inside an embedded browser element (PDF reader)
@@ -2978,7 +2984,7 @@ var ZoteroVim = {
     const hintBar = h('div');
     hintBar.style.cssText =
       'padding:4px 12px;font-size:11px;color:#6c7086;border-top:1px solid #313244;flex-shrink:0;';
-    hintBar.textContent = 'j/k navigate  ·  Enter select  ·  y yank citation  ·  yy yank citekey  ·  Esc close';
+    hintBar.textContent = 'Ctrl+j/k navigate  ·  Enter select  ·  y yank citation  ·  yy yank citekey  ·  Esc close';
 
     inputWrap.appendChild(input);
     modal.appendChild(inputWrap);
@@ -3005,26 +3011,10 @@ var ZoteroVim = {
       this._filterAndRenderPicker(winState, input.value);
     };
 
-    // Direct input listener: guaranteed to fire even if document-level capture
-    // doesn't propagate correctly in Zotero's XUL environment.
-    // For nav keys: preventDefault (stops typing) + call _onPickerKeyDown.
-    // For other keys: fall through so the character types and 'input' fires.
-    const NAV_KEYS = new Set(['Escape','Enter','j','k','ArrowDown','ArrowUp','y']);
-    const onInputKeyDown = (e) => {
-      if (!winState.pickerOpen) return;
-      if (NAV_KEYS.has(e.key) || (e.ctrlKey && (e.key === 'n' || e.key === 'p'))) {
-        e.preventDefault();
-        e.stopPropagation();
-        this._onPickerKeyDown(e, win, winState);
-      }
-    };
-
     input.addEventListener('input', onInput);
-    input.addEventListener('keydown', onInputKeyDown, true);
 
     winState._pickerCleanup = () => {
       try { input.removeEventListener('input', onInput); } catch (_) {}
-      try { input.removeEventListener('keydown', onInputKeyDown, true); } catch (_) {}
       clearTimeout(winState._pickerYTimer);
     };
 
@@ -3091,8 +3081,6 @@ var ZoteroVim = {
   },
 
   _onPickerKeyDown(e, win, winState) {
-    if (e._zvPickerHandled) return;
-    e._zvPickerHandled = true;
     const k = e.key;
     const maxIdx = Math.max(0, (winState._pickerFiltered.length || 1) - 1);
 
@@ -3110,7 +3098,7 @@ var ZoteroVim = {
       this._pickerSelectItem(win, winState);
       return;
     }
-    if (k === 'j' || k === 'ArrowDown' || (e.ctrlKey && k === 'n')) {
+    if (k === 'ArrowDown' || (e.ctrlKey && (k === 'n' || k === 'j'))) {
       e.preventDefault(); e.stopPropagation();
       clearTimeout(winState._pickerYTimer);
       winState._pickerLastKey = null;
@@ -3118,7 +3106,7 @@ var ZoteroVim = {
       this._renderPickerResults(winState);
       return;
     }
-    if (k === 'k' || k === 'ArrowUp' || (e.ctrlKey && k === 'p')) {
+    if (k === 'ArrowUp' || (e.ctrlKey && (k === 'p' || k === 'k'))) {
       e.preventDefault(); e.stopPropagation();
       clearTimeout(winState._pickerYTimer);
       winState._pickerLastKey = null;
@@ -3143,7 +3131,9 @@ var ZoteroVim = {
       }
       return;
     }
-    // All other keys fall through to the input for filtering
+    // All other keys: stop Zotero from reacting but allow the key to type in
+    // the input element (no preventDefault).
+    e.stopPropagation();
     winState._pickerLastKey = null;
     clearTimeout(winState._pickerYTimer);
   },

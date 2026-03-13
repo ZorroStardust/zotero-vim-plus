@@ -1076,12 +1076,27 @@ var ZoteroVim = {
       const focusNode = sel.focusNode;
       if (!focusNode) return;
       const focusEl   = focusNode.nodeType === 3 ? focusNode.parentElement : focusNode;
-      const focusRect = focusEl?.getBoundingClientRect?.();
-      if (!focusRect || focusRect.height < 1) return;
+      const focusElRect = focusEl?.getBoundingClientRect?.();
+      if (!focusElRect || focusElRect.height < 1) return;
 
-      const focusMidX = (focusRect.left + focusRect.right) / 2;
-      const focusMidY = (focusRect.top  + focusRect.bottom) / 2;
-      const lineH     = Math.max(focusRect.height, 8);
+      // Use the bounding rect of the actual focus *character* for x-position
+      // rather than the span midpoint — PDF.js spans can be very wide (entire
+      // line), so using the span midpoint causes large horizontal jumps when
+      // caretPositionFromPoint picks a character far from the cursor.
+      let focusMidX = (focusElRect.left + focusElRect.right) / 2;
+      try {
+        const focusOff = sel.focusOffset;
+        const charRange = doc.createRange();
+        charRange.setStart(focusNode, focusOff);
+        charRange.setEnd(focusNode, Math.min(focusOff + 1, focusNode.length || 0));
+        const charRects = charRange.getClientRects();
+        if (charRects.length > 0) {
+          focusMidX = (charRects[0].left + charRects[0].right) / 2;
+        }
+      } catch (_) {}
+
+      const focusMidY = (focusElRect.top  + focusElRect.bottom) / 2;
+      const lineH     = Math.max(focusElRect.height, 8);
 
       // ── Find target node / offset ──────────────────────────────────────
       let targetNode = null, targetOffset = 0;
@@ -2692,16 +2707,37 @@ var ZoteroVim = {
   },
 
   _onMainKeyDown(e, win, winState) {
-    // When picker is open, all keys go to the picker handler (before any focus check)
+    // When picker is open, delegate to _onPickerKeyDown.  Nav keys get full
+    // preventDefault+stopPropagation; regular keys only get stopPropagation
+    // so they still reach the input element and filter results.
     if (winState.pickerOpen) {
       this._onPickerKeyDown(e, win, winState);
       return;
     }
 
-    // Skip when any text input or editable is focused
+    // Skip when any text-entry element is focused — this covers the main
+    // search bar, tag search bar, and any other input/textarea/contenteditable
+    // in the Zotero UI.  XUL textbox elements expose localName 'input' after
+    // Zotero 7's HTML conversion, but we also guard 'textbox' and 'search'
+    // for safety.  Without this guard the space leader key is swallowed and
+    // can't be typed in search fields.
     const active = win.document.activeElement;
-    if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA'
-        || active.isContentEditable)) return;
+    if (active) {
+      const tag = active.tagName  || '';
+      const loc = active.localName || '';
+      const isInput = tag === 'INPUT' || tag === 'TEXTAREA' || active.isContentEditable
+        || loc === 'input' || loc === 'textarea' || loc === 'textbox' || loc === 'search'
+        || (active.shadowRoot && active.shadowRoot.querySelector('input, textarea'));
+      if (isInput) {
+        // Allow Escape to blur the search bar and return to vim navigation
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          e.stopPropagation();
+          active.blur();
+        }
+        return;
+      }
+    }
 
     // Skip when focus is inside an embedded browser element (PDF reader)
     if (active && active.localName === 'browser') return;
@@ -2948,7 +2984,7 @@ var ZoteroVim = {
     const hintBar = h('div');
     hintBar.style.cssText =
       'padding:4px 12px;font-size:11px;color:#6c7086;border-top:1px solid #313244;flex-shrink:0;';
-    hintBar.textContent = 'j/k navigate  ·  Enter select  ·  y yank citation  ·  yy yank citekey  ·  Esc close';
+    hintBar.textContent = 'Ctrl+j/k navigate  ·  Enter select  ·  y yank citation  ·  yy yank citekey  ·  Esc close';
 
     inputWrap.appendChild(input);
     modal.appendChild(inputWrap);
@@ -2975,26 +3011,10 @@ var ZoteroVim = {
       this._filterAndRenderPicker(winState, input.value);
     };
 
-    // Direct input listener: guaranteed to fire even if document-level capture
-    // doesn't propagate correctly in Zotero's XUL environment.
-    // For nav keys: preventDefault (stops typing) + call _onPickerKeyDown.
-    // For other keys: fall through so the character types and 'input' fires.
-    const NAV_KEYS = new Set(['Escape','Enter','j','k','ArrowDown','ArrowUp','y']);
-    const onInputKeyDown = (e) => {
-      if (!winState.pickerOpen) return;
-      if (NAV_KEYS.has(e.key) || (e.ctrlKey && (e.key === 'n' || e.key === 'p'))) {
-        e.preventDefault();
-        e.stopPropagation();
-        this._onPickerKeyDown(e, win, winState);
-      }
-    };
-
     input.addEventListener('input', onInput);
-    input.addEventListener('keydown', onInputKeyDown, true);
 
     winState._pickerCleanup = () => {
       try { input.removeEventListener('input', onInput); } catch (_) {}
-      try { input.removeEventListener('keydown', onInputKeyDown, true); } catch (_) {}
       clearTimeout(winState._pickerYTimer);
     };
 
@@ -3009,10 +3029,10 @@ var ZoteroVim = {
         const coll = cv?.getSelectedCollection?.();
         // getChildItems is synchronous; getAll is async — must await
         items = coll ? Array.from(coll.getChildItems(false, false) || [])
-                     : Array.from((await Zotero.Items.getAll(libID, false, true)) || []);
+                     : Array.from((await Zotero.Items.getAll(libID, true, false)) || []);
       } else {
-        // Zotero.Items.getAll returns a Promise — must await
-        items = Array.from((await Zotero.Items.getAll(libID, false, true)) || []);
+        // onlyTopLevel=true avoids duplicates from child items; deleted=false
+        items = Array.from((await Zotero.Items.getAll(libID, true, false)) || []);
       }
       items = items.filter(item => !item.isAttachment() && !item.isNote());
 
@@ -3061,8 +3081,6 @@ var ZoteroVim = {
   },
 
   _onPickerKeyDown(e, win, winState) {
-    if (e._zvPickerHandled) return;
-    e._zvPickerHandled = true;
     const k = e.key;
     const maxIdx = Math.max(0, (winState._pickerFiltered.length || 1) - 1);
 
@@ -3080,7 +3098,7 @@ var ZoteroVim = {
       this._pickerSelectItem(win, winState);
       return;
     }
-    if (k === 'j' || k === 'ArrowDown' || (e.ctrlKey && k === 'n')) {
+    if (k === 'ArrowDown' || (e.ctrlKey && (k === 'n' || k === 'j'))) {
       e.preventDefault(); e.stopPropagation();
       clearTimeout(winState._pickerYTimer);
       winState._pickerLastKey = null;
@@ -3088,7 +3106,7 @@ var ZoteroVim = {
       this._renderPickerResults(winState);
       return;
     }
-    if (k === 'k' || k === 'ArrowUp' || (e.ctrlKey && k === 'p')) {
+    if (k === 'ArrowUp' || (e.ctrlKey && (k === 'p' || k === 'k'))) {
       e.preventDefault(); e.stopPropagation();
       clearTimeout(winState._pickerYTimer);
       winState._pickerLastKey = null;
@@ -3113,7 +3131,9 @@ var ZoteroVim = {
       }
       return;
     }
-    // All other keys fall through to the input for filtering
+    // All other keys: stop Zotero from reacting but allow the key to type in
+    // the input element (no preventDefault).
+    e.stopPropagation();
     winState._pickerLastKey = null;
     clearTimeout(winState._pickerYTimer);
   },

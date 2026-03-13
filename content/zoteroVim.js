@@ -1076,12 +1076,27 @@ var ZoteroVim = {
       const focusNode = sel.focusNode;
       if (!focusNode) return;
       const focusEl   = focusNode.nodeType === 3 ? focusNode.parentElement : focusNode;
-      const focusRect = focusEl?.getBoundingClientRect?.();
-      if (!focusRect || focusRect.height < 1) return;
+      const focusElRect = focusEl?.getBoundingClientRect?.();
+      if (!focusElRect || focusElRect.height < 1) return;
 
-      const focusMidX = (focusRect.left + focusRect.right) / 2;
-      const focusMidY = (focusRect.top  + focusRect.bottom) / 2;
-      const lineH     = Math.max(focusRect.height, 8);
+      // Use the bounding rect of the actual focus *character* for x-position
+      // rather than the span midpoint — PDF.js spans can be very wide (entire
+      // line), so using the span midpoint causes large horizontal jumps when
+      // caretPositionFromPoint picks a character far from the cursor.
+      let focusMidX = (focusElRect.left + focusElRect.right) / 2;
+      try {
+        const focusOff = sel.focusOffset;
+        const charRange = doc.createRange();
+        charRange.setStart(focusNode, focusOff);
+        charRange.setEnd(focusNode, Math.min(focusOff + 1, focusNode.length || 0));
+        const charRects = charRange.getClientRects();
+        if (charRects.length > 0) {
+          focusMidX = (charRects[0].left + charRects[0].right) / 2;
+        }
+      } catch (_) {}
+
+      const focusMidY = (focusElRect.top  + focusElRect.bottom) / 2;
+      const lineH     = Math.max(focusElRect.height, 8);
 
       // ── Find target node / offset ──────────────────────────────────────
       let targetNode = null, targetOffset = 0;
@@ -2692,16 +2707,31 @@ var ZoteroVim = {
   },
 
   _onMainKeyDown(e, win, winState) {
-    // When picker is open, all keys go to the picker handler (before any focus check)
+    // When picker is open, swallow all keys at the document level so Zotero's
+    // own handlers don't react.  The actual key routing is done solely by the
+    // input element's own keydown listener registered in _openFuzzyPicker.
     if (winState.pickerOpen) {
-      this._onPickerKeyDown(e, win, winState);
+      e.preventDefault();
+      e.stopPropagation();
       return;
     }
 
-    // Skip when any text input or editable is focused
+    // Skip when any text-entry element is focused — this covers the main
+    // search bar, tag search bar, and any other input/textarea/contenteditable
+    // in the Zotero UI.  XUL textbox elements expose localName 'input' after
+    // Zotero 7's HTML conversion, but we also guard 'textbox' and 'search'
+    // for safety.  Without this guard the space leader key is swallowed and
+    // can't be typed in search fields.
     const active = win.document.activeElement;
-    if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA'
-        || active.isContentEditable)) return;
+    if (active) {
+      const tag = active.tagName  || '';
+      const loc = active.localName || '';
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || active.isContentEditable) return;
+      if (loc === 'input' || loc === 'textarea' || loc === 'textbox' || loc === 'search') return;
+      // Also skip if focus is inside any shadow-DOM input (e.g. Zotero's search bar)
+      const shadow = active.shadowRoot;
+      if (shadow && shadow.querySelector('input, textarea')) return;
+    }
 
     // Skip when focus is inside an embedded browser element (PDF reader)
     if (active && active.localName === 'browser') return;
@@ -3009,10 +3039,10 @@ var ZoteroVim = {
         const coll = cv?.getSelectedCollection?.();
         // getChildItems is synchronous; getAll is async — must await
         items = coll ? Array.from(coll.getChildItems(false, false) || [])
-                     : Array.from((await Zotero.Items.getAll(libID, false, true)) || []);
+                     : Array.from((await Zotero.Items.getAll(libID, true, false)) || []);
       } else {
-        // Zotero.Items.getAll returns a Promise — must await
-        items = Array.from((await Zotero.Items.getAll(libID, false, true)) || []);
+        // onlyTopLevel=true avoids duplicates from child items; deleted=false
+        items = Array.from((await Zotero.Items.getAll(libID, true, false)) || []);
       }
       items = items.filter(item => !item.isAttachment() && !item.isNote());
 

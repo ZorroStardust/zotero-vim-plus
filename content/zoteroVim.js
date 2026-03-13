@@ -2698,10 +2698,16 @@ var ZoteroVim = {
       return;
     }
 
-    // Skip when any text input or editable is focused
+    // Skip when any text input or editable is focused.
+    // Use localName (lowercase, namespace-agnostic) to catch both HTML elements
+    // (input, textarea) and XUL elements (textbox) used in Zotero's info panel.
     const active = win.document.activeElement;
-    if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA'
-        || active.isContentEditable)) return;
+    if (active) {
+      const ln = (active.localName || '').toLowerCase();
+      if (ln === 'input' || ln === 'textarea' || ln === 'textbox'
+          || active.isContentEditable
+          || active.getAttribute?.('contenteditable') === 'true') return;
+    }
 
     // Skip when focus is inside an embedded browser element (PDF reader)
     if (active && active.localName === 'browser') return;

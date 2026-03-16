@@ -256,8 +256,8 @@ var ZoteroVim = {
   isSmoothScrollEnabled() { return this.getPref('smoothScroll', true); },
 
   getSmoothScrollConfig() {
-    const initialSpeed = this.getPref('smoothScroll.initialSpeed', 320);
-    const maxSpeed = Math.max(initialSpeed, this.getPref('smoothScroll.maxSpeed', 2400));
+    const initialSpeed = this.getPref('smoothScroll.initialSpeed', 2000);
+    const maxSpeed = Math.max(initialSpeed, this.getPref('smoothScroll.maxSpeed', 2000));
     return {
       initialSpeed,
       maxSpeed,

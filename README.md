@@ -438,14 +438,19 @@ Open **Edit → Preferences** (macOS: **Zotero → Settings**) and navigate to t
 | Enable Insert mode | on | Allow entering Insert mode with `i` |
 | Scroll step | 60 px | Pixels scrolled per `j`/`k`/`H`/`L` keypress |
 | Smooth scrolling | on | Enable smooth scrolling behavior in the reader |
-| Smooth initial speed | 320 px/s | Starting speed for hold-based smooth scrolling |
-| Smooth max speed | 2400 px/s | Maximum hold-scroll speed |
+| Smooth initial speed | 2000 px/s | Starting speed for hold-based smooth scrolling |
+| Smooth max speed | 2000 px/s | Maximum hold-scroll speed |
 | Smooth acceleration | 2600 px/s² | Speed increase while holding a scroll key |
 | Smooth deceleration | 4200 px/s² | Speed decrease after key release |
 | Stop on release | off | If enabled, stop immediately when key is released |
 | Default highlight colour | Yellow | Colour used when no explicit colour key is pressed |
 
 Scroll settings are staged and only saved when you click **Apply configuration**.
+
+By default, `initial speed` and `max speed` are both `2000`, which gives a
+more constant "no acceleration jump" feel that many users perceive as smoother.
+If you prefer stronger acceleration/deceleration dynamics, you can set
+different values for these parameters.
 
 ---
 

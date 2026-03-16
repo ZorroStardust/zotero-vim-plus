@@ -36,6 +36,8 @@ var ZoteroVim = {
     // Normal mode — navigation
     'normal:j':       'scrollDown',
     'normal:k':       'scrollUp',
+    'normal:H':       'scrollLeft',
+    'normal:L':       'scrollRight',
     'normal:h':       'prevPage',
     'normal:l':       'nextPage',
     'normal:gg':      'firstPage',
@@ -380,7 +382,9 @@ var ZoteroVim = {
       filterColor: null,    // active colour filter hex string, or null for all
       smoothHold: {
         active: false,
+        releasing: false,
         key: null,
+        axis: null,
         direction: 0,
         speed: 0,
         rafId: null,
@@ -568,39 +572,49 @@ var ZoteroVim = {
 
   // ── Key handling ──────────────────────────────────────────────────────────
 
-  _shouldUseSmoothHold(event, state) {
+  _smoothHoldSpecForEvent(event, state) {
     if (!this.isSmoothScrollEnabled()) return false;
     if (state.mode !== 'normal') return false;
     if (state.countBuffer || state.keyBuffer) return false;
     if (event.ctrlKey || event.metaKey || event.altKey) return false;
-    if (event.key !== 'j' && event.key !== 'k') return false;
+    if (!['j', 'k', 'H', 'L'].includes(event.key)) return false;
 
     const bindings = this.getBindings();
-    return bindings['normal:j'] === 'scrollDown' && bindings['normal:k'] === 'scrollUp';
+    const action = bindings['normal:' + event.key];
+    if (action === 'scrollDown')  return { key: event.key, axis: 'y', direction: 1 };
+    if (action === 'scrollUp')    return { key: event.key, axis: 'y', direction: -1 };
+    if (action === 'scrollRight') return { key: event.key, axis: 'x', direction: 1 };
+    if (action === 'scrollLeft')  return { key: event.key, axis: 'x', direction: -1 };
+    return null;
   },
 
-  _startSmoothHoldScroll(state, pdfWin, key) {
+  _startSmoothHoldScroll(state, pdfWin, spec) {
     const hold = state.smoothHold;
     if (!hold) return;
 
-    if (hold.active && hold.key === key) return;
+    if (hold.active && hold.key === spec.key) return;
 
     const config = this.getSmoothScrollConfig();
+    const sameVector = hold.axis === spec.axis && hold.direction === spec.direction;
 
     hold.active = true;
     hold.releasing = false;
-    hold.key = key;
-    hold.direction = key === 'j' ? 1 : -1;
+    hold.key = spec.key;
+    hold.axis = spec.axis;
+    hold.direction = spec.direction;
     hold.lastTS = 0;
-    hold.speed = Math.max(config.initialSpeed, (hold.direction === (key === 'j' ? 1 : -1)) ? hold.speed : 0);
+    hold.speed = sameVector ? Math.max(config.initialSpeed, hold.speed) : config.initialSpeed;
 
     // Immediate response on keydown so short taps still feel consistent.
-    this._scrollContainerBy(this._getScrollContainer(pdfWin), hold.direction * (config.initialSpeed / 120), { forceInstant: true });
+    const kick = hold.direction * (config.initialSpeed / 120);
+    const kickDX = hold.axis === 'x' ? kick : 0;
+    const kickDY = hold.axis === 'y' ? kick : 0;
+    this._scrollContainerBy(this._getScrollContainer(pdfWin), kickDX, kickDY, { forceInstant: true });
 
     if (hold.rafId) return;
 
     const tick = (ts) => {
-      if ((!hold.active && !hold.releasing) || !hold.direction) {
+      if ((!hold.active && !hold.releasing) || !hold.direction || !hold.axis) {
         hold.rafId = null;
         hold.lastTS = 0;
         return;
@@ -624,7 +638,10 @@ var ZoteroVim = {
         }
       }
 
-      this._scrollContainerBy(this._getScrollContainer(pdfWin), hold.direction * hold.speed * dt, { forceInstant: true });
+      const delta = hold.direction * hold.speed * dt;
+      const dx = hold.axis === 'x' ? delta : 0;
+      const dy = hold.axis === 'y' ? delta : 0;
+      this._scrollContainerBy(this._getScrollContainer(pdfWin), dx, dy, { forceInstant: true });
       hold.rafId = pdfWin.requestAnimationFrame(tick);
     };
 
@@ -643,6 +660,7 @@ var ZoteroVim = {
     hold.active = false;
     hold.releasing = false;
     hold.key = null;
+    hold.axis = null;
     hold.direction = 0;
     hold.speed = 0;
     hold.lastTS = 0;
@@ -654,7 +672,7 @@ var ZoteroVim = {
 
   _onKeyUp(event, state, pdfWin) {
     if (!this.isSmoothScrollEnabled()) return;
-    if (event.key !== 'j' && event.key !== 'k') return;
+    if (!['j', 'k', 'H', 'L'].includes(event.key)) return;
     if (state?.smoothHold?.key === event.key) {
       const config = this.getSmoothScrollConfig();
       this._stopSmoothHoldScroll(state, pdfWin, !!config.stopOnRelease);
@@ -694,10 +712,11 @@ var ZoteroVim = {
       target.isContentEditable
     )) return;
 
-    if (this._shouldUseSmoothHold(event, state)) {
+    const holdSpec = this._smoothHoldSpecForEvent(event, state);
+    if (holdSpec) {
       event.preventDefault();
       event.stopPropagation();
-      this._startSmoothHoldScroll(state, pdfWin, event.key);
+      this._startSmoothHoldScroll(state, pdfWin, holdSpec);
       return;
     }
 
@@ -798,7 +817,8 @@ var ZoteroVim = {
 
       const step = this.getScrollStep();
       const getContainer = () => this._getScrollContainer(pdfWin);
-      const scrollBy  = (dy) => this._scrollContainerBy(getContainer(), dy);
+      const scrollBy  = (dy) => this._scrollContainerBy(getContainer(), 0, dy);
+      const scrollXBy = (dx) => this._scrollContainerBy(getContainer(), dx, 0);
       const viewportH = () => { try { return getContainer()?.clientHeight || 600; } catch (_) { return 600; } };
 
       // Scrolling / page navigation clears any active annotation selection so that
@@ -808,6 +828,8 @@ var ZoteroVim = {
       switch (action) {
         case 'scrollDown':    clearAnnotation(); scrollBy(step);                         break;
         case 'scrollUp':      clearAnnotation(); scrollBy(-step);                        break;
+        case 'scrollLeft':    clearAnnotation(); scrollXBy(-step);                       break;
+        case 'scrollRight':   clearAnnotation(); scrollXBy(step);                        break;
         case 'halfPageDown':  clearAnnotation(); scrollBy(Math.round(viewportH() / 2)); break;
         case 'halfPageUp':    clearAnnotation(); scrollBy(-Math.round(viewportH() / 2));break;
         case 'fullPageDown':  clearAnnotation(); scrollBy(viewportH());                  break;
@@ -1696,13 +1718,13 @@ var ZoteroVim = {
            pdfWin.document.getElementById('viewerContainer');
   },
 
-  _scrollContainerBy(container, dy, opts = null) {
+  _scrollContainerBy(container, dx, dy, opts = null) {
     if (!container) return;
     this._applyScrollBehavior(container, opts);
     try {
-      container.scrollBy(0, dy);
+      container.scrollBy(dx, dy);
     } catch (_) {
-      try { container.scrollBy(0, dy); } catch (_) {}
+      try { container.scrollBy(dx, dy); } catch (_) {}
     }
   },
 

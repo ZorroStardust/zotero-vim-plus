@@ -41,6 +41,8 @@ function _zvSet(key, value) {
 const ZV_DEFAULT_BINDINGS = {
   "normal:j":       "scrollDown",
   "normal:k":       "scrollUp",
+  "normal:H":       "scrollLeft",
+  "normal:L":       "scrollRight",
   "normal:h":       "prevPage",
   "normal:l":       "nextPage",
   "normal:gg":      "firstPage",
@@ -125,6 +127,8 @@ const ZV_DEFAULT_BINDINGS = {
 const ZV_ACTION_LABELS = {
   scrollDown:              "Scroll down",
   scrollUp:                "Scroll up",
+  scrollLeft:              "Scroll left (Shift+h)",
+  scrollRight:             "Scroll right (Shift+l)",
   prevPage:                "Previous page",
   nextPage:                "Next page",
   firstPage:               "First page (gg)",

@@ -233,7 +233,8 @@ keys.
 | `zg` | Create a **green** highlight |
 | `zb` | Create a **blue** highlight |
 | `zp` | Create a **purple** highlight |
-| `za` | Add a **note** annotation |
+| `za` | Add a **note** annotation (creates highlight + opens comment editor) |
+| `i` | Same as `za` (quick note + enter Insert on comment) |
 
 #### Copying text
 

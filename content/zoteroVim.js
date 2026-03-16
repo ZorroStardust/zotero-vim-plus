@@ -95,6 +95,7 @@ var ZoteroVim = {
     'visual:zb':      'highlightBlue',
     'visual:zp':      'highlightPurple',
     'visual:za':      'addNote',
+    'visual:i':       'addNote',
     'visual:y':       'copySelection',
     'visual:yy':      'yankParagraph',
     // Visual mode — search selection
@@ -1961,7 +1962,7 @@ var ZoteroVim = {
    * When no params are available (keyboard-built selection) we compute the
    * PDF-coordinate rects ourselves via _createAnnotationFromSelection.
    */
-  _highlight(state, reader, pdfWin, color) {
+  _highlight(state, reader, pdfWin, color, opts = null) {
     // Brief flash confirms the action fired (disappears when ✓/✗ arrives).
     const colorName = Object.entries(this.COLORS).find(([, v]) => v === color)?.[0] || color;
     this._showStatus(state, '▶ ' + colorName, 800);
@@ -1976,22 +1977,29 @@ var ZoteroVim = {
       this._lastSelectionParams = null;
       Zotero.debug('[ZoteroVim] _highlight: using params path, ann.text="' +
                    (params.annotation.text || '').slice(0, 40) + '"');
-      this._createAnnotationFromParams(state, reader, params.annotation, 'highlight', color);
+      this._createAnnotationFromParams(state, reader, params.annotation, 'highlight', color, opts);
       return;
     }
-    this._createAnnotationFromSelection(reader, state, pdfWin, 'highlight', color);
+    this._createAnnotationFromSelection(reader, state, pdfWin, 'highlight', color, opts);
   },
 
   _addNote(state, reader, pdfWin) {
+    const noteColor = this.getDefaultHighlightColor();
+    this._showStatus(state, '▶ note', 800);
     const params = state.selectionParams ||
       (Date.now() - this._lastSelectionTS < 10000 ? this._lastSelectionParams : null);
     if (params?.annotation) {
       state.selectionParams     = null;
       this._lastSelectionParams = null;
-      this._createAnnotationFromParams(state, reader, params.annotation, 'note', null);
+      // Zotero's text-selection "add note" workflow is highlight + comment.
+      this._createAnnotationFromParams(state, reader, params.annotation, 'highlight', noteColor, {
+        focusComment: true,
+      });
       return;
     }
-    this._createAnnotationFromSelection(reader, state, pdfWin, 'note', null);
+    this._createAnnotationFromSelection(reader, state, pdfWin, 'highlight', noteColor, {
+      focusComment: true,
+    });
   },
 
   /**
@@ -2001,7 +2009,7 @@ var ZoteroVim = {
    *
    * ann — the params.annotation object: { type, color, text, sortIndex, position }
    */
-  async _createAnnotationFromParams(state, reader, ann, type, color) {
+  async _createAnnotationFromParams(state, reader, ann, type, color, opts = null) {
     try {
       const attachment = Zotero.Items.get(reader.itemID);
       if (!attachment) { this._showStatus(state, '✗ no attachment'); return; }
@@ -2029,6 +2037,10 @@ var ZoteroVim = {
       Zotero.debug('[ZoteroVim] Created ' + type + ' id=' + item.id + ' color=' + color);
       state.lastAnnotationKey = item.key;
       this._showStatus(state, '✓ annotated', 1200);
+      if (opts?.focusComment) {
+        this._enterInsertForAnnotation(state, reader, item.key);
+        return;
+      }
       setTimeout(() => {
         this._setMode(state, 'normal');
         try { state.pdfWin?.focus(); } catch (_) {}
@@ -2054,7 +2066,7 @@ var ZoteroVim = {
    * This bypasses renderTextSelectionPopup entirely — useful when the
    * selection was built programmatically and that event didn't fire.
    */
-  async _createAnnotationFromSelection(reader, state, pdfWin, type, color) {
+  async _createAnnotationFromSelection(reader, state, pdfWin, type, color, opts = null) {
     Zotero.debug('[ZoteroVim] _createAnnotation: start type=' + type + ' color=' + color);
     const sel = pdfWin.getSelection?.();
     if (!sel || sel.isCollapsed || sel.rangeCount === 0) {
@@ -2240,6 +2252,10 @@ var ZoteroVim = {
       state.lastAnnotationKey = annotItem.key;
       this._showStatus(state, '✓ annotated', 1200);
       try { pdfWin.getSelection()?.removeAllRanges(); } catch (_) {}
+      if (opts?.focusComment) {
+        this._enterInsertForAnnotation(state, reader, annotItem.key);
+        return;
+      }
       setTimeout(() => {
         this._setMode(state, 'normal');
         try { pdfWin.focus(); } catch (_) {}
@@ -2513,45 +2529,211 @@ var ZoteroVim = {
    * The comment field is a contentEditable div with aria-label "Annotation comment"
    * inside the sidebar annotation card [data-sidebar-annotation-id="${key}"].
    */
-  _focusAnnotationComment(state, reader) {
+  _focusAnnotationComment(state, reader, opts = null) {
     const key = state.lastAnnotationKey;
     const outerDoc = reader._iframeWindow?.document;
     if (!outerDoc || !key) return;
+    const maxAttempts = Math.max(1, Number(opts?.maxAttempts || 8));
+    const retryDelayMs = Math.max(50, Number(opts?.retryDelayMs || 200));
+    const initialDelayMs = Math.max(0, Number(opts?.initialDelayMs || 100));
 
     const tryFocus = (attempt) => {
-      // Prefer the card for the specific annotation; fall back to any visible one.
-      const commentEl =
-        outerDoc.querySelector(`[data-sidebar-annotation-id="${key}"] div[aria-label="Annotation comment"]`) ||
-        outerDoc.querySelector('div[aria-label="Annotation comment"]');
-
-      if (commentEl && commentEl.isContentEditable) {
-        const r = commentEl.getBoundingClientRect();
-        if (r.width > 0 && r.height > 0) {
-          commentEl.focus();
-          // Place cursor at end of existing text.
-          try {
-            const sel = outerDoc.defaultView?.getSelection?.();
-            if (sel) {
-              const range = outerDoc.createRange();
-              range.selectNodeContents(commentEl);
-              range.collapse(false);
-              sel.removeAllRanges();
-              sel.addRange(range);
-            }
-          } catch (_) {}
-          this._showStatus(state, '-- INSERT --  Esc to exit', 2000);
-          Zotero.debug('[ZoteroVim] _focusAnnotationComment: focused key=' + key);
-          return;
-        }
+      const commentEl = this._findCommentEditorElement(outerDoc, key);
+      if (commentEl) {
+        this._focusCommentEditorElement(state, outerDoc, commentEl);
+        this._showStatus(state, '-- INSERT --  Esc to exit', 2000);
+        Zotero.debug('[ZoteroVim] _focusAnnotationComment: focused key=' + key);
+        return;
       }
 
-      if (attempt < 8) {
-        setTimeout(() => tryFocus(attempt + 1), 200);
+      if (attempt < maxAttempts) {
+        setTimeout(() => tryFocus(attempt + 1), retryDelayMs);
       }
       // Silently stop if not found — user is still in insert mode.
     };
 
-    setTimeout(() => tryFocus(0), 100);
+    setTimeout(() => tryFocus(0), initialDelayMs);
+  },
+
+  _enterInsertForAnnotation(state, reader, annotationKey) {
+    try {
+      state.lastAnnotationKey = annotationKey;
+      this._setMode(state, 'normal');
+
+      const readerWin = reader?._iframeWindow;
+      const ir = reader?._internalReader;
+      if (typeof ir?.setSelectedAnnotations === 'function' && readerWin) {
+        ir.setSelectedAnnotations(Components.utils.cloneInto([annotationKey], readerWin));
+      }
+      if (typeof ir?.navigate === 'function' && readerWin) {
+        ir.navigate(Components.utils.cloneInto({ annotationID: annotationKey }, readerWin));
+      }
+
+      // Reuse robust edit flow so newly created annotations can reliably enter
+      // an editable comment state across Zotero UI variants.
+      this._editAnnotation(state, reader);
+
+      // Some Zotero builds only materialize the input after Enter on a selected
+      // annotation. Trigger it programmatically so za/i does not require manual Enter.
+      setTimeout(() => this._triggerAnnotationEditEnter(reader), 140);
+      setTimeout(() => this._triggerAnnotationEditEnter(reader), 420);
+
+      // Keep a fallback focus pass in case the edit flow race-misses render.
+      this._focusAnnotationComment(state, reader, {
+        maxAttempts: 18,
+        retryDelayMs: 220,
+        initialDelayMs: 450,
+      });
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] _enterInsertForAnnotation error: ' + e);
+    }
+  },
+
+  _findCommentEditorElement(outerDoc, key) {
+    const keySelector = key ? `[data-sidebar-annotation-id="${key}"], [data-annotation-id="${key}"]` : null;
+    const selectors = [
+      `[data-sidebar-annotation-id="${key}"] [aria-label="Annotation comment"]`,
+      `[data-annotation-id="${key}"] [aria-label="Annotation comment"]`,
+      `[data-sidebar-annotation-id="${key}"] textarea`,
+      `[data-sidebar-annotation-id="${key}"] [contenteditable="true"]`,
+      '[aria-label="Annotation comment"]',
+      'textarea[aria-label="Annotation comment"]',
+      'div[aria-label="Annotation comment"]',
+      'textarea',
+      '[contenteditable="true"]',
+      '[role="textbox"]',
+    ];
+
+    const pool = [];
+    const seen = new Set();
+    const pushUnique = (el) => {
+      if (!el || seen.has(el)) return;
+      seen.add(el);
+      pool.push(el);
+    };
+
+    for (const sel of selectors) {
+      const direct = outerDoc.querySelector(sel);
+      pushUnique(direct);
+      for (const deepEl of this._queryDeepElements(outerDoc, sel)) {
+        pushUnique(deepEl);
+      }
+    }
+
+    const scored = [];
+    for (const el of pool) {
+      if (!this._isFocusableCommentEditor(el)) continue;
+      let score = 0;
+      const label = (el.getAttribute?.('aria-label') || '').toLowerCase();
+      const id = (el.id || '').toLowerCase();
+      const cls = (el.className || '').toString().toLowerCase();
+      const role = (el.getAttribute?.('role') || '').toLowerCase();
+
+      if (label.includes('annotation comment') || label.includes('comment')) score += 8;
+      if (role === 'textbox') score += 3;
+      if (id.includes('comment') || cls.includes('comment') || cls.includes('annotation')) score += 2;
+
+      if (keySelector && el.closest?.(keySelector)) score += 10;
+      scored.push({ el, score });
+    }
+
+    if (scored.length === 0) return null;
+    scored.sort((a, b) => b.score - a.score);
+    return scored[0].el;
+  },
+
+  _triggerAnnotationEditEnter(reader) {
+    try {
+      const outerWin = reader?._iframeWindow;
+      const outerDoc = outerWin?.document;
+      const pdfWin = reader?._internalReader?._primaryView?._iframeWindow;
+      if (!outerWin || !outerDoc) return;
+
+      const dispatchEnter = (target, winObj) => {
+        if (!target || typeof target.dispatchEvent !== 'function') return;
+        const evt = new winObj.KeyboardEvent('keydown', {
+          key: 'Enter',
+          code: 'Enter',
+          bubbles: true,
+          cancelable: true,
+        });
+        target.dispatchEvent(evt);
+      };
+
+      dispatchEnter(outerDoc.activeElement, outerWin);
+      dispatchEnter(outerDoc, outerWin);
+
+      if (pdfWin) {
+        dispatchEnter(pdfWin.document?.activeElement, pdfWin);
+        dispatchEnter(pdfWin.document, pdfWin);
+        dispatchEnter(pdfWin, pdfWin);
+      }
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] _triggerAnnotationEditEnter error: ' + e);
+    }
+  },
+
+  _queryDeepElements(root, selector) {
+    const results = [];
+    const queue = [root];
+    const seen = new Set();
+
+    while (queue.length) {
+      const node = queue.shift();
+      if (!node || seen.has(node)) continue;
+      seen.add(node);
+
+      try {
+        if (typeof node.querySelectorAll === 'function') {
+          for (const el of node.querySelectorAll(selector)) results.push(el);
+        }
+      } catch (_) {}
+
+      let descendants = [];
+      try {
+        if (typeof node.querySelectorAll === 'function') {
+          descendants = node.querySelectorAll('*');
+        }
+      } catch (_) {}
+      for (const el of descendants) {
+        if (el.shadowRoot) queue.push(el.shadowRoot);
+      }
+    }
+
+    return results;
+  },
+
+  _isFocusableCommentEditor(el) {
+    if (!el) return false;
+    const tag = el.tagName;
+    const role = (el.getAttribute?.('role') || '').toLowerCase();
+    const isEditable = el.isContentEditable || tag === 'TEXTAREA' || tag === 'INPUT' || role === 'textbox';
+    if (!isEditable || el.readOnly || el.disabled) return false;
+    const r = el.getBoundingClientRect?.();
+    return !!(r && r.width > 0 && r.height > 0);
+  },
+
+  _focusCommentEditorElement(state, outerDoc, el) {
+    try { el.focus(); } catch (_) {}
+    // Enter insert mode only once we have an actual focusable editor.
+    if (state?.mode !== 'insert') this._setMode(state, 'insert');
+    try {
+      if (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT') {
+        const len = el.value?.length || 0;
+        el.selectionStart = len;
+        el.selectionEnd = len;
+        return;
+      }
+
+      const sel = outerDoc.defaultView?.getSelection?.();
+      if (sel) {
+        const range = outerDoc.createRange();
+        range.selectNodeContents(el);
+        range.collapse(false);
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }
+    } catch (_) {}
   },
 
   /**

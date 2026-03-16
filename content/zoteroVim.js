@@ -366,6 +366,14 @@ var ZoteroVim = {
       hintMap: {},
       visualCursor: null,   // { textNode, offset } — restored if selection lost
       filterColor: null,    // active colour filter hex string, or null for all
+      smoothHold: {
+        active: false,
+        key: null,
+        direction: 0,
+        speed: 0,
+        rafId: null,
+        lastTS: 0,
+      },
       reader: reader,       // reference for direct annotation creation
       pdfWin: pdfWin,       // stored for _setMode → _clearVisualHints
       cleanup: () => {},
@@ -386,9 +394,13 @@ var ZoteroVim = {
     this._injectSelectionCSS(pdfWin);
 
     const keyHandler = (e) => this._onKeyDown(e, reader, state, pdfWin);
+    const keyUpHandler = (e) => this._onKeyUp(e, state, pdfWin);
+    const blurHandler = () => this._stopSmoothHoldScroll(state, pdfWin);
     // Register on the WINDOW (not document) so we capture keys before PDF.js's
     // own window-level keydown handlers (which handle j/k scrolling etc.).
     pdfWin.addEventListener('keydown', keyHandler, true);
+    pdfWin.addEventListener('keyup', keyUpHandler, true);
+    pdfWin.addEventListener('blur', blurHandler, true);
 
     // Clear cached params when selection becomes collapsed.
     const selectionHandler = () => {
@@ -432,7 +444,10 @@ var ZoteroVim = {
     }
 
     state.cleanup = () => {
+      this._stopSmoothHoldScroll(state, pdfWin);
       pdfWin.removeEventListener('keydown', keyHandler, true);
+      pdfWin.removeEventListener('keyup', keyUpHandler, true);
+      pdfWin.removeEventListener('blur', blurHandler, true);
       pdfWin.document.removeEventListener('selectionchange', selectionHandler);
       if (scrollEl) scrollEl.removeEventListener('scroll', scrollHandler, { passive: true });
       if (outerDoc) outerDoc.removeEventListener('keydown', outerEscapeHandler, true);
@@ -506,6 +521,7 @@ var ZoteroVim = {
   },
 
   _setMode(state, mode) {
+    if (mode !== 'normal') this._stopSmoothHoldScroll(state, state.pdfWin);
     state.mode = mode;
     state.keyBuffer = '';
     clearTimeout(state.keyTimeout);
@@ -540,6 +556,79 @@ var ZoteroVim = {
 
   // ── Key handling ──────────────────────────────────────────────────────────
 
+  _shouldUseSmoothHold(event, state) {
+    if (!this.isSmoothScrollEnabled()) return false;
+    if (state.mode !== 'normal') return false;
+    if (state.countBuffer || state.keyBuffer) return false;
+    if (event.ctrlKey || event.metaKey || event.altKey) return false;
+    if (event.key !== 'j' && event.key !== 'k') return false;
+
+    const bindings = this.getBindings();
+    return bindings['normal:j'] === 'scrollDown' && bindings['normal:k'] === 'scrollUp';
+  },
+
+  _startSmoothHoldScroll(state, pdfWin, key) {
+    const hold = state.smoothHold;
+    if (!hold) return;
+
+    hold.active = true;
+    hold.key = key;
+    hold.direction = key === 'j' ? 1 : -1;
+    hold.lastTS = 0;
+    if (hold.speed < 240) hold.speed = 240;
+
+    // Immediate response on keydown so short taps still feel consistent.
+    this._scrollContainerBy(this._getScrollContainer(pdfWin), hold.direction * 8, { forceInstant: true });
+
+    if (hold.rafId) return;
+
+    const tick = (ts) => {
+      if (!hold.active || !hold.direction) {
+        hold.rafId = null;
+        hold.lastTS = 0;
+        return;
+      }
+
+      if (!hold.lastTS) {
+        hold.lastTS = ts;
+      }
+      const dt = Math.min(0.05, Math.max(0.001, (ts - hold.lastTS) / 1000));
+      hold.lastTS = ts;
+
+      // Time-based acceleration: holding the key increases speed smoothly.
+      const accel = 2600; // px/s^2
+      const maxSpeed = 2400; // px/s
+      hold.speed = Math.min(maxSpeed, hold.speed + accel * dt);
+
+      this._scrollContainerBy(this._getScrollContainer(pdfWin), hold.direction * hold.speed * dt, { forceInstant: true });
+      hold.rafId = pdfWin.requestAnimationFrame(tick);
+    };
+
+    hold.rafId = pdfWin.requestAnimationFrame(tick);
+  },
+
+  _stopSmoothHoldScroll(state, pdfWin) {
+    const hold = state?.smoothHold;
+    if (!hold) return;
+    hold.active = false;
+    hold.key = null;
+    hold.direction = 0;
+    hold.speed = 0;
+    hold.lastTS = 0;
+    if (hold.rafId) {
+      try { pdfWin?.cancelAnimationFrame(hold.rafId); } catch (_) {}
+      hold.rafId = null;
+    }
+  },
+
+  _onKeyUp(event, state, pdfWin) {
+    if (!this.isSmoothScrollEnabled()) return;
+    if (event.key !== 'j' && event.key !== 'k') return;
+    if (state?.smoothHold?.key === event.key) {
+      this._stopSmoothHoldScroll(state, pdfWin);
+    }
+  },
+
   _onKeyDown(event, reader, state, pdfWin) {
     // Hint mode: user is picking a selection starting point.
     if (state.hintMode) {
@@ -572,6 +661,13 @@ var ZoteroVim = {
       target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' ||
       target.isContentEditable
     )) return;
+
+    if (this._shouldUseSmoothHold(event, state)) {
+      event.preventDefault();
+      event.stopPropagation();
+      this._startSmoothHoldScroll(state, pdfWin, event.key);
+      return;
+    }
 
     const keyStr = this._keyString(event);
     if (!keyStr) return;
@@ -669,9 +765,7 @@ var ZoteroVim = {
       Zotero.debug('[ZoteroVim] Action: ' + action + ' (mode:' + state.mode + ', count:' + count + ')');
 
       const step = this.getScrollStep();
-      const getContainer = () =>
-        pdfWin.PDFViewerApplication?.pdfViewer?.container ||
-        pdfWin.document.getElementById('viewerContainer');
+      const getContainer = () => this._getScrollContainer(pdfWin);
       const scrollBy  = (dy) => this._scrollContainerBy(getContainer(), dy);
       const viewportH = () => { try { return getContainer()?.clientHeight || 600; } catch (_) { return 600; } };
 
@@ -1565,9 +1659,14 @@ var ZoteroVim = {
     }
   },
 
-  _scrollContainerBy(container, dy) {
+  _getScrollContainer(pdfWin) {
+    return pdfWin.PDFViewerApplication?.pdfViewer?.container ||
+           pdfWin.document.getElementById('viewerContainer');
+  },
+
+  _scrollContainerBy(container, dy, opts = null) {
     if (!container) return;
-    this._applyScrollBehavior(container);
+    this._applyScrollBehavior(container, opts);
     try {
       container.scrollBy(0, dy);
     } catch (_) {
@@ -1575,9 +1674,9 @@ var ZoteroVim = {
     }
   },
 
-  _scrollContainerTo(container, top) {
+  _scrollContainerTo(container, top, opts = null) {
     if (!container) return;
-    this._applyScrollBehavior(container);
+    this._applyScrollBehavior(container, opts);
     try {
       if (typeof container.scrollTo === 'function') {
         container.scrollTo(0, top);
@@ -1589,10 +1688,14 @@ var ZoteroVim = {
     }
   },
 
-  _applyScrollBehavior(container) {
+  _applyScrollBehavior(container, opts = null) {
     if (!container?.style) return;
     try {
-      container.style.scrollBehavior = this.isSmoothScrollEnabled() ? 'smooth' : 'auto';
+      if (opts?.forceInstant) {
+        container.style.scrollBehavior = 'auto';
+      } else {
+        container.style.scrollBehavior = this.isSmoothScrollEnabled() ? 'smooth' : 'auto';
+      }
     } catch (_) {}
   },
 

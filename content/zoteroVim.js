@@ -89,6 +89,8 @@ var ZoteroVim = {
     'visual:{':       'extendParagraphBackward',
     'visual:w':       'extendWordForward',
     'visual:b':       'extendWordBackward',
+    'visual:0':       'extendLineStart',
+    'visual:$':       'extendLineEnd',
     // Visual mode — annotation
     'visual:zy':      'highlightYellow',
     'visual:zr':      'highlightRed',
@@ -116,6 +118,7 @@ var ZoteroVim = {
     'cursor:W':       'cursorBigWordForward',
     'cursor:b':       'cursorWordBackward',
     'cursor:B':       'cursorBigWordBackward',
+    'cursor:0':       'cursorLineStart',
     'cursor:$':       'cursorLineEnd',
     'cursor:v':       'cursorToVisual',
     'cursor:escape':  'exitMode',
@@ -968,6 +971,8 @@ var ZoteroVim = {
         case 'extendLeft':              this._extendByChar(state, pdfWin, -1);               break;
         case 'extendWordForward':        this._extendByWord(state, pdfWin, 'forward', false);   break;
         case 'extendWordBackward':       this._extendByWord(state, pdfWin, 'backward', false);  break;
+        case 'extendLineStart':          this._extendToLineBoundary(state, pdfWin, false);      break;
+        case 'extendLineEnd':            this._extendToLineBoundary(state, pdfWin, true);       break;
         case 'extendSentenceForward':    this._extendBySentence(state, pdfWin, +1);             break;
         case 'extendSentenceBackward':   this._extendBySentence(state, pdfWin, -1);             break;
         case 'extendParagraphForward':   this._extendByParagraph(state, pdfWin, +1);            break;
@@ -992,7 +997,8 @@ var ZoteroVim = {
         case 'cursorBigWordForward':  this._cursorMoveByGranularity(state, pdfWin, 'forward', 'bigword', count);    break;
         case 'cursorWordBackward':    this._cursorMoveByGranularity(state, pdfWin, 'backward', 'word', count);      break;
         case 'cursorBigWordBackward': this._cursorMoveByGranularity(state, pdfWin, 'backward', 'bigword', count);   break;
-        case 'cursorLineEnd':         this._cursorMoveByGranularity(state, pdfWin, 'forward', 'lineboundary', count || 1); break;
+        case 'cursorLineStart':       this._cursorMoveToLineBoundary(state, pdfWin, false);                          break;
+        case 'cursorLineEnd':         this._cursorMoveToLineBoundary(state, pdfWin, true);                           break;
         case 'cursorToVisual':        this._cursorToVisual(state, pdfWin);                      break;
 
       // Delegate main-window actions from reader context
@@ -1387,6 +1393,83 @@ var ZoteroVim = {
     sel.removeAllRanges();
     sel.addRange(r);
     state.visualCursor = { textNode: targetNode, offset: targetOff };
+  },
+
+  _cursorMoveToLineBoundary(state, pdfWin, toEnd) {
+    try {
+      if (!this._ensureCursorCaret(state, pdfWin)) return;
+      const sel = pdfWin.getSelection();
+      if (!sel?.focusNode) return;
+      const target = this._lineBoundaryTarget(pdfWin.document, sel.focusNode, sel.focusOffset, toEnd);
+      if (!target?.node) return;
+
+      const r = pdfWin.document.createRange();
+      r.setStart(target.node, target.offset);
+      r.collapse(true);
+      sel.removeAllRanges();
+      sel.addRange(r);
+      state.visualCursor = { textNode: target.node, offset: target.offset };
+      state.cursorPreferredX = this._cursorCurrentX(pdfWin.document, sel, state.cursorPreferredX);
+      this._updateVisualCursor(state, pdfWin);
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] _cursorMoveToLineBoundary error: ' + e);
+    }
+  },
+
+  _lineBoundaryTarget(doc, focusNode, focusOffset, toEnd) {
+    const focusEl = focusNode?.nodeType === 3 ? focusNode.parentElement : focusNode;
+    const focusRect = focusEl?.getBoundingClientRect?.();
+    if (!focusRect) return null;
+
+    const focusY = (focusRect.top + focusRect.bottom) / 2;
+    const lines = this._cursorVisibleLines(doc);
+    if (!lines.length) return null;
+
+    let curLineIdx = lines.findIndex(l => focusY >= l.top - 1 && focusY <= l.bottom + 1);
+    if (curLineIdx < 0) {
+      let best = Infinity;
+      for (let i = 0; i < lines.length; i++) {
+        const d = Math.abs(lines[i].midY - focusY);
+        if (d < best) { best = d; curLineIdx = i; }
+      }
+    }
+    if (curLineIdx < 0) return null;
+
+    const spans = lines[curLineIdx].spans;
+    if (!spans?.length) return null;
+    const targetSpan = toEnd ? spans[spans.length - 1] : spans[0];
+    const node = targetSpan?.tn || null;
+    if (!node) return null;
+    const offset = toEnd ? node.length : 0;
+    return { node, offset };
+  },
+
+  _extendToLineBoundary(state, pdfWin, toEnd) {
+    try {
+      pdfWin.focus();
+      const doc = pdfWin.document;
+      const sel = pdfWin.getSelection();
+      if (!sel) return;
+
+      if ((sel.rangeCount === 0 || sel.isCollapsed) && state.visualCursor?.textNode?.isConnected) {
+        const r = doc.createRange();
+        r.setStart(state.visualCursor.textNode, state.visualCursor.offset);
+        r.collapse(true);
+        sel.removeAllRanges();
+        sel.addRange(r);
+      }
+      if (sel.rangeCount === 0) return;
+
+      if (!state.visualCursor || !state.visualCursor.textNode?.isConnected) {
+        state.visualCursor = { textNode: sel.anchorNode, offset: sel.anchorOffset };
+      }
+
+      const target = this._lineBoundaryTarget(doc, sel.focusNode, sel.focusOffset, toEnd);
+      if (!target?.node) return;
+      this._setVisualSelectionFromAnchor(state, pdfWin, target.node, target.offset);
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] _extendToLineBoundary error: ' + e);
+    }
   },
 
   _cursorComputeWordPosition(nodes, startPos, direction, bigWord, count) {

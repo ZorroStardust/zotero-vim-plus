@@ -229,7 +229,7 @@ caret there.
 | `W` | Move caret forward by one WORD (non-whitespace chunk) |
 | `b` | Move caret backward by one word |
 | `B` | Move caret backward by one WORD (non-whitespace chunk) |
-| `$` | Move caret to end of line |
+| `0` / `$` | Move caret to line start / line end |
 | `2w`, `3b`, ... | Count prefix repeats the motion |
 
 #### Mode switches
@@ -257,6 +257,7 @@ keys.
 | `j` / `k` | Extend selection down / up by one line |
 | `h` / `l` | Extend selection left / right by one character |
 | `w` / `b` | Extend selection forward / backward by one word |
+| `0` / `$` | Extend selection to line start / line end |
 | `)` / `(` | Extend selection to next / previous sentence start |
 | `}` / `{` | Extend selection to paragraph end / start |
 | `o` | **Swap anchor and focus** — jump to the opposite end of the selection (like Vim's `o` in Visual mode); subsequent movement keys extend from the new end |
@@ -398,6 +399,8 @@ Open **Edit → Preferences** (macOS: **Zotero → Settings**) and navigate to t
 | `extendRight` | Extend selection right one character |
 | `extendWordForward` | Extend selection to next word |
 | `extendWordBackward` | Extend selection to previous word |
+| `extendLineStart` | Extend selection to start of current line |
+| `extendLineEnd` | Extend selection to end of current line |
 | `extendSentenceForward` | Extend selection to next sentence start |
 | `extendSentenceBackward` | Extend selection to previous sentence start |
 | `extendParagraphForward` | Extend selection to end of current paragraph |
@@ -420,6 +423,7 @@ Open **Edit → Preferences** (macOS: **Zotero → Settings**) and navigate to t
 | `cursorBigWordForward` | Move caret forward one WORD (Cursor mode) |
 | `cursorWordBackward` | Move caret backward one word (Cursor mode) |
 | `cursorBigWordBackward` | Move caret backward one WORD (Cursor mode) |
+| `cursorLineStart` | Move caret to start of line (Cursor mode) |
 | `cursorLineEnd` | Move caret to end of line (Cursor mode) |
 | `cursorToVisual` | Enter Visual mode from current caret |
 

@@ -1,5 +1,9 @@
 # Zotero Vim
 
+> Original repository: https://codeberg.org/finktank/zotero-vim
+>
+> This repository is forked from the original Zotero Vim project.
+
 Vim-style keybindings for the Zotero 7/8 PDF reader. Navigate, scroll,
 annotate, and copy text without touching the mouse.
 

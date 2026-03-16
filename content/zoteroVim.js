@@ -395,6 +395,7 @@ var ZoteroVim = {
       hintMap: {},
       hintTargetMode: null,
       visualCursor: null,   // { textNode, offset } — restored if selection lost
+      visualPreferredX: null,
       cursorPreferredX: null,
       cursorLastKey: '',
       cursorLastKeyTS: 0,
@@ -1013,10 +1014,14 @@ var ZoteroVim = {
 
   _enterVisualMode(state, pdfWin) {
     state.visualCursor = null;   // always start fresh — old textNode may be stale
+    state.visualPreferredX = null;
     this._setMode(state, 'visual');
     try {
       const sel = pdfWin.getSelection();
-      if (sel && !sel.isCollapsed) return;   // keep existing mouse selection
+      if (sel && !sel.isCollapsed) {
+        state.visualPreferredX = this._cursorCurrentX(pdfWin.document, sel, null);
+        return;   // keep existing mouse selection
+      }
     } catch (_) {}
     this._showVisualHints(state, pdfWin, 'visual');
   },
@@ -1247,6 +1252,32 @@ var ZoteroVim = {
     return fallback;
   },
 
+  _setVisualSelectionFromAnchor(state, pdfWin, targetNode, targetOffset) {
+    try {
+      const sel = pdfWin.getSelection();
+      if (!sel || !state.visualCursor?.textNode?.isConnected) return false;
+
+      const anchorNode = state.visualCursor.textNode;
+      const anchorOffset = state.visualCursor.offset;
+
+      if (typeof sel.setBaseAndExtent === 'function') {
+        sel.setBaseAndExtent(anchorNode, anchorOffset, targetNode, targetOffset);
+      } else {
+        // Fallback keeps anchor fixed using collapse+extend.
+        sel.removeAllRanges();
+        sel.collapse(anchorNode, anchorOffset);
+        sel.extend(targetNode, targetOffset);
+      }
+
+      state.visualPreferredX = this._cursorCurrentX(pdfWin.document, sel, state.visualPreferredX);
+      this._updateVisualCursor(state, pdfWin);
+      return true;
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] _setVisualSelectionFromAnchor error: ' + e);
+      return false;
+    }
+  },
+
   _cursorOrderedTextNodes(doc) {
     const spans = [];
     for (const span of doc.querySelectorAll('.textLayer span')) {
@@ -1433,27 +1464,7 @@ var ZoteroVim = {
       const pos = this._cursorComputeWordPosition(nodes, { idx, off }, direction, bigWord, 1);
       const targetNode = nodes[Math.max(0, Math.min(pos.idx, nodes.length - 1))];
       const targetOffset = Math.max(0, Math.min(pos.off, targetNode.length));
-
-      const anchorNode = state.visualCursor.textNode;
-      const anchorOffset = state.visualCursor.offset;
-
-      const range = doc.createRange();
-      let anchorFirst = true;
-      if (anchorNode !== targetNode) {
-        anchorFirst = !!(anchorNode.compareDocumentPosition(targetNode) & 4);
-      } else {
-        anchorFirst = anchorOffset <= targetOffset;
-      }
-      if (anchorFirst) {
-        range.setStart(anchorNode, anchorOffset);
-        range.setEnd(targetNode, targetOffset);
-      } else {
-        range.setStart(targetNode, targetOffset);
-        range.setEnd(anchorNode, anchorOffset);
-      }
-      sel.removeAllRanges();
-      sel.addRange(range);
-      this._updateVisualCursor(state, pdfWin);
+      this._setVisualSelectionFromAnchor(state, pdfWin, targetNode, targetOffset);
     } catch (e) {
       Zotero.debug('[ZoteroVim] _extendByWord error: ' + e);
     }
@@ -1829,43 +1840,18 @@ var ZoteroVim = {
         state.visualCursor = { textNode: sel.anchorNode, offset: sel.anchorOffset };
       }
 
-      const target = this._lineMoveTarget(doc, sel.focusNode, sel.focusOffset, direction);
+      const target = this._lineMoveTarget(
+        doc,
+        sel.focusNode,
+        sel.focusOffset,
+        direction,
+        state.visualPreferredX
+      );
       if (!target?.node) return;
 
-      const targetNode = target.node;
-      const targetOffset = target.offset;
-
-      // ── Build range from saved anchor to new target ────────────────────
-      // We use createRange + addRange instead of sel.extend() because
-      // sel.extend() silently fails in PDF.js's non-editable text layer.
-      const anchorNode   = state.visualCursor.textNode;
-      const anchorOffset = state.visualCursor.offset;
-      try {
-        const range = doc.createRange();
-        // Determine DOM order: is anchor before target?
-        // Use the numeric constant (4) — Node is not in scope in the chrome sandbox.
-        let anchorFirst = true;
-        if (anchorNode !== targetNode) {
-          const cmp = anchorNode.compareDocumentPosition(targetNode);
-          anchorFirst = !!(cmp & 4);  // 4 = Node.DOCUMENT_POSITION_FOLLOWING
-        } else {
-          anchorFirst = anchorOffset <= targetOffset;
-        }
-        if (anchorFirst) {
-          range.setStart(anchorNode, anchorOffset);
-          range.setEnd(targetNode, targetOffset);
-        } else {
-          range.setStart(targetNode, targetOffset);
-          range.setEnd(anchorNode, anchorOffset);
-        }
-        sel.removeAllRanges();
-        sel.addRange(range);
+      if (this._setVisualSelectionFromAnchor(state, pdfWin, target.node, target.offset)) {
         const selLen = sel.toString().length;
         this._showStatus(state, '▶ ' + selLen + ' chars', 400);
-        this._updateVisualCursor(state, pdfWin);
-      } catch (e) {
-        Zotero.debug('[ZoteroVim] _extendByLine range error: ' + e);
-        this._showStatus(state, '✗ range err: ' + String(e).slice(0, 25), 2000);
       }
     } catch (e) {
       Zotero.debug('[ZoteroVim] _extendByLine error: ' + e);
@@ -1874,26 +1860,37 @@ var ZoteroVim = {
 
   /** Extend selection left/right by one character (h/l). */
   _extendByChar(state, pdfWin, direction) {
-    // sel.modify works for character granularity in PDF.js.
-    pdfWin.focus();
-    const sel = pdfWin.getSelection();
-    if (!sel) return;
-    // Restore collapsed cursor from saved anchor if needed.
-    if ((sel.rangeCount === 0 || sel.isCollapsed) && state.visualCursor) {
-      try {
-        const r = pdfWin.document.createRange();
+    try {
+      pdfWin.focus();
+      const doc = pdfWin.document;
+      const sel = pdfWin.getSelection();
+      if (!sel) return;
+
+      if ((sel.rangeCount === 0 || sel.isCollapsed) && state.visualCursor?.textNode?.isConnected) {
+        const r = doc.createRange();
         r.setStart(state.visualCursor.textNode, state.visualCursor.offset);
         r.collapse(true);
         sel.removeAllRanges();
         sel.addRange(r);
-      } catch (_) {}
+      }
+      if (sel.rangeCount === 0) return;
+      if (!state.visualCursor || !state.visualCursor.textNode?.isConnected) {
+        state.visualCursor = { textNode: sel.anchorNode, offset: sel.anchorOffset };
+      }
+
+      const nodes = this._cursorOrderedTextNodes(doc);
+      if (!nodes.length) return;
+      let idx = this._cursorNodeIndex(nodes, sel.focusNode);
+      if (idx < 0) idx = 0;
+      let pos = { idx, off: Math.max(0, Math.min(sel.focusOffset || 0, nodes[idx].length)) };
+      pos = direction > 0 ? this._cursorAdvancePos(nodes, pos) : this._cursorRetreatPos(nodes, pos);
+
+      const targetNode = nodes[Math.max(0, Math.min(pos.idx, nodes.length - 1))];
+      const targetOffset = Math.max(0, Math.min(pos.off, targetNode.length));
+      this._setVisualSelectionFromAnchor(state, pdfWin, targetNode, targetOffset);
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] _extendByChar error: ' + e);
     }
-    if (sel.rangeCount === 0) return;
-    if (!state.visualCursor) {
-      state.visualCursor = { textNode: sel.anchorNode, offset: sel.anchorOffset };
-    }
-    sel.modify('extend', direction > 0 ? 'forward' : 'backward', 'character');
-    this._updateVisualCursor(state, pdfWin);
   },
 
   /**

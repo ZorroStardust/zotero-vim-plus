@@ -423,6 +423,18 @@ var ZoteroVim = {
       },
       sidebarNavActive: false,
       sidebarOutlineIndex: -1,
+      outlineExplorerOpen: false,
+      outlineExplorerLoading: false,
+      outlineExplorerTree: null,
+      outlineExplorerVisible: [],
+      outlineExplorerSelected: 0,
+      outlineExplorerHintBuffer: '',
+      _outlineExplorerHintTimer: null,
+      outlineExplorerCmdBuffer: '',
+      _outlineExplorerCmdTimer: null,
+      _outlineExplorerOverlay: null,
+      _outlineExplorerList: null,
+      _outlineExplorerStatus: null,
       reader: reader,       // reference for direct annotation creation
       pdfWin: pdfWin,       // stored for _setMode → _clearVisualHints
       cleanup: () => {},
@@ -498,7 +510,8 @@ var ZoteroVim = {
       }
       const keyStr = this._keyString(e);
       if (!keyStr) return;
-      const shouldHandle = state.sidebarNavActive || !!state.keyBuffer || keyStr === ' ' || keyStr === 'ctrl+h' || keyStr === 'escape';
+      const shouldHandle = state.sidebarNavActive || state.outlineExplorerOpen
+        || !!state.keyBuffer || keyStr === ' ' || keyStr === 'ctrl+h' || keyStr === 'escape';
       if (!shouldHandle) return;
       this._onKeyDown(e, reader, state, pdfWin);
     };
@@ -509,6 +522,7 @@ var ZoteroVim = {
 
     state.cleanup = () => {
       this._stopSmoothHoldScroll(state, pdfWin);
+      this._closeReaderOutlineExplorer(state);
       pdfWin.removeEventListener('keydown', keyHandler, true);
       pdfWin.removeEventListener('keyup', keyUpHandler, true);
       pdfWin.removeEventListener('blur', blurHandler, true);
@@ -731,6 +745,12 @@ var ZoteroVim = {
   },
 
   _onKeyDown(event, reader, state, pdfWin) {
+    if (state.outlineExplorerOpen) {
+      if (this._onReaderOutlineExplorerKeyDown(event, reader, state, pdfWin)) {
+        return;
+      }
+    }
+
     // Hint mode: user is picking a selection starting point.
     if (state.hintMode) {
       event.preventDefault();
@@ -1053,36 +1073,832 @@ var ZoteroVim = {
     if (!pdfWin) return false;
 
     if (action === 'toggleReaderSidebarOutline') {
-      this._readerToggleSidebarOutline(state, reader, pdfWin);
+      this._toggleReaderOutlineExplorer(state, reader, pdfWin);
       return true;
     }
 
     if (action === 'focusReaderSidebar') {
-      this._readerFocusSidebarOutline(state, reader, pdfWin, { openIfNeeded: true });
+      this._focusReaderOutlineExplorer(state, reader, pdfWin);
       return true;
     }
 
-    if (!state.sidebarNavActive) return false;
+    if (!state.outlineExplorerOpen) return false;
 
     switch (action) {
       case 'scrollDown':
-        this._readerOutlineMove(state, reader, pdfWin, +1);
+        this._moveReaderOutlineExplorer(state, +1);
         return true;
       case 'scrollUp':
-        this._readerOutlineMove(state, reader, pdfWin, -1);
+        this._moveReaderOutlineExplorer(state, -1);
         return true;
       case 'nextPage':
-        this._readerOutlineToggleExpand(state, reader, pdfWin, true);
+        this._toggleReaderOutlineExplorerNode(state, true);
         return true;
       case 'prevPage':
-        this._readerOutlineToggleExpand(state, reader, pdfWin, false);
+        this._toggleReaderOutlineExplorerNode(state, false);
         return true;
       case 'editAnnotation':
-        this._readerOutlineActivate(state, reader, pdfWin);
+        this._activateReaderOutlineExplorer(state, reader, pdfWin);
+        return true;
+      case 'exitMode':
+        this._closeReaderOutlineExplorer(state, pdfWin);
         return true;
       default:
         return false;
     }
+  },
+
+  _onReaderOutlineExplorerKeyDown(event, reader, state, pdfWin) {
+    const keyStr = this._keyString(event);
+    if (!keyStr) return false;
+
+    if (keyStr === 'g') {
+      event.preventDefault(); event.stopPropagation();
+      this._handleReaderOutlineExplorerG(state);
+      return true;
+    }
+    if (keyStr === 'G') {
+      event.preventDefault(); event.stopPropagation();
+      this._jumpReaderOutlineBoundary(state, true);
+      return true;
+    }
+    if (keyStr === 'ctrl+d') {
+      event.preventDefault(); event.stopPropagation();
+      this._moveReaderOutlineExplorer(state, +1, this._readerOutlineFastStep(state));
+      return true;
+    }
+    if (keyStr === 'ctrl+u') {
+      event.preventDefault(); event.stopPropagation();
+      this._moveReaderOutlineExplorer(state, -1, this._readerOutlineFastStep(state));
+      return true;
+    }
+    if (keyStr === 'M') {
+      event.preventDefault(); event.stopPropagation();
+      this._setReaderOutlineAllExpanded(state, false);
+      return true;
+    }
+    if (keyStr === 'R') {
+      event.preventDefault(); event.stopPropagation();
+      this._setReaderOutlineAllExpanded(state, true);
+      return true;
+    }
+
+    const hintKey = this._readerOutlineExplorerHintKey(event);
+    if (hintKey) {
+      event.preventDefault(); event.stopPropagation();
+      this._handleReaderOutlineExplorerHint(state, hintKey);
+      return true;
+    }
+
+    switch (keyStr) {
+      case 'j':
+        event.preventDefault(); event.stopPropagation();
+        this._moveReaderOutlineExplorer(state, +1, 1);
+        return true;
+      case 'k':
+        event.preventDefault(); event.stopPropagation();
+        this._moveReaderOutlineExplorer(state, -1, 1);
+        return true;
+      case 'l':
+        event.preventDefault(); event.stopPropagation();
+        this._toggleReaderOutlineExplorerNode(state, true);
+        return true;
+      case 'h':
+        event.preventDefault(); event.stopPropagation();
+        this._toggleReaderOutlineExplorerNode(state, false);
+        return true;
+      case 'enter':
+      case 'return':
+        event.preventDefault(); event.stopPropagation();
+        this._activateReaderOutlineExplorer(state, reader, pdfWin);
+        return true;
+      case 'escape':
+        event.preventDefault(); event.stopPropagation();
+        this._closeReaderOutlineExplorer(state, pdfWin);
+        return true;
+      case 'ctrl+h':
+        event.preventDefault(); event.stopPropagation();
+        this._focusReaderOutlineExplorer(state, reader, pdfWin);
+        return true;
+      default:
+        return false;
+    }
+  },
+
+  async _toggleReaderOutlineExplorer(state, reader, pdfWin) {
+    if (state.outlineExplorerOpen) {
+      this._closeReaderOutlineExplorer(state, pdfWin);
+      return;
+    }
+    await this._openReaderOutlineExplorer(state, reader, pdfWin);
+  },
+
+  async _focusReaderOutlineExplorer(state, reader, pdfWin) {
+    if (!state.outlineExplorerOpen) {
+      await this._openReaderOutlineExplorer(state, reader, pdfWin);
+      return;
+    }
+    try { state._outlineExplorerOverlay?.focus?.(); } catch (_) {}
+    if (!state.outlineExplorerVisible?.length && !state.outlineExplorerLoading) {
+      await this._loadReaderOutlineExplorer(state, reader, pdfWin);
+    }
+  },
+
+  async _openReaderOutlineExplorer(state, reader, pdfWin) {
+    if (state.outlineExplorerOpen) return;
+    state.outlineExplorerOpen = true;
+    this._createReaderOutlineExplorer(state, pdfWin);
+    this._renderReaderOutlineExplorer(state);
+    try { state._outlineExplorerOverlay?.focus?.(); } catch (_) {}
+    await this._loadReaderOutlineExplorer(state, reader, pdfWin);
+  },
+
+  _closeReaderOutlineExplorer(state, pdfWin = null) {
+    state.outlineExplorerOpen = false;
+    state.outlineExplorerLoading = false;
+    this._clearReaderOutlineExplorerHintBuffer(state);
+    this._clearReaderOutlineExplorerCmdBuffer(state);
+    try {
+      const overlay = state._outlineExplorerOverlay;
+      if (overlay?.parentNode) overlay.parentNode.removeChild(overlay);
+    } catch (_) {}
+    state._outlineExplorerOverlay = null;
+    state._outlineExplorerList = null;
+    state._outlineExplorerStatus = null;
+    state.outlineExplorerVisible = [];
+    state.outlineExplorerSelected = 0;
+    state.sidebarNavActive = false;
+    if (pdfWin) {
+      setTimeout(() => { try { pdfWin.focus(); } catch (_) {} }, 30);
+    }
+  },
+
+  _createReaderOutlineExplorer(state, pdfWin) {
+    const doc = pdfWin.document;
+    const H = 'http://www.w3.org/1999/xhtml';
+    const h = (tag) => doc.createElementNS(H, tag);
+    const root = doc.body || doc.documentElement;
+
+    const overlay = h('div');
+    overlay.id = 'zv-outline-explorer';
+    overlay.tabIndex = -1;
+    overlay.style.cssText =
+      'position:fixed;top:0;left:0;bottom:0;width:320px;z-index:99998;' +
+      'background:rgba(24,24,37,0.96);color:#cdd6f4;border-right:1px solid #313244;' +
+      'display:flex;flex-direction:column;box-shadow:12px 0 40px rgba(0,0,0,0.35);font:13px/1.35 monospace;';
+
+    const header = h('div');
+    header.style.cssText = 'padding:12px 14px;border-bottom:1px solid #313244;font-weight:bold;letter-spacing:0.04em;';
+    header.textContent = 'Outline Explorer';
+
+    const list = h('div');
+    list.style.cssText = 'flex:1;overflow:auto;padding:8px 0;';
+
+    const status = h('div');
+    status.style.cssText = 'padding:6px 12px;border-top:1px solid #313244;color:#6c7086;font-size:11px;';
+    status.textContent =
+      'j/k move  ·  Ctrl+d/u fast  ·  gg/G top/bottom  ·  R/M expand/collapse all  ·  Enter jump';
+
+    overlay.appendChild(header);
+    overlay.appendChild(list);
+    overlay.appendChild(status);
+    root.appendChild(overlay);
+
+    state._outlineExplorerOverlay = overlay;
+    state._outlineExplorerList = list;
+    state._outlineExplorerStatus = status;
+  },
+
+  async _loadReaderOutlineExplorer(state, reader, pdfWin) {
+    state.outlineExplorerLoading = true;
+    this._renderReaderOutlineExplorer(state);
+    try {
+      if (!state.outlineExplorerTree) {
+        state.outlineExplorerTree = await this._fetchReaderOutlineTree(reader, pdfWin);
+      }
+      this._refreshReaderOutlineExplorer(state);
+      // Best effort: preselect nearest/current outline entry when metadata is
+      // available; otherwise fall back to the first item.
+      if (!this._selectCurrentReaderOutlineEntry(state, pdfWin)) {
+        state.outlineExplorerSelected = 0;
+      }
+      if (!state.outlineExplorerVisible.length) {
+        this._setReaderOutlineExplorerStatus(state, 'No outline available');
+      }
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] _loadReaderOutlineExplorer error: ' + e);
+      state.outlineExplorerTree = [];
+      this._refreshReaderOutlineExplorer(state);
+      this._setReaderOutlineExplorerStatus(state, 'Error loading outline');
+    }
+    state.outlineExplorerLoading = false;
+    this._renderReaderOutlineExplorer(state);
+  },
+
+  async _fetchReaderOutlineTree(reader, pdfWin) {
+    const app = pdfWin.PDFViewerApplication || reader?._internalReader?._primaryView?._iframeWindow?.PDFViewerApplication;
+    const pdfDoc = app?.pdfDocument;
+    let outline = null;
+    if (typeof pdfDoc?.getOutline === 'function') {
+      outline = await pdfDoc.getOutline();
+    }
+    if (!outline?.length) {
+      outline = this._readReaderOutlineFromDom(reader, pdfWin);
+    }
+    if (!outline?.length) return [];
+
+    let nextID = 0;
+    const build = async (nodes, depth = 0, parentID = null) => Promise.all(nodes.map(async (node) => {
+      const item = {
+        id: 'outline-' + (++nextID),
+        parentID,
+        depth,
+        title: String(node.title || node.label || '(untitled)').replace(/\s+/g, ' ').trim() || '(untitled)',
+        dest: node.dest ?? null,
+        url: node.url ?? null,
+        pageIndex: typeof node.pageIndex === 'number' ? node.pageIndex : null,
+        expanded: depth === 0,
+        children: [],
+        hint: '',
+      };
+      item.pageIndex = await this._resolveReaderOutlinePageIndex(item, item.dest, pdfDoc);
+      item.children = await build(node.items || node.children || [], depth + 1, item.id);
+      return item;
+    }));
+
+    const tree = await build(outline, 0, null);
+    this._enrichReaderOutlineTreeFromDom(tree, reader, pdfWin);
+    return tree;
+  },
+
+  _readReaderOutlineAnchors(reader, pdfWin) {
+    const els = this._readerSidebarElements(reader, pdfWin);
+    const doc = els?.doc;
+    const root = doc?.querySelector('#outlineView') || doc?.querySelector('[role="tree"], .outline, .outlineView');
+    if (!root) return [];
+    return Array.from(root.querySelectorAll('a')).filter((el) => el.textContent?.trim()).map((el) => {
+      const href = el.getAttribute('href') || '';
+      const hash = href.replace(/^[^#]*#?/, '');
+      const pageNumber = parseInt(el.dataset?.pageNumber || '', 10);
+      const hashMatch = hash.match(/(?:^|[&?#])page=(\d+)/i);
+      const hashPage = hashMatch ? parseInt(hashMatch[1], 10) : NaN;
+      return {
+        title: el.textContent.trim().replace(/\s+/g, ' '),
+        url: href || null,
+        pageIndex: Number.isFinite(pageNumber) ? pageNumber - 1
+          : (Number.isFinite(hashPage) && hashPage > 0 ? hashPage - 1 : null),
+      };
+    });
+  },
+
+  _flattenReaderOutlineTree(nodes) {
+    const flat = [];
+    const visit = (node) => {
+      flat.push(node);
+      for (const child of node.children || []) visit(child);
+    };
+    for (const node of nodes || []) visit(node);
+    return flat;
+  },
+
+  _enrichReaderOutlineTreeFromDom(tree, reader, pdfWin) {
+    const domAnchors = this._readReaderOutlineAnchors(reader, pdfWin);
+    if (!domAnchors.length) return;
+
+    const flat = this._flattenReaderOutlineTree(tree);
+    if (!flat.length) return;
+
+    let anchorPos = 0;
+    for (let i = 0; i < flat.length && anchorPos < domAnchors.length; i++) {
+      const item = flat[i];
+      const itemTitle = String(item.title || '').replace(/\s+/g, ' ').trim();
+
+      let matchedIdx = -1;
+      for (let j = anchorPos; j < Math.min(domAnchors.length, anchorPos + 8); j++) {
+        if (domAnchors[j].title === itemTitle) {
+          matchedIdx = j;
+          break;
+        }
+      }
+      if (matchedIdx < 0) matchedIdx = anchorPos;
+
+      const anchor = domAnchors[matchedIdx];
+      if (typeof item.pageIndex !== 'number' && typeof anchor.pageIndex === 'number') {
+        item.pageIndex = anchor.pageIndex;
+      }
+      if (!item.url && anchor.url) {
+        item.url = anchor.url;
+      }
+      anchorPos = Math.min(domAnchors.length, matchedIdx + 1);
+    }
+  },
+
+  _readReaderOutlineFromDom(reader, pdfWin) {
+    return this._readReaderOutlineAnchors(reader, pdfWin).map((anchor) => ({
+      title: anchor.title,
+      url: anchor.url,
+      pageIndex: anchor.pageIndex,
+      items: [],
+    }));
+  },
+
+  _refreshReaderOutlineExplorer(state) {
+    const visible = [];
+    const visit = (node) => {
+      visible.push(node);
+      if (node.expanded) {
+        for (const child of node.children || []) visit(child);
+      }
+    };
+    for (const node of state.outlineExplorerTree || []) visit(node);
+    state.outlineExplorerVisible = visible;
+    if (!visible.length) {
+      state.outlineExplorerSelected = 0;
+      return;
+    }
+    const hints = this._buildReaderOutlineExplorerHints(visible.length);
+    visible.forEach((item, idx) => { item.hint = hints[idx] || ''; });
+    state.outlineExplorerSelected = Math.max(0, Math.min(state.outlineExplorerSelected, visible.length - 1));
+  },
+
+  _renderReaderOutlineExplorer(state) {
+    const list = state._outlineExplorerList;
+    if (!list) return;
+    const doc = list.ownerDocument;
+    const H = 'http://www.w3.org/1999/xhtml';
+    const h = (tag) => doc.createElementNS(H, tag);
+    while (list.firstChild) list.removeChild(list.firstChild);
+
+    if (state.outlineExplorerLoading) {
+      const loading = h('div');
+      loading.style.cssText = 'padding:12px 14px;color:#6c7086;';
+      loading.textContent = 'Loading outline...';
+      list.appendChild(loading);
+      return;
+    }
+
+    const items = state.outlineExplorerVisible || [];
+    if (!items.length) {
+      const empty = h('div');
+      empty.style.cssText = 'padding:12px 14px;color:#6c7086;';
+      empty.textContent = 'No outline available';
+      list.appendChild(empty);
+      return;
+    }
+
+    const frag = doc.createDocumentFragment();
+    items.forEach((item, idx) => {
+      const row = h('div');
+      const hasChildren = !!item.children?.length;
+      const isSel = idx === state.outlineExplorerSelected;
+      row.style.cssText =
+        'display:flex;align-items:center;gap:8px;padding:6px 12px 6px ' + (12 + item.depth * 16) + 'px;' +
+        'cursor:pointer;border-left:3px solid ' + (isSel ? '#89b4fa' : 'transparent') + ';' +
+        'background:' + (isSel ? '#313244' : 'transparent') + ';';
+
+      const twisty = h('span');
+      twisty.style.cssText = 'display:inline-block;width:10px;color:#89b4fa;flex:0 0 10px;';
+      twisty.textContent = hasChildren ? (item.expanded ? '▾' : '▸') : '·';
+
+      const hint = h('span');
+      hint.style.cssText = 'display:inline-block;min-width:22px;color:#f9e2af;flex:0 0 auto;font-weight:bold;';
+      hint.textContent = item.hint || '';
+
+      const title = h('span');
+      title.style.cssText = 'flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+      title.textContent = item.title;
+
+      row.appendChild(hint);
+      row.appendChild(twisty);
+      row.appendChild(title);
+      row.addEventListener('click', () => {
+        state.outlineExplorerSelected = idx;
+        this._renderReaderOutlineExplorer(state);
+      });
+      row.addEventListener('dblclick', () => {
+        state.outlineExplorerSelected = idx;
+        this._activateReaderOutlineExplorer(state, state.reader, state.pdfWin);
+      });
+      frag.appendChild(row);
+    });
+    list.appendChild(frag);
+    const selRow = list.children[state.outlineExplorerSelected];
+    if (selRow) selRow.scrollIntoView({ block: 'nearest' });
+  },
+
+  _moveReaderOutlineExplorer(state, dir, amount = 1) {
+    const items = state.outlineExplorerVisible || [];
+    if (!items.length) return;
+    this._clearReaderOutlineExplorerHintBuffer(state);
+    this._clearReaderOutlineExplorerCmdBuffer(state);
+    const step = Math.max(1, amount || 1);
+    state.outlineExplorerSelected = Math.max(0, Math.min(items.length - 1, state.outlineExplorerSelected + dir * step));
+    this._renderReaderOutlineExplorer(state);
+  },
+
+  _toggleReaderOutlineExplorerNode(state, expand) {
+    const entry = (state.outlineExplorerVisible || [])[state.outlineExplorerSelected];
+    if (!entry || !entry.children?.length) return;
+    this._clearReaderOutlineExplorerHintBuffer(state);
+    this._clearReaderOutlineExplorerCmdBuffer(state);
+    if (expand) {
+      entry.expanded = true;
+    } else if (entry.expanded) {
+      entry.expanded = false;
+    } else if (entry.parentID) {
+      const parentIdx = (state.outlineExplorerVisible || []).findIndex((it) => it.id === entry.parentID);
+      if (parentIdx >= 0) state.outlineExplorerSelected = parentIdx;
+    }
+    this._refreshReaderOutlineExplorer(state);
+    this._renderReaderOutlineExplorer(state);
+  },
+
+  async _activateReaderOutlineExplorer(state, reader, pdfWin) {
+    const entry = (state.outlineExplorerVisible || [])[state.outlineExplorerSelected];
+    if (!entry) return;
+    this._clearReaderOutlineExplorerHintBuffer(state);
+    this._clearReaderOutlineExplorerCmdBuffer(state);
+    const ok = await this._goToReaderOutlineEntry(reader, pdfWin, entry);
+    if (!ok) {
+      this._setReaderOutlineExplorerStatus(state, 'Jump failed');
+      return;
+    }
+    this._closeReaderOutlineExplorer(state, pdfWin);
+    this._setMode(state, 'normal');
+  },
+
+  async _goToReaderOutlineEntry(reader, pdfWin, entry) {
+    try {
+      const app = pdfWin.PDFViewerApplication || reader?._internalReader?._primaryView?._iframeWindow?.PDFViewerApplication;
+      const pdfDoc = app?.pdfDocument;
+      const linkService = app?.pdfLinkService;
+      const originalDest = entry.dest;
+
+      if (originalDest && typeof linkService?.getDestinationHash === 'function' && typeof linkService?.setHash === 'function') {
+        try {
+          const hash = linkService.getDestinationHash(originalDest);
+          if (hash) {
+            linkService.setHash(String(hash).replace(/^#/, ''));
+            return true;
+          }
+        } catch (_) {}
+      }
+
+      if (entry.url && typeof linkService?.setHash === 'function') {
+        const hash = String(entry.url).replace(/^[^#]*#?/, '');
+        if (hash) {
+          linkService.setHash(hash);
+          return true;
+        }
+      }
+
+      if (originalDest && typeof linkService?.goToDestination === 'function') {
+        try {
+          await linkService.goToDestination(originalDest);
+          return true;
+        } catch (_) {}
+      }
+      if (originalDest && typeof linkService?.navigateTo === 'function') {
+        try {
+          await linkService.navigateTo(originalDest);
+          return true;
+        } catch (_) {}
+      }
+
+      let dest = originalDest;
+      if (typeof dest === 'string' && typeof pdfDoc?.getDestination === 'function') {
+        dest = await pdfDoc.getDestination(dest);
+      }
+      if (dest && typeof linkService?.getDestinationHash === 'function' && typeof linkService?.setHash === 'function') {
+        try {
+          const hash = linkService.getDestinationHash(dest);
+          if (hash) {
+            linkService.setHash(String(hash).replace(/^#/, ''));
+            return true;
+          }
+        } catch (_) {}
+      }
+      if (dest && typeof linkService?.goToDestination === 'function') {
+        try {
+          await linkService.goToDestination(dest);
+          return true;
+        } catch (_) {}
+      }
+      if (dest && typeof linkService?.navigateTo === 'function') {
+        try {
+          await linkService.navigateTo(dest);
+          return true;
+        } catch (_) {}
+      }
+
+      if (this._clickNativeReaderOutlineEntry(reader, pdfWin, entry)) {
+        return true;
+      }
+
+      const resolvedPageIndex = await this._resolveReaderOutlinePageIndex(entry, dest, pdfDoc);
+      if (typeof resolvedPageIndex === 'number') {
+        const readerWin = reader?._iframeWindow || pdfWin;
+        const payload = Components.utils.cloneInto({ pageIndex: resolvedPageIndex }, readerWin);
+        reader?._internalReader?.navigate?.(payload);
+        return true;
+      }
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] _goToReaderOutlineEntry error: ' + e);
+    }
+    return false;
+  },
+
+  _clickNativeReaderOutlineEntry(reader, pdfWin, entry) {
+    try {
+      const els = this._readerSidebarElements(reader, pdfWin);
+      const doc = els?.doc;
+      if (!doc) return false;
+      const anchors = Array.from(doc.querySelectorAll('#outlineView a, [role="tree"] a, .outline a'));
+      if (!anchors.length) return false;
+
+      const wantedHash = String(entry.url || '').replace(/^[^#]*#?/, '');
+      const wantedTitle = String(entry.title || '').replace(/\s+/g, ' ').trim();
+      const match = anchors.find((a) => {
+        const hrefHash = String(a.getAttribute('href') || '').replace(/^[^#]*#?/, '');
+        const title = String(a.textContent || '').replace(/\s+/g, ' ').trim();
+        if (wantedHash && hrefHash && hrefHash === wantedHash) return true;
+        if (wantedTitle && title === wantedTitle) return true;
+        return false;
+      });
+      if (!match) return false;
+      match.click();
+      return true;
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] _clickNativeReaderOutlineEntry error: ' + e);
+      return false;
+    }
+  },
+
+  async _resolveReaderOutlinePageIndex(entry, dest, pdfDoc) {
+    if (typeof entry?.pageIndex === 'number') return entry.pageIndex;
+
+    const urlInfo = await this._resolveReaderOutlineUrlInfo(entry?.url, pdfDoc);
+    if (typeof urlInfo.pageIndex === 'number') {
+      return urlInfo.pageIndex;
+    }
+    if (!dest && urlInfo.dest) {
+      dest = urlInfo.dest;
+    }
+
+    if (Array.isArray(dest) && dest.length > 0) {
+      const first = dest[0];
+      if (typeof first === 'number' && Number.isFinite(first)) return first;
+      if (first && typeof pdfDoc?.getPageIndex === 'function') {
+        try {
+          const idx = await pdfDoc.getPageIndex(first);
+          if (Number.isFinite(idx)) return idx;
+        } catch (_) {}
+      }
+    }
+
+    return null;
+  },
+
+  async _resolveReaderOutlineUrlInfo(url, pdfDoc) {
+    const result = { pageIndex: null, dest: null };
+    const raw = String(url || '');
+    if (!raw) return result;
+
+    const hash = raw.replace(/^[^#]*#?/, '');
+    const pageMatch = hash.match(/(?:^|[&?])page=(\d+)/i);
+    if (pageMatch) {
+      const pageNum = parseInt(pageMatch[1], 10);
+      if (Number.isFinite(pageNum) && pageNum > 0) {
+        result.pageIndex = pageNum - 1;
+        return result;
+      }
+    }
+
+    const namedDestMatch = hash.match(/(?:^|[&?])(nameddest|dest)=([^&]+)/i);
+    if (!namedDestMatch) return result;
+
+    const namedDest = decodeURIComponent(namedDestMatch[2] || '');
+    if (!namedDest) return result;
+
+    result.dest = namedDest;
+    if (typeof pdfDoc?.getDestination !== 'function') return result;
+
+    try {
+      const resolvedDest = await pdfDoc.getDestination(namedDest);
+      result.dest = resolvedDest || namedDest;
+      if (Array.isArray(resolvedDest) && resolvedDest.length > 0) {
+        const first = resolvedDest[0];
+        if (typeof first === 'number' && Number.isFinite(first)) {
+          result.pageIndex = first;
+          return result;
+        }
+        if (first && typeof pdfDoc?.getPageIndex === 'function') {
+          const idx = await pdfDoc.getPageIndex(first);
+          if (Number.isFinite(idx)) {
+            result.pageIndex = idx;
+            return result;
+          }
+        }
+      }
+    } catch (_) {}
+
+    return result;
+  },
+
+  _setReaderOutlineExplorerStatus(state, text) {
+    if (state._outlineExplorerStatus) {
+      state._outlineExplorerStatus.textContent = text;
+    }
+  },
+
+  _readerOutlineExplorerHintAlphabet() {
+    // Exclude h/j/k/l and g because they are navigation commands.
+    return 'asdfqwertyuiopzxcvbnm1234567890';
+  },
+
+  _buildReaderOutlineExplorerHints(count) {
+    const alphabet = this._readerOutlineExplorerHintAlphabet();
+    const base = alphabet.length;
+    if (count <= base) {
+      return alphabet.slice(0, count).split('');
+    }
+    const hints = [];
+    for (let i = 0; i < count; i++) {
+      const first = Math.floor(i / base);
+      const second = i % base;
+      hints.push(alphabet[first] + alphabet[second]);
+    }
+    return hints;
+  },
+
+  _readerOutlineExplorerHintKey(event) {
+    if (event.ctrlKey || event.metaKey || event.altKey) return '';
+    const key = String(event.key || '').toLowerCase();
+    return this._readerOutlineExplorerHintAlphabet().includes(key) ? key : '';
+  },
+
+  _handleReaderOutlineExplorerHint(state, key) {
+    const items = state.outlineExplorerVisible || [];
+    if (!items.length) return;
+    const nextBuffer = (state.outlineExplorerHintBuffer || '') + key;
+    const matches = items
+      .map((item, idx) => ({ item, idx }))
+      .filter(({ item }) => item.hint && item.hint.startsWith(nextBuffer));
+
+    if (!matches.length) {
+      state.outlineExplorerHintBuffer = '';
+      this._setReaderOutlineExplorerStatus(state, 'Hint not found');
+      return;
+    }
+
+    state.outlineExplorerHintBuffer = nextBuffer;
+    clearTimeout(state._outlineExplorerHintTimer);
+    state._outlineExplorerHintTimer = setTimeout(() => {
+      this._clearReaderOutlineExplorerHintBuffer(state);
+    }, 1200);
+
+    const exact = matches.find(({ item }) => item.hint === nextBuffer);
+    if (exact) {
+      state.outlineExplorerSelected = exact.idx;
+      this._renderReaderOutlineExplorer(state);
+      this._clearReaderOutlineExplorerHintBuffer(state, false);
+      this._setReaderOutlineExplorerStatus(state, 'Selected ' + exact.item.hint + '  ·  Enter jump');
+      return;
+    }
+
+    this._setReaderOutlineExplorerStatus(state, 'Hint: ' + nextBuffer);
+  },
+
+  _clearReaderOutlineExplorerHintBuffer(state, resetStatus = true) {
+    state.outlineExplorerHintBuffer = '';
+    clearTimeout(state._outlineExplorerHintTimer);
+    state._outlineExplorerHintTimer = null;
+    if (resetStatus && state._outlineExplorerStatus) {
+      state._outlineExplorerStatus.textContent = 'j/k move  ·  l expand  ·  h collapse  ·  Enter jump  ·  Esc close';
+    }
+  },
+
+  _handleReaderOutlineExplorerG(state) {
+    if (state.outlineExplorerCmdBuffer === 'g') {
+      this._jumpReaderOutlineBoundary(state, false);
+      this._clearReaderOutlineExplorerCmdBuffer(state);
+      return;
+    }
+    state.outlineExplorerCmdBuffer = 'g';
+    clearTimeout(state._outlineExplorerCmdTimer);
+    state._outlineExplorerCmdTimer = setTimeout(() => {
+      this._clearReaderOutlineExplorerCmdBuffer(state);
+    }, 700);
+    this._setReaderOutlineExplorerStatus(state, 'g … (gg top)');
+  },
+
+  _clearReaderOutlineExplorerCmdBuffer(state, resetStatus = true) {
+    state.outlineExplorerCmdBuffer = '';
+    clearTimeout(state._outlineExplorerCmdTimer);
+    state._outlineExplorerCmdTimer = null;
+    if (resetStatus && state._outlineExplorerStatus && !state.outlineExplorerHintBuffer) {
+      state._outlineExplorerStatus.textContent =
+        'j/k move  ·  Ctrl+d/u fast  ·  gg/G top/bottom  ·  R/M expand/collapse all  ·  Enter jump';
+    }
+  },
+
+  _jumpReaderOutlineBoundary(state, toBottom) {
+    const items = state.outlineExplorerVisible || [];
+    if (!items.length) return;
+    this._clearReaderOutlineExplorerHintBuffer(state);
+    this._clearReaderOutlineExplorerCmdBuffer(state, false);
+    state.outlineExplorerSelected = toBottom ? items.length - 1 : 0;
+    this._renderReaderOutlineExplorer(state);
+    this._setReaderOutlineExplorerStatus(state, toBottom ? 'Bottom' : 'Top');
+  },
+
+  _readerOutlineFastStep(state) {
+    const items = state.outlineExplorerVisible || [];
+    return Math.max(5, Math.floor(items.length / 10) || 10);
+  },
+
+  _setReaderOutlineAllExpanded(state, expand) {
+    const walk = (nodes) => {
+      for (const node of nodes || []) {
+        if (node.children?.length) node.expanded = !!expand;
+        walk(node.children || []);
+      }
+    };
+    walk(state.outlineExplorerTree || []);
+    this._refreshReaderOutlineExplorer(state);
+    state.outlineExplorerSelected = Math.max(0, Math.min(state.outlineExplorerSelected, (state.outlineExplorerVisible.length || 1) - 1));
+    this._renderReaderOutlineExplorer(state);
+    this._setReaderOutlineExplorerStatus(state, expand ? 'Expanded all' : 'Collapsed all');
+  },
+
+  _selectCurrentReaderOutlineEntry(state, pdfWin) {
+    const items = state.outlineExplorerVisible || [];
+    if (!items.length) return false;
+
+    const nativeSelected = this._findNativeCurrentOutlineSelection(state.reader, pdfWin);
+    if (nativeSelected) {
+      const byNative = this._findReaderOutlineIndexBySignature(items, nativeSelected);
+      if (byNative >= 0) {
+        state.outlineExplorerSelected = byNative;
+        this._renderReaderOutlineExplorer(state);
+        return true;
+      }
+    }
+
+    const currentPageIndex = Math.max(0, (pdfWin.PDFViewerApplication?.pdfViewer?.currentPageNumber || 1) - 1);
+    let bestIdx = -1;
+    let bestPage = -Infinity;
+    for (let i = 0; i < items.length; i++) {
+      const pageIndex = items[i].pageIndex;
+      if (typeof pageIndex !== 'number') continue;
+      if (pageIndex <= currentPageIndex && pageIndex >= bestPage) {
+        bestPage = pageIndex;
+        bestIdx = i;
+      }
+    }
+    if (bestIdx < 0) {
+      bestIdx = items.findIndex((item) => typeof item.pageIndex === 'number');
+    }
+    if (bestIdx >= 0) {
+      state.outlineExplorerSelected = bestIdx;
+      this._renderReaderOutlineExplorer(state);
+      return true;
+    }
+    return false;
+  },
+
+  _findNativeCurrentOutlineSelection(reader, pdfWin) {
+    try {
+      const els = this._readerSidebarElements(reader, pdfWin);
+      const doc = els?.doc;
+      if (!doc) return null;
+      const root = doc.querySelector('#outlineView, [role="tree"], .outline, .outlineView');
+      if (!root) return null;
+      const anchor = root.querySelector(
+        'a.selected, .selected > a, [aria-current="true"], [aria-selected="true"], a:focus'
+      );
+      if (!anchor) return null;
+      const title = String(anchor.textContent || '').replace(/\s+/g, ' ').trim();
+      const url = String(anchor.getAttribute('href') || '');
+      const hash = url.replace(/^[^#]*#?/, '');
+      return { title, hash };
+    } catch (_) {
+      return null;
+    }
+  },
+
+  _findReaderOutlineIndexBySignature(items, sig) {
+    if (!sig) return -1;
+    const wantedTitle = String(sig.title || '').replace(/\s+/g, ' ').trim();
+    const wantedHash = String(sig.hash || '');
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      const title = String(item.title || '').replace(/\s+/g, ' ').trim();
+      const hash = String(item.url || '').replace(/^[^#]*#?/, '');
+      if (wantedHash && hash && wantedHash === hash) return i;
+      if (wantedTitle && title && wantedTitle === title) return i;
+    }
+    return -1;
   },
 
   _readerSidebarDocs(reader, pdfWin) {

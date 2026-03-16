@@ -155,6 +155,30 @@ Cursor ──v──▶ Visual ──v/Escape──▶ Normal
 | `Shift+K` (`K`) | Switch to next open tab |
 | `<space>bj` | Open tab picker (hint-based jump to open tab) |
 
+#### Outline explorer
+
+| Key | Action |
+|-----|--------|
+| `<space>e` | Toggle custom outline explorer overlay |
+| `Ctrl+h` | Focus / reopen outline explorer overlay |
+| `j` / `k` | Move outline selection down / up |
+| `Ctrl+d` / `Ctrl+u` | Fast move down / up |
+| `l` | Expand selected outline node |
+| `h` | Collapse selected outline node |
+| `R` / `M` | Expand all / collapse all outline nodes |
+| `gg` / `G` | Jump to top / bottom outline item |
+| Hint letters | Select the hinted outline item without jumping |
+| `Enter` | Jump to selected outline entry and return to Normal mode |
+| `Escape` | Close the outline explorer |
+
+When the outline explorer opens, it will try to preselect the nearest/current
+outline entry for your reading position; if the PDF metadata does not allow
+reliable mapping, it falls back to the first visible outline item. Each visible
+item also shows a hint label.
+If the number of items is small the hints are single characters; otherwise they
+expand to two-character hints. Typing a hint only changes the current selection;
+you still press `Enter` to jump.
+
 #### Viewport positioning (like Vim's z commands)
 
 | Key | Action |
@@ -341,10 +365,10 @@ return to Normal mode.
 
 ## TODO
 
-- [ ] Reader sidebar outline explorer:
-   `<space>e` toggle/open sidebar and default to Outline, `Ctrl+h` focus the sidebar,
-   then use `j/k/h/l/Enter` to navigate, expand/collapse, and jump back to the
-   PDF in Normal mode. This flow is not stable enough yet, so it is deferred for now.
+- [ ] Native reader sidebar integration:
+   integrate with Zotero/PDF.js's built-in left sidebar directly. The custom
+   outline explorer overlay is available, but the native sidebar workflow is
+   still deferred because its focus/DOM behavior is less stable.
 
 ---
 
@@ -440,6 +464,8 @@ Open **Edit → Preferences** (macOS: **Zotero → Settings**) and navigate to t
 | `cursorLineEnd` | Move caret to end of line (Cursor mode) |
 | `cursorToVisual` | Enter Visual mode from current caret |
 | `mainTabPick` | Open tab picker for currently open Zotero tabs |
+| `toggleReaderSidebarOutline` | Toggle the custom outline explorer overlay |
+| `focusReaderSidebar` | Focus or reopen the custom outline explorer overlay |
 
 ---
 

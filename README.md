@@ -1,4 +1,4 @@
-# Zotero Vim
+# Zotero Vim Plus
 
 > Original repository: https://codeberg.org/finktank/zotero-vim
 >

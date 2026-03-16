@@ -26,6 +26,7 @@ Vibe coded with Claude Sonnet 4.5.
   - [Visual mode](#visual-mode)
   - [Insert mode](#insert-mode)
 - [Annotation workflow](#annotation-workflow)
+- [TODO](#todo)
 - [Customising keybindings](#customising-keybindings)
 - [Settings](#settings)
 - [Architecture notes](#architecture-notes)
@@ -335,6 +336,15 @@ return to Normal mode.
 3. Press `i` (or `Enter`) to open the comment field and type a note.  Press
    `Escape` to return to Normal mode.
 4. Press `dd` to delete the annotation.
+
+---
+
+## TODO
+
+- [ ] Reader sidebar outline explorer:
+   `<space>e` toggle/open sidebar and default to Outline, `Ctrl+h` focus the sidebar,
+   then use `j/k/h/l/Enter` to navigate, expand/collapse, and jump back to the
+   PDF in Normal mode. This flow is not stable enough yet, so it is deferred for now.
 
 ---
 

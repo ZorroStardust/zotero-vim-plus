@@ -72,8 +72,10 @@ var ZoteroVim = {
     'normal:i':       'enterInsert',
     'normal:J':       'mainPrevTab',
     'normal:K':       'mainNextTab',
+    'normal:ctrl+h':  'focusReaderSidebar',
     'normal:escape':  'clearSearch',
     // Normal mode — space-chord bindings (delegate to main window)
+    'normal: e':   'toggleReaderSidebarOutline',
     'normal: ff':  'mainFuzzyAll',
     'normal: fb':  'mainFuzzyCollection',
     'normal: bj':  'mainTabPick',
@@ -419,6 +421,8 @@ var ZoteroVim = {
         rafId: null,
         lastTS: 0,
       },
+      sidebarNavActive: false,
+      sidebarOutlineIndex: -1,
       reader: reader,       // reference for direct annotation creation
       pdfWin: pdfWin,       // stored for _setMode → _clearVisualHints
       cleanup: () => {},
@@ -486,8 +490,21 @@ var ZoteroVim = {
         setTimeout(() => { try { pdfWin.focus(); } catch (_) {} }, 30);
       }
     };
+    const outerKeyHandler = (e) => {
+      if (!outerDoc) return;
+      const active = outerDoc.activeElement;
+      if (active && (active.tagName === 'TEXTAREA' || active.tagName === 'INPUT' || active.isContentEditable)) {
+        return;
+      }
+      const keyStr = this._keyString(e);
+      if (!keyStr) return;
+      const shouldHandle = state.sidebarNavActive || !!state.keyBuffer || keyStr === ' ' || keyStr === 'ctrl+h' || keyStr === 'escape';
+      if (!shouldHandle) return;
+      this._onKeyDown(e, reader, state, pdfWin);
+    };
     if (outerDoc) {
       outerDoc.addEventListener('keydown', outerEscapeHandler, true);
+      outerDoc.addEventListener('keydown', outerKeyHandler, true);
     }
 
     state.cleanup = () => {
@@ -498,6 +515,7 @@ var ZoteroVim = {
       pdfWin.document.removeEventListener('selectionchange', selectionHandler);
       if (scrollEl) scrollEl.removeEventListener('scroll', scrollHandler, { passive: true });
       if (outerDoc) outerDoc.removeEventListener('keydown', outerEscapeHandler, true);
+      if (outerDoc) outerDoc.removeEventListener('keydown', outerKeyHandler, true);
       state.indicatorEl?.remove();
       try { for (const el of pdfWin.document.querySelectorAll('[data-zv-cursor]')) el.remove(); } catch (_) {}
       clearTimeout(state.keyTimeout);
@@ -874,6 +892,10 @@ var ZoteroVim = {
     try {
       Zotero.debug('[ZoteroVim] Action: ' + action + ' (mode:' + state.mode + ', count:' + count + ')');
 
+      if (this._handleReaderSidebarAction(state, reader, pdfWin, action)) {
+        return;
+      }
+
       const step = this.getScrollStep();
       const getContainer = () => this._getScrollContainer(pdfWin);
       const scrollBy  = (dy) => this._scrollContainerBy(getContainer(), 0, dy);
@@ -1025,6 +1047,333 @@ var ZoteroVim = {
     } catch (e) {
       Zotero.debug('[ZoteroVim] _executeAction error (' + action + '): ' + e);
     }
+  },
+
+  _handleReaderSidebarAction(state, reader, pdfWin, action) {
+    if (!pdfWin) return false;
+
+    if (action === 'toggleReaderSidebarOutline') {
+      this._readerToggleSidebarOutline(state, reader, pdfWin);
+      return true;
+    }
+
+    if (action === 'focusReaderSidebar') {
+      this._readerFocusSidebarOutline(state, reader, pdfWin, { openIfNeeded: true });
+      return true;
+    }
+
+    if (!state.sidebarNavActive) return false;
+
+    switch (action) {
+      case 'scrollDown':
+        this._readerOutlineMove(state, reader, pdfWin, +1);
+        return true;
+      case 'scrollUp':
+        this._readerOutlineMove(state, reader, pdfWin, -1);
+        return true;
+      case 'nextPage':
+        this._readerOutlineToggleExpand(state, reader, pdfWin, true);
+        return true;
+      case 'prevPage':
+        this._readerOutlineToggleExpand(state, reader, pdfWin, false);
+        return true;
+      case 'editAnnotation':
+        this._readerOutlineActivate(state, reader, pdfWin);
+        return true;
+      default:
+        return false;
+    }
+  },
+
+  _readerSidebarDocs(reader, pdfWin) {
+    const docs = [];
+    const pushDoc = (d) => {
+      if (!d) return;
+      if (docs.includes(d)) return;
+      docs.push(d);
+    };
+    pushDoc(reader?._iframeWindow?.document);
+    pushDoc(pdfWin?.document);
+    return docs;
+  },
+
+  _readerSidebarElements(reader, pdfWin) {
+    const docs = this._readerSidebarDocs(reader, pdfWin);
+    let fallback = null;
+    for (const doc of docs) {
+      const sidebarToggle = doc.querySelector('#sidebarToggle, button[aria-controls="sidebarContainer"]');
+      const sidebarContainer = doc.querySelector('#sidebarContainer');
+      const outerContainer = doc.querySelector('#outerContainer');
+      const outlineTab = doc.querySelector(
+        '#viewOutline, button[aria-controls="outlineView"], button[data-l10n-id="pdfjs-toggle-sidebar-outline-button"]'
+      );
+      const outlineView = doc.querySelector('#outlineView');
+      const candidate = { doc, sidebarToggle, sidebarContainer, outerContainer, outlineTab, outlineView };
+      if (sidebarToggle || sidebarContainer || outerContainer || outlineTab || outlineView) {
+        return candidate;
+      }
+      fallback = candidate;
+    }
+    return fallback;
+  },
+
+  _readerIsSidebarOpen(reader, pdfWin, els = null) {
+    const e = els || this._readerSidebarElements(reader, pdfWin);
+    if (!e) return false;
+    const isVisible = (el) => {
+      if (!el) return false;
+      try {
+        if (el.offsetParent !== null) return true;
+        if ((el.getClientRects?.().length || 0) > 0) return true;
+      } catch (_) {}
+      return false;
+    };
+    const openByClass = e.outerContainer?.classList?.contains('sidebarOpen');
+    const openByContainer = !!(e.sidebarContainer &&
+      (e.sidebarContainer.classList?.contains('visible') || e.sidebarContainer.classList?.contains('open')));
+    const openByAria = e.sidebarToggle?.getAttribute?.('aria-expanded') === 'true';
+    const openByToggleClass = !!(e.sidebarToggle?.classList?.contains('toggled') ||
+      e.sidebarToggle?.classList?.contains('checked'));
+    const openByVisibility = isVisible(e.sidebarContainer) || isVisible(e.outlineView);
+    return !!(openByClass || openByContainer || openByAria || openByToggleClass || openByVisibility);
+  },
+
+  _readerSetSidebarOpen(state, reader, pdfWin, open) {
+    let els = this._readerSidebarElements(reader, pdfWin);
+    if (!els) return false;
+
+    const current = this._readerIsSidebarOpen(reader, pdfWin, els);
+    if (current === open) return current;
+
+    // Prefer internalReader API when available; fall back to DOM click.
+    let attemptedApi = false;
+    let attemptedDom = false;
+    try {
+      const ir = reader?._internalReader;
+      const readerWin = reader?._iframeWindow || pdfWin;
+      if (typeof ir?.setSidebarOpen === 'function') {
+        attemptedApi = true;
+        try {
+          ir.setSidebarOpen(Components.utils.cloneInto({ open }, readerWin));
+        } catch (_) {
+          ir.setSidebarOpen(open);
+        }
+      } else if (typeof ir?.toggleSidebar === 'function') {
+        attemptedApi = true;
+        ir.toggleSidebar();
+      }
+    } catch (_) {}
+
+    els = this._readerSidebarElements(reader, pdfWin);
+    let now = this._readerIsSidebarOpen(reader, pdfWin, els);
+    if (now !== open) {
+      try {
+        if (els?.sidebarToggle?.click) {
+          attemptedDom = true;
+          els.sidebarToggle.click();
+        }
+      } catch (_) {}
+      els = this._readerSidebarElements(reader, pdfWin);
+      now = this._readerIsSidebarOpen(reader, pdfWin, els);
+    }
+
+    if (now !== open && !attemptedApi && !attemptedDom) {
+      this._showStatus(state, '✗ sidebar toggle failed', 1200);
+    }
+    return now;
+  },
+
+  _readerActivateOutlineTab(reader, pdfWin) {
+    let els = this._readerSidebarElements(reader, pdfWin);
+    if (!els) return false;
+    try {
+      const ir = reader?._internalReader;
+      const readerWin = reader?._iframeWindow || pdfWin;
+      if (typeof ir?.setSidebarView === 'function') {
+        try {
+          ir.setSidebarView(Components.utils.cloneInto({ view: 'outline' }, readerWin));
+        } catch (_) {
+          ir.setSidebarView('outline');
+        }
+      }
+    } catch (_) {}
+    try { els.outlineTab?.click?.(); } catch (_) {}
+    els = this._readerSidebarElements(reader, pdfWin);
+    return !!els?.outlineView;
+  },
+
+  _readerGetOutlineItems(reader, pdfWin) {
+    const els = this._readerSidebarElements(reader, pdfWin);
+    const doc = els?.doc;
+    if (!doc) return [];
+    const root = doc.querySelector('#outlineView, [id*="outline" i], [data-l10n-id*="outline" i]') ||
+      doc.querySelector('[role="tree"], .outline, .outlineView');
+    if (!root) return [];
+    return Array.from(root.querySelectorAll('a, [role="treeitem"], button')).filter((a) => {
+      if (!a || !a.textContent?.trim()) return false;
+      return a.offsetParent !== null || (a.getClientRects?.().length || 0) > 0;
+    });
+  },
+
+  _readerOutlineFocusTarget(reader, pdfWin) {
+    const els = this._readerSidebarElements(reader, pdfWin);
+    const doc = els?.doc;
+    if (!doc) return null;
+    const root = doc.querySelector('#outlineView, [id*="outline" i], [data-l10n-id*="outline" i]') ||
+      doc.querySelector('[role="tree"], .outline, .outlineView');
+    if (!root) return null;
+    const firstItem = root.querySelector('a, [role="treeitem"], button, [tabindex]');
+    return firstItem || root;
+  },
+
+  _readerOutlineSendKey(reader, pdfWin, key) {
+    const target = this._readerOutlineFocusTarget(reader, pdfWin);
+    if (!target) return false;
+    try { target.focus(); } catch (_) {}
+    try {
+      const ev = new target.ownerDocument.defaultView.KeyboardEvent('keydown', {
+        key,
+        bubbles: true,
+        cancelable: true,
+      });
+      target.dispatchEvent(ev);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  },
+
+  _readerSetOutlineSelection(state, reader, pdfWin, idx) {
+    const items = this._readerGetOutlineItems(reader, pdfWin);
+    if (!items.length) {
+      state.sidebarOutlineIndex = -1;
+      return false;
+    }
+    const next = Math.max(0, Math.min(items.length - 1, idx));
+    const doc = items[0].ownerDocument;
+    for (const el of doc.querySelectorAll('[data-zv-outline-selected="1"]')) {
+      el.removeAttribute('data-zv-outline-selected');
+      el.style.outline = '';
+      el.style.background = '';
+    }
+    const target = items[next];
+    target.setAttribute('data-zv-outline-selected', '1');
+    target.style.outline = '1px solid rgba(137,180,250,0.9)';
+    target.style.background = 'rgba(137,180,250,0.15)';
+    target.scrollIntoView({ block: 'nearest' });
+    state.sidebarOutlineIndex = next;
+    try { target.focus(); } catch (_) {}
+    return true;
+  },
+
+  _readerFocusSidebarOutline(state, reader, pdfWin, opts = null) {
+    const openIfNeeded = !!opts?.openIfNeeded;
+    const isOpen = this._readerIsSidebarOpen(reader, pdfWin);
+    if (!isOpen && !openIfNeeded) {
+      // Fallback: some builds report open-state unreliably, so attempt
+      // to switch to outline view and proceed if entries are available.
+      this._readerActivateOutlineTab(reader, pdfWin);
+      if (!this._readerGetOutlineItems(reader, pdfWin).length && !this._readerOutlineFocusTarget(reader, pdfWin)) {
+        this._showStatus(state, '✗ sidebar closed', 1200);
+        return false;
+      }
+    }
+    if (!isOpen && openIfNeeded) {
+      this._readerSetSidebarOpen(state, reader, pdfWin, true);
+    }
+    this._readerActivateOutlineTab(reader, pdfWin);
+    const ok = state.sidebarOutlineIndex < 0
+      ? this._readerSetOutlineSelection(state, reader, pdfWin, 0)
+      : this._readerSetOutlineSelection(state, reader, pdfWin, state.sidebarOutlineIndex);
+    const hasFallbackTarget = !!this._readerOutlineFocusTarget(reader, pdfWin);
+    if (!ok && !hasFallbackTarget) {
+      state.sidebarNavActive = false;
+      state.sidebarOutlineIndex = -1;
+      this._showStatus(state, '✗ outline not available', 1200);
+      return false;
+    }
+    state.sidebarNavActive = true;
+    this._showStatus(state, ok ? '▶ outline' : '▶ outline (kbd)', 900);
+    return true;
+  },
+
+  _readerToggleSidebarOutline(state, reader, pdfWin) {
+    const wasOpen = this._readerIsSidebarOpen(reader, pdfWin);
+    if (wasOpen) {
+      this._readerSetSidebarOpen(state, reader, pdfWin, false);
+      state.sidebarNavActive = false;
+      state.sidebarOutlineIndex = -1;
+      this._showStatus(state, '→ sidebar toggled', 900);
+      return;
+    }
+
+    this._readerSetSidebarOpen(state, reader, pdfWin, true);
+    const focused = this._readerFocusSidebarOutline(state, reader, pdfWin, { openIfNeeded: true });
+    if (!focused) {
+      // Even when outline items are not ready yet, keep this action truthful.
+      this._showStatus(state, '→ sidebar toggled', 900);
+    }
+  },
+
+  _readerOutlineMove(state, reader, pdfWin, dir) {
+    const items = this._readerGetOutlineItems(reader, pdfWin);
+    if (!items.length) {
+      const key = dir > 0 ? 'ArrowDown' : 'ArrowUp';
+      if (!this._readerOutlineSendKey(reader, pdfWin, key)) {
+        state.sidebarNavActive = false;
+        this._showStatus(state, '✗ no outline entries', 1200);
+      }
+      return;
+    }
+    const base = state.sidebarOutlineIndex < 0 ? 0 : state.sidebarOutlineIndex;
+    const next = Math.max(0, Math.min(items.length - 1, base + dir));
+    this._readerSetOutlineSelection(state, reader, pdfWin, next);
+  },
+
+  _readerOutlineToggleExpand(state, reader, pdfWin, expand) {
+    const items = this._readerGetOutlineItems(reader, pdfWin);
+    if (!items.length) {
+      const key = expand ? 'ArrowRight' : 'ArrowLeft';
+      if (!this._readerOutlineSendKey(reader, pdfWin, key)) state.sidebarNavActive = false;
+      return;
+    }
+    if (state.sidebarOutlineIndex < 0) {
+      this._readerSetOutlineSelection(state, reader, pdfWin, 0);
+    }
+    const item = items[Math.max(0, state.sidebarOutlineIndex)];
+    if (!item) return;
+    const outlineItem = item.closest('.outlineItem');
+    const toggler = outlineItem?.querySelector(':scope > .outlineItemToggler')
+      || outlineItem?.querySelector('.outlineItemToggler');
+    if (!toggler) return;
+    const isCollapsed = toggler.classList.contains('outlineItemsHidden');
+    if (expand && isCollapsed) toggler.click();
+    if (!expand && !isCollapsed) toggler.click();
+    // Outline structure changed after toggle; refresh visible list and keep cursor nearby.
+    this._readerSetOutlineSelection(state, reader, pdfWin, state.sidebarOutlineIndex);
+  },
+
+  _readerOutlineActivate(state, reader, pdfWin) {
+    const items = this._readerGetOutlineItems(reader, pdfWin);
+    if (!items.length) {
+      if (!this._readerOutlineSendKey(reader, pdfWin, 'Enter')) {
+        state.sidebarNavActive = false;
+      }
+      state.sidebarNavActive = false;
+      this._setMode(state, 'normal');
+      setTimeout(() => { try { pdfWin.focus(); } catch (_) {} }, 30);
+      return;
+    }
+    if (state.sidebarOutlineIndex < 0) {
+      this._readerSetOutlineSelection(state, reader, pdfWin, 0);
+    }
+    const item = items[Math.max(0, state.sidebarOutlineIndex)];
+    if (!item) return;
+    try { item.click(); } catch (_) {}
+    state.sidebarNavActive = false;
+    this._setMode(state, 'normal');
+    setTimeout(() => { try { pdfWin.focus(); } catch (_) {} }, 30);
+    this._showStatus(state, '▶ jumped', 900);
   },
 
   // ── Visual mode helpers ───────────────────────────────────────────────────

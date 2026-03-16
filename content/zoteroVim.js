@@ -452,7 +452,9 @@ var ZoteroVim = {
 
     // Re-position the visual cursor when the user scrolls the PDF.
     const scrollHandler = () => {
-      if (state.mode === 'visual') this._updateVisualCursor(state, pdfWin, { autoPan: false });
+      if (state.mode === 'visual' || state.mode === 'cursor') {
+        this._updateVisualCursor(state, pdfWin, { autoPan: false });
+      }
     };
     let scrollEl = null;
     try {
@@ -1802,7 +1804,9 @@ var ZoteroVim = {
     }
     if (!rect || rect.height < 1) return;
 
-    const shouldAutoPan = opts?.autoPan !== undefined ? !!opts.autoPan : (state.mode === 'visual');
+    const shouldAutoPan = opts?.autoPan !== undefined
+      ? !!opts.autoPan
+      : (state.mode === 'visual' || state.mode === 'cursor');
     if (shouldAutoPan) {
       this._autoPanToKeepRectVisible(state, pdfWin, rect);
     }

@@ -34,7 +34,8 @@ Vibe coded with Claude Sonnet 4.5.
 ## Features
 
 - **Normal mode** — scroll, page-navigate, jump between annotations, copy
-  annotation text, delete annotations, reposition the viewport (zt/zz/zb)
+  annotation text, delete annotations, reposition the viewport (zt/zz/zb),
+  and pan horizontally when zoomed in (`Shift+h`/`Shift+l`)
 - **Visual mode** — build text selections by line, character, word, sentence,
   or paragraph; create coloured highlights or notes; copy selection or whole
   paragraph to clipboard
@@ -128,6 +129,8 @@ Normal ──i──▶ Insert ──Escape────▶ Normal
 |-----|--------|
 | `j` | Scroll down |
 | `k` | Scroll up |
+| `Shift+h` (`H`) | Scroll left |
+| `Shift+l` (`L`) | Scroll right |
 | `Ctrl+d` | Half-page down |
 | `Ctrl+u` | Half-page up |
 | `Ctrl+f` | Full-page down |
@@ -304,8 +307,9 @@ Open **Edit → Preferences** (macOS: **Zotero → Settings**) and navigate to t
 - Use lowercase letters.  Prefix with `ctrl+` for Ctrl (or Cmd on macOS).
 - Multi-key sequences such as `gg`, `zy`, or `yy` are supported.
 - Click **+ Add binding** to add a new row; click **×** to remove one.
-- Click **Apply bindings** to save.  Scroll step, highlight colour, and
-  mode-enable toggles save automatically on change.
+- Click **Apply bindings** to save keybinding changes.
+- Scroll behavior settings have a separate **Apply configuration** button.
+- Highlight colour and mode-enable toggles save automatically on change.
 - Click **Reset to defaults** to restore all bindings to their defaults.
 
 ### Action reference
@@ -314,6 +318,8 @@ Open **Edit → Preferences** (macOS: **Zotero → Settings**) and navigate to t
 |--------|-------------|
 | `scrollDown` | Scroll down by the configured step |
 | `scrollUp` | Scroll up by the configured step |
+| `scrollLeft` | Scroll left by the configured step |
+| `scrollRight` | Scroll right by the configured step |
 | `halfPageDown` | Scroll down half a viewport |
 | `halfPageUp` | Scroll up half a viewport |
 | `fullPageDown` | Scroll down a full viewport |
@@ -376,8 +382,16 @@ Open **Edit → Preferences** (macOS: **Zotero → Settings**) and navigate to t
 |---------|---------|-------------|
 | Enable Visual mode | on | Allow entering Visual mode with `v` |
 | Enable Insert mode | on | Allow entering Insert mode with `i` |
-| Scroll step | 60 px | Pixels scrolled per `j`/`k` keypress |
+| Scroll step | 60 px | Pixels scrolled per `j`/`k`/`H`/`L` keypress |
+| Smooth scrolling | on | Enable smooth scrolling behavior in the reader |
+| Smooth initial speed | 320 px/s | Starting speed for hold-based smooth scrolling |
+| Smooth max speed | 2400 px/s | Maximum hold-scroll speed |
+| Smooth acceleration | 2600 px/s² | Speed increase while holding a scroll key |
+| Smooth deceleration | 4200 px/s² | Speed decrease after key release |
+| Stop on release | off | If enabled, stop immediately when key is released |
 | Default highlight colour | Yellow | Colour used when no explicit colour key is pressed |
+
+Scroll settings are staged and only saved when you click **Apply configuration**.
 
 ---
 

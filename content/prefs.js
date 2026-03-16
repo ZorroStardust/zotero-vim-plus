@@ -198,6 +198,29 @@ const ZV_ACTION_LABELS = {
 
 const ZV_ALL_ACTIONS = Object.keys(ZV_ACTION_LABELS).sort();
 
+const ZV_SCROLL_DEFAULTS = {
+  scrollStep: 60,
+  smoothScroll: true,
+  smoothInitialSpeed: 320,
+  smoothMaxSpeed: 2400,
+  smoothAcceleration: 2600,
+  smoothDeceleration: 4200,
+  smoothStopOnRelease: false,
+};
+
+function _zvClampInt(value, fallback, min, max) {
+  const n = parseInt(value, 10);
+  if (Number.isNaN(n)) return fallback;
+  return Math.max(min, Math.min(max, n));
+}
+
+function _zvFlashStatus(el, text, color) {
+  if (!el) return;
+  el.textContent = text;
+  if (color) el.style.color = color;
+  window.setTimeout(() => { el.textContent = ""; }, 1800);
+}
+
 // ── DOM init (retry until elements appear) ────────────────────────────────────
 
 var _zvRetries = 0;
@@ -228,14 +251,59 @@ function _zvInit() {
 
   // ── Scroll step ────────────────────────────────────────────────────────────
   const smoothScrollCb = document.getElementById("zv-smooth-scroll-enabled");
-  scrollInput.value = _zvGet("scrollStep", 60);
-  scrollInput.addEventListener("change", () => {
-    const v = parseInt(scrollInput.value, 10);
-    if (v >= 10 && v <= 500) _zvSet("scrollStep", v);
-  });
+  const initialSpeedInput = document.getElementById("zv-smooth-initial-speed");
+  const maxSpeedInput = document.getElementById("zv-smooth-max-speed");
+  const accelInput = document.getElementById("zv-smooth-accel");
+  const decelInput = document.getElementById("zv-smooth-decel");
+  const stopOnReleaseCb = document.getElementById("zv-smooth-stop-on-release");
+  const applyScrollBtn = document.getElementById("zv-apply-scroll-config");
+  const scrollStatus = document.getElementById("zv-scroll-config-status");
+
+  scrollInput.value = _zvGet("scrollStep", ZV_SCROLL_DEFAULTS.scrollStep);
   if (smoothScrollCb) {
-    smoothScrollCb.checked = _zvGet("smoothScroll", true);
-    smoothScrollCb.addEventListener("change", () => _zvSet("smoothScroll", smoothScrollCb.checked));
+    smoothScrollCb.checked = _zvGet("smoothScroll", ZV_SCROLL_DEFAULTS.smoothScroll);
+  }
+  if (initialSpeedInput) {
+    initialSpeedInput.value = _zvGet("smoothScroll.initialSpeed", ZV_SCROLL_DEFAULTS.smoothInitialSpeed);
+  }
+  if (maxSpeedInput) {
+    maxSpeedInput.value = _zvGet("smoothScroll.maxSpeed", ZV_SCROLL_DEFAULTS.smoothMaxSpeed);
+  }
+  if (accelInput) {
+    accelInput.value = _zvGet("smoothScroll.acceleration", ZV_SCROLL_DEFAULTS.smoothAcceleration);
+  }
+  if (decelInput) {
+    decelInput.value = _zvGet("smoothScroll.deceleration", ZV_SCROLL_DEFAULTS.smoothDeceleration);
+  }
+  if (stopOnReleaseCb) {
+    stopOnReleaseCb.checked = _zvGet("smoothScroll.stopOnRelease", ZV_SCROLL_DEFAULTS.smoothStopOnRelease);
+  }
+
+  if (applyScrollBtn) {
+    applyScrollBtn.addEventListener("click", () => {
+      const scrollStep = _zvClampInt(scrollInput.value, ZV_SCROLL_DEFAULTS.scrollStep, 10, 500);
+      const initialSpeed = _zvClampInt(initialSpeedInput?.value, ZV_SCROLL_DEFAULTS.smoothInitialSpeed, 50, 2000);
+      const maxSpeed = _zvClampInt(maxSpeedInput?.value, ZV_SCROLL_DEFAULTS.smoothMaxSpeed, 100, 6000);
+      const acceleration = _zvClampInt(accelInput?.value, ZV_SCROLL_DEFAULTS.smoothAcceleration, 100, 10000);
+      const deceleration = _zvClampInt(decelInput?.value, ZV_SCROLL_DEFAULTS.smoothDeceleration, 100, 12000);
+      const finalMaxSpeed = Math.max(maxSpeed, initialSpeed);
+
+      scrollInput.value = scrollStep;
+      if (initialSpeedInput) initialSpeedInput.value = initialSpeed;
+      if (maxSpeedInput) maxSpeedInput.value = finalMaxSpeed;
+      if (accelInput) accelInput.value = acceleration;
+      if (decelInput) decelInput.value = deceleration;
+
+      _zvSet("scrollStep", scrollStep);
+      _zvSet("smoothScroll", !!smoothScrollCb?.checked);
+      _zvSet("smoothScroll.initialSpeed", initialSpeed);
+      _zvSet("smoothScroll.maxSpeed", finalMaxSpeed);
+      _zvSet("smoothScroll.acceleration", acceleration);
+      _zvSet("smoothScroll.deceleration", deceleration);
+      _zvSet("smoothScroll.stopOnRelease", !!stopOnReleaseCb?.checked);
+
+      _zvFlashStatus(scrollStatus, "Applied!", "#5FB236");
+    });
   }
 
   // ── Default highlight colour ───────────────────────────────────────────────
@@ -279,8 +347,7 @@ function _zvInit() {
     saveBtn.addEventListener("click", () => {
       _zvSaveBindings();
       if (saveStatus) {
-        saveStatus.textContent = "Saved!";
-        window.setTimeout(() => { saveStatus.textContent = ""; }, 1500);
+        _zvFlashStatus(saveStatus, "Saved!", "#5FB236");
       }
     });
   }

@@ -66,7 +66,7 @@
   <groupbox>
     <label value="Scroll" style="font-weight: bold;" />
     <html:p style="margin: 4px 0 10px; font-size: 0.9em; color: #666;">
-      Number of pixels scrolled per j / k keypress.
+      Tune both classic step scrolling and hold-based smooth scrolling behavior.
     </html:p>
     <hbox align="center">
       <html:label for="zv-scroll-step"
@@ -78,6 +78,31 @@
     <hbox align="center" style="margin-top: 8px;">
       <checkbox id="zv-smooth-scroll-enabled"
         label="Enable smooth scrolling for reader navigation (default)" />
+    </hbox>
+    <html:div style="margin-top: 10px; padding-top: 10px; border-top: 1px solid #ddd; display: grid; grid-template-columns: 180px 90px; gap: 8px 12px; align-items: center;">
+      <html:label for="zv-smooth-initial-speed" style="font-weight: 600;">Initial speed (px/s)</html:label>
+      <html:input type="number" id="zv-smooth-initial-speed" min="50" max="2000" step="10" style="width: 90px; padding: 3px 6px;" />
+
+      <html:label for="zv-smooth-max-speed" style="font-weight: 600;">Max speed (px/s)</html:label>
+      <html:input type="number" id="zv-smooth-max-speed" min="100" max="6000" step="50" style="width: 90px; padding: 3px 6px;" />
+
+      <html:label for="zv-smooth-accel" style="font-weight: 600;">Acceleration (px/s²)</html:label>
+      <html:input type="number" id="zv-smooth-accel" min="100" max="10000" step="100" style="width: 90px; padding: 3px 6px;" />
+
+      <html:label for="zv-smooth-decel" style="font-weight: 600;">Deceleration (px/s²)</html:label>
+      <html:input type="number" id="zv-smooth-decel" min="100" max="12000" step="100" style="width: 90px; padding: 3px 6px;" />
+    </html:div>
+    <hbox align="center" style="margin-top: 8px;">
+      <checkbox id="zv-smooth-stop-on-release"
+        label="Stop immediately on key release instead of decelerating" />
+    </hbox>
+    <hbox style="margin-top: 10px; justify-content: flex-end; align-items: center;">
+      <html:p style="font-size: 0.85em; color: #888; margin: 0 12px 0 0;">
+        Scroll settings are staged until you apply them.
+      </html:p>
+      <html:button id="zv-apply-scroll-config" style="padding: 4px 16px; font-weight: bold;">Apply configuration</html:button>
+      <html:span id="zv-scroll-config-status"
+        style="margin-left: 10px; font-size: 0.9em; color: #5FB236;"></html:span>
     </hbox>
   </groupbox>
 
@@ -139,7 +164,7 @@
        Keybindings need an explicit "Apply" because the table is edited. -->
   <hbox style="margin-top: 12px; justify-content: flex-end; align-items: center;">
     <html:p style="font-size: 0.85em; color: #888; margin: 0 12px 0 0;">
-      Mode, scroll, colour, and smooth scrolling settings save automatically.
+      Modes and colour settings save automatically. Scroll settings require Apply configuration.
     </html:p>
     <html:button id="zv-save" style="padding: 4px 16px; font-weight: bold;">Apply bindings</html:button>
     <html:span id="zv-save-status"

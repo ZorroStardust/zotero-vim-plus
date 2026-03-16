@@ -235,6 +235,18 @@ var ZoteroVim = {
 
   isSmoothScrollEnabled() { return this.getPref('smoothScroll', true); },
 
+  getSmoothScrollConfig() {
+    const initialSpeed = this.getPref('smoothScroll.initialSpeed', 320);
+    const maxSpeed = Math.max(initialSpeed, this.getPref('smoothScroll.maxSpeed', 2400));
+    return {
+      initialSpeed,
+      maxSpeed,
+      acceleration: this.getPref('smoothScroll.acceleration', 2600),
+      deceleration: this.getPref('smoothScroll.deceleration', 4200),
+      stopOnRelease: this.getPref('smoothScroll.stopOnRelease', false),
+    };
+  },
+
   getDefaultHighlightColor() {
     const name = this.getPref('defaultHighlightColor', 'yellow');
     return this.COLORS[name] || this.COLORS.yellow;
@@ -571,23 +583,30 @@ var ZoteroVim = {
     const hold = state.smoothHold;
     if (!hold) return;
 
+    if (hold.active && hold.key === key) return;
+
+    const config = this.getSmoothScrollConfig();
+
     hold.active = true;
+    hold.releasing = false;
     hold.key = key;
     hold.direction = key === 'j' ? 1 : -1;
     hold.lastTS = 0;
-    if (hold.speed < 240) hold.speed = 240;
+    hold.speed = Math.max(config.initialSpeed, (hold.direction === (key === 'j' ? 1 : -1)) ? hold.speed : 0);
 
     // Immediate response on keydown so short taps still feel consistent.
-    this._scrollContainerBy(this._getScrollContainer(pdfWin), hold.direction * 8, { forceInstant: true });
+    this._scrollContainerBy(this._getScrollContainer(pdfWin), hold.direction * (config.initialSpeed / 120), { forceInstant: true });
 
     if (hold.rafId) return;
 
     const tick = (ts) => {
-      if (!hold.active || !hold.direction) {
+      if ((!hold.active && !hold.releasing) || !hold.direction) {
         hold.rafId = null;
         hold.lastTS = 0;
         return;
       }
+
+      const frameConfig = this.getSmoothScrollConfig();
 
       if (!hold.lastTS) {
         hold.lastTS = ts;
@@ -595,10 +614,15 @@ var ZoteroVim = {
       const dt = Math.min(0.05, Math.max(0.001, (ts - hold.lastTS) / 1000));
       hold.lastTS = ts;
 
-      // Time-based acceleration: holding the key increases speed smoothly.
-      const accel = 2600; // px/s^2
-      const maxSpeed = 2400; // px/s
-      hold.speed = Math.min(maxSpeed, hold.speed + accel * dt);
+      if (hold.active) {
+        hold.speed = Math.min(frameConfig.maxSpeed, Math.max(frameConfig.initialSpeed, hold.speed + frameConfig.acceleration * dt));
+      } else if (hold.releasing) {
+        hold.speed = Math.max(0, hold.speed - frameConfig.deceleration * dt);
+        if (hold.speed <= 0) {
+          this._stopSmoothHoldScroll(state, pdfWin, true);
+          return;
+        }
+      }
 
       this._scrollContainerBy(this._getScrollContainer(pdfWin), hold.direction * hold.speed * dt, { forceInstant: true });
       hold.rafId = pdfWin.requestAnimationFrame(tick);
@@ -607,10 +631,17 @@ var ZoteroVim = {
     hold.rafId = pdfWin.requestAnimationFrame(tick);
   },
 
-  _stopSmoothHoldScroll(state, pdfWin) {
+  _stopSmoothHoldScroll(state, pdfWin, immediate = true) {
     const hold = state?.smoothHold;
     if (!hold) return;
+    if (!immediate) {
+      hold.active = false;
+      hold.releasing = true;
+      hold.key = null;
+      return;
+    }
     hold.active = false;
+    hold.releasing = false;
     hold.key = null;
     hold.direction = 0;
     hold.speed = 0;
@@ -625,7 +656,8 @@ var ZoteroVim = {
     if (!this.isSmoothScrollEnabled()) return;
     if (event.key !== 'j' && event.key !== 'k') return;
     if (state?.smoothHold?.key === event.key) {
-      this._stopSmoothHoldScroll(state, pdfWin);
+      const config = this.getSmoothScrollConfig();
+      this._stopSmoothHoldScroll(state, pdfWin, !!config.stopOnRelease);
     }
   },
 

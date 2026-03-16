@@ -233,6 +233,8 @@ var ZoteroVim = {
 
   getScrollStep() { return this.getPref('scrollStep', 60); },
 
+  isSmoothScrollEnabled() { return this.getPref('smoothScroll', true); },
+
   getDefaultHighlightColor() {
     const name = this.getPref('defaultHighlightColor', 'yellow');
     return this.COLORS[name] || this.COLORS.yellow;
@@ -663,133 +665,137 @@ var ZoteroVim = {
   // ── Action dispatcher ─────────────────────────────────────────────────────
 
   _executeAction(action, reader, state, pdfWin, count = 0) {
-    Zotero.debug('[ZoteroVim] Action: ' + action + ' (mode:' + state.mode + ', count:' + count + ')');
+    try {
+      Zotero.debug('[ZoteroVim] Action: ' + action + ' (mode:' + state.mode + ', count:' + count + ')');
 
-    const step = this.getScrollStep();
-    const getContainer = () =>
-      pdfWin.PDFViewerApplication?.pdfViewer?.container ||
-      pdfWin.document.getElementById('viewerContainer');
-    const scrollBy  = (dy) => { try { getContainer()?.scrollBy(0, dy); } catch (_) {} };
-    const viewportH = () => { try { return getContainer()?.clientHeight || 600; } catch (_) { return 600; } };
+      const step = this.getScrollStep();
+      const getContainer = () =>
+        pdfWin.PDFViewerApplication?.pdfViewer?.container ||
+        pdfWin.document.getElementById('viewerContainer');
+      const scrollBy  = (dy) => this._scrollContainerBy(getContainer(), dy);
+      const viewportH = () => { try { return getContainer()?.clientHeight || 600; } catch (_) { return 600; } };
 
-    // Scrolling / page navigation clears any active annotation selection so that
-    // zb (recolorBlue) correctly falls through to the scroll-to-bottom path.
-    const clearAnnotation = () => { state.lastAnnotationKey = null; };
+      // Scrolling / page navigation clears any active annotation selection so that
+      // zb (recolorBlue) correctly falls through to the scroll-to-bottom path.
+      const clearAnnotation = () => { state.lastAnnotationKey = null; };
 
-    switch (action) {
-      case 'scrollDown':    clearAnnotation(); scrollBy(step);                         break;
-      case 'scrollUp':      clearAnnotation(); scrollBy(-step);                        break;
-      case 'halfPageDown':  clearAnnotation(); scrollBy(Math.round(viewportH() / 2)); break;
-      case 'halfPageUp':    clearAnnotation(); scrollBy(-Math.round(viewportH() / 2));break;
-      case 'fullPageDown':  clearAnnotation(); scrollBy(viewportH());                  break;
-      case 'fullPageUp':    clearAnnotation(); scrollBy(-viewportH());                 break;
-      case 'scrollTop':    clearAnnotation(); this._scrollToPagePosition(pdfWin, 'top');    break;
-      case 'scrollCenter': clearAnnotation(); this._scrollToPagePosition(pdfWin, 'center'); break;
-      case 'scrollBottom': clearAnnotation(); this._scrollToPagePosition(pdfWin, 'bottom'); break;
+      switch (action) {
+        case 'scrollDown':    clearAnnotation(); scrollBy(step);                         break;
+        case 'scrollUp':      clearAnnotation(); scrollBy(-step);                        break;
+        case 'halfPageDown':  clearAnnotation(); scrollBy(Math.round(viewportH() / 2)); break;
+        case 'halfPageUp':    clearAnnotation(); scrollBy(-Math.round(viewportH() / 2));break;
+        case 'fullPageDown':  clearAnnotation(); scrollBy(viewportH());                  break;
+        case 'fullPageUp':    clearAnnotation(); scrollBy(-viewportH());                 break;
+        case 'scrollTop':    clearAnnotation(); this._scrollToPagePosition(pdfWin, 'top');    break;
+        case 'scrollCenter': clearAnnotation(); this._scrollToPagePosition(pdfWin, 'center'); break;
+        case 'scrollBottom': clearAnnotation(); this._scrollToPagePosition(pdfWin, 'bottom'); break;
 
-      case 'prevPage':
-        clearAnnotation();
-        try { reader._internalReader.navigateToPreviousPage(); } catch (e) {
-          Zotero.debug('[ZoteroVim] prevPage: ' + e); } break;
-      case 'nextPage':
-        clearAnnotation();
-        try { reader._internalReader.navigateToNextPage(); } catch (e) {
-          Zotero.debug('[ZoteroVim] nextPage: ' + e); } break;
-      case 'firstPage':
-        clearAnnotation();
-        try { reader._internalReader.navigateToFirstPage(); } catch (e) {
-          Zotero.debug('[ZoteroVim] firstPage: ' + e); } break;
-      case 'lastPage':
-        clearAnnotation();
-        if (count > 0) {
-          try {
-            const readerWin = reader._iframeWindow;
-            reader._internalReader.navigate(Cu.cloneInto({ pageIndex: count - 1 }, readerWin));
-            Zotero.debug('[ZoteroVim] navigate pageIndex=' + (count - 1));
-          } catch (e) {
-            Zotero.debug('[ZoteroVim] goToPage: ' + e); }
-        } else {
-          try { reader._internalReader.navigateToLastPage(); } catch (e) {
-            Zotero.debug('[ZoteroVim] lastPage: ' + e); }
-        }
-        break;
-
-      case 'openSearch':      this._openSearch(reader, pdfWin);           break;
-      case 'prevAnnotation':  this._navigateAnnotation(state, reader, -1); break;
-      case 'nextAnnotation':  this._navigateAnnotation(state, reader, +1); break;
-      case 'editAnnotation':    this._editAnnotation(state, reader);         break;
-      case 'deleteAnnotation':  this._deleteAnnotation(state, reader);                        break;
-      case 'recolorYellow':   this._recolorAnnotation(state, reader, this.COLORS.yellow); break;
-      case 'recolorRed':      this._recolorAnnotation(state, reader, this.COLORS.red);    break;
-      case 'recolorGreen':    this._recolorAnnotation(state, reader, this.COLORS.green);  break;
-      case 'recolorBlue':
-        if (state.lastAnnotationKey) {
-          this._recolorAnnotation(state, reader, this.COLORS.blue);
-        } else {
-          this._scrollToPagePosition(pdfWin, 'bottom');
-        }
-        break;
-      case 'recolorPurple':   this._recolorAnnotation(state, reader, this.COLORS.purple); break;
-      case 'filterYellow':    this._filterByColor(state, reader, this.COLORS.yellow); break;
-      case 'filterRed':       this._filterByColor(state, reader, this.COLORS.red);    break;
-      case 'filterGreen':     this._filterByColor(state, reader, this.COLORS.green);  break;
-      case 'filterBlue':      this._filterByColor(state, reader, this.COLORS.blue);   break;
-      case 'filterPurple':    this._filterByColor(state, reader, this.COLORS.purple); break;
-      case 'filterClear':     this._filterByColor(state, reader, null);               break;
-      case 'yankAnnotation':        this._yankAnnotation(state, reader);          break;
-      case 'yankAnnotationComment': this._yankAnnotationComment(state, reader);  break;
-      case 'yankParagraph':         this._yankParagraph(state, pdfWin);           break;
-      case 'clearSearch':       this._clearSearch(pdfWin);                  break;
-
-      case 'enterVisual':
-        if (this.isModeEnabled('visual')) this._enterVisualMode(state, pdfWin);
-        break;
-      case 'enterInsert':
-        if (this.isModeEnabled('insert')) {
-          this._setMode(state, 'insert');
-          // If an annotation is currently selected, focus its comment field.
-          if (state.lastAnnotationKey) {
-            this._focusAnnotationComment(state, reader);
+        case 'prevPage':
+          clearAnnotation();
+          try { reader._internalReader.navigateToPreviousPage(); } catch (e) {
+            Zotero.debug('[ZoteroVim] prevPage: ' + e); } break;
+        case 'nextPage':
+          clearAnnotation();
+          try { reader._internalReader.navigateToNextPage(); } catch (e) {
+            Zotero.debug('[ZoteroVim] nextPage: ' + e); } break;
+        case 'firstPage':
+          clearAnnotation();
+          try { reader._internalReader.navigateToFirstPage(); } catch (e) {
+            Zotero.debug('[ZoteroVim] firstPage: ' + e); } break;
+        case 'lastPage':
+          clearAnnotation();
+          if (count > 0) {
+            try {
+              const readerWin = reader._iframeWindow;
+              reader._internalReader.navigate(Cu.cloneInto({ pageIndex: count - 1 }, readerWin));
+              Zotero.debug('[ZoteroVim] navigate pageIndex=' + (count - 1));
+            } catch (e) {
+              Zotero.debug('[ZoteroVim] goToPage: ' + e); }
+          } else {
+            try { reader._internalReader.navigateToLastPage(); } catch (e) {
+              Zotero.debug('[ZoteroVim] lastPage: ' + e); }
           }
-        }
-        break;
-      case 'exitMode':
-        this._setMode(state, 'normal');
-        try { pdfWin.getSelection()?.removeAllRanges(); } catch (_) {}
-        break;
+          break;
+
+        case 'openSearch':      this._openSearch(reader, pdfWin);           break;
+        case 'prevAnnotation':  this._navigateAnnotation(state, reader, -1); break;
+        case 'nextAnnotation':  this._navigateAnnotation(state, reader, +1); break;
+        case 'editAnnotation':    this._editAnnotation(state, reader);         break;
+        case 'deleteAnnotation':  this._deleteAnnotation(state, reader);                        break;
+        case 'recolorYellow':   this._recolorAnnotation(state, reader, this.COLORS.yellow); break;
+        case 'recolorRed':      this._recolorAnnotation(state, reader, this.COLORS.red);    break;
+        case 'recolorGreen':    this._recolorAnnotation(state, reader, this.COLORS.green);  break;
+        case 'recolorBlue':
+          if (state.lastAnnotationKey) {
+            this._recolorAnnotation(state, reader, this.COLORS.blue);
+          } else {
+            this._scrollToPagePosition(pdfWin, 'bottom');
+          }
+          break;
+        case 'recolorPurple':   this._recolorAnnotation(state, reader, this.COLORS.purple); break;
+        case 'filterYellow':    this._filterByColor(state, reader, this.COLORS.yellow); break;
+        case 'filterRed':       this._filterByColor(state, reader, this.COLORS.red);    break;
+        case 'filterGreen':     this._filterByColor(state, reader, this.COLORS.green);  break;
+        case 'filterBlue':      this._filterByColor(state, reader, this.COLORS.blue);   break;
+        case 'filterPurple':    this._filterByColor(state, reader, this.COLORS.purple); break;
+        case 'filterClear':     this._filterByColor(state, reader, null);               break;
+        case 'yankAnnotation':        this._yankAnnotation(state, reader);          break;
+        case 'yankAnnotationComment': this._yankAnnotationComment(state, reader);  break;
+        case 'yankParagraph':         this._yankParagraph(state, pdfWin);           break;
+        case 'clearSearch':       this._clearSearch(pdfWin);                  break;
+
+        case 'enterVisual':
+          if (this.isModeEnabled('visual')) this._enterVisualMode(state, pdfWin);
+          break;
+        case 'enterInsert':
+          if (this.isModeEnabled('insert')) {
+            this._setMode(state, 'insert');
+            // If an annotation is currently selected, focus its comment field.
+            if (state.lastAnnotationKey) {
+              this._focusAnnotationComment(state, reader);
+            }
+          }
+          break;
+        case 'exitMode':
+          this._setMode(state, 'normal');
+          try { pdfWin.getSelection()?.removeAllRanges(); } catch (_) {}
+          break;
 
       // Visual selection via caretPositionFromPoint (j/k)
       // and Selection.modify() for character/word/paragraph.
-      case 'extendDown':              this._extendByLine(state, pdfWin, +1);  break;
-      case 'extendUp':                this._extendByLine(state, pdfWin, -1);  break;
-      case 'extendRight':             this._extendByChar(state, pdfWin, +1);               break;
-      case 'extendLeft':              this._extendByChar(state, pdfWin, -1);               break;
-      case 'extendWordForward':        this._selModify(pdfWin, 'extend', 'forward',  'word'); this._updateVisualCursor(state, pdfWin); break;
-      case 'extendWordBackward':       this._selModify(pdfWin, 'extend', 'backward', 'word'); this._updateVisualCursor(state, pdfWin); break;
-      case 'extendSentenceForward':    this._extendBySentence(state, pdfWin, +1);             break;
-      case 'extendSentenceBackward':   this._extendBySentence(state, pdfWin, -1);             break;
-      case 'extendParagraphForward':   this._extendByParagraph(state, pdfWin, +1);            break;
-      case 'extendParagraphBackward':  this._extendByParagraph(state, pdfWin, -1);            break;
+        case 'extendDown':              this._extendByLine(state, pdfWin, +1);  break;
+        case 'extendUp':                this._extendByLine(state, pdfWin, -1);  break;
+        case 'extendRight':             this._extendByChar(state, pdfWin, +1);               break;
+        case 'extendLeft':              this._extendByChar(state, pdfWin, -1);               break;
+        case 'extendWordForward':        this._selModify(pdfWin, 'extend', 'forward',  'word'); this._updateVisualCursor(state, pdfWin); break;
+        case 'extendWordBackward':       this._selModify(pdfWin, 'extend', 'backward', 'word'); this._updateVisualCursor(state, pdfWin); break;
+        case 'extendSentenceForward':    this._extendBySentence(state, pdfWin, +1);             break;
+        case 'extendSentenceBackward':   this._extendBySentence(state, pdfWin, -1);             break;
+        case 'extendParagraphForward':   this._extendByParagraph(state, pdfWin, +1);            break;
+        case 'extendParagraphBackward':  this._extendByParagraph(state, pdfWin, -1);            break;
 
-      case 'highlightYellow':  this._highlight(state, reader, pdfWin, this.COLORS.yellow);  break;
-      case 'highlightRed':     this._highlight(state, reader, pdfWin, this.COLORS.red);     break;
-      case 'highlightGreen':   this._highlight(state, reader, pdfWin, this.COLORS.green);   break;
-      case 'highlightBlue':    this._highlight(state, reader, pdfWin, this.COLORS.blue);    break;
-      case 'highlightPurple':  this._highlight(state, reader, pdfWin, this.COLORS.purple);  break;
-      case 'addNote':          this._addNote(state, reader, pdfWin);                         break;
-      case 'copySelection':    this._copySelection(state, pdfWin);                           break;
-      case 'searchSelection':  this._searchSelection(state, reader, pdfWin);                 break;
-      case 'swapVisualEnds':   this._swapVisualEnds(state, pdfWin);                          break;
+        case 'highlightYellow':  this._highlight(state, reader, pdfWin, this.COLORS.yellow);  break;
+        case 'highlightRed':     this._highlight(state, reader, pdfWin, this.COLORS.red);     break;
+        case 'highlightGreen':   this._highlight(state, reader, pdfWin, this.COLORS.green);   break;
+        case 'highlightBlue':    this._highlight(state, reader, pdfWin, this.COLORS.blue);    break;
+        case 'highlightPurple':  this._highlight(state, reader, pdfWin, this.COLORS.purple);  break;
+        case 'addNote':          this._addNote(state, reader, pdfWin);                         break;
+        case 'copySelection':    this._copySelection(state, pdfWin);                           break;
+        case 'searchSelection':  this._searchSelection(state, reader, pdfWin);                 break;
+        case 'swapVisualEnds':   this._swapVisualEnds(state, pdfWin);                          break;
 
       // Delegate main-window actions from reader context
-      case 'mainFuzzyAll':
-      case 'mainFuzzyCollection':
-      case 'mainYankCitekey':
-      case 'mainOpenPDF':
-      case 'mainClosePDF':
-        this._delegateToMainWindow(action, count); break;
+        case 'mainFuzzyAll':
+        case 'mainFuzzyCollection':
+        case 'mainYankCitekey':
+        case 'mainOpenPDF':
+        case 'mainClosePDF':
+          this._delegateToMainWindow(action, count); break;
 
-      default: Zotero.debug('[ZoteroVim] Unknown action: ' + action);
+        default: Zotero.debug('[ZoteroVim] Unknown action: ' + action);
+      }
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] _executeAction error (' + action + '): ' + e);
     }
   },
 
@@ -1553,10 +1559,41 @@ var ZoteroVim = {
       else if (position === 'bottom') newTop = pageTop + pageH - viewH;
       else                           newTop = pageTop + pageH / 2 - viewH / 2;   // center
 
-      container.scrollTop = Math.max(0, newTop);
+      this._scrollContainerTo(container, Math.max(0, newTop));
     } catch (e) {
       Zotero.debug('[ZoteroVim] _scrollToPagePosition error: ' + e);
     }
+  },
+
+  _scrollContainerBy(container, dy) {
+    if (!container) return;
+    this._applyScrollBehavior(container);
+    try {
+      container.scrollBy(0, dy);
+    } catch (_) {
+      try { container.scrollBy(0, dy); } catch (_) {}
+    }
+  },
+
+  _scrollContainerTo(container, top) {
+    if (!container) return;
+    this._applyScrollBehavior(container);
+    try {
+      if (typeof container.scrollTo === 'function') {
+        container.scrollTo(0, top);
+      } else {
+        container.scrollTop = top;
+      }
+    } catch (_) {
+      try { container.scrollTop = top; } catch (_) {}
+    }
+  },
+
+  _applyScrollBehavior(container) {
+    if (!container?.style) return;
+    try {
+      container.style.scrollBehavior = this.isSmoothScrollEnabled() ? 'smooth' : 'auto';
+    } catch (_) {}
   },
 
   /**

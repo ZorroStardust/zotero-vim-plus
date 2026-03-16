@@ -75,6 +75,10 @@
         min="10" max="500" step="10"
         style="width: 80px; padding: 3px 6px;" />
     </hbox>
+    <hbox align="center" style="margin-top: 8px;">
+      <checkbox id="zv-smooth-scroll-enabled"
+        label="Enable smooth scrolling for reader navigation (default)" />
+    </hbox>
   </groupbox>
 
   <!-- ── Default highlight colour ───────────────────────────────────── -->
@@ -135,7 +139,7 @@
        Keybindings need an explicit "Apply" because the table is edited. -->
   <hbox style="margin-top: 12px; justify-content: flex-end; align-items: center;">
     <html:p style="font-size: 0.85em; color: #888; margin: 0 12px 0 0;">
-      Mode, scroll, and colour settings save automatically.
+      Mode, scroll, colour, and smooth scrolling settings save automatically.
     </html:p>
     <html:button id="zv-save" style="padding: 4px 16px; font-weight: bold;">Apply bindings</html:button>
     <html:span id="zv-save-status"

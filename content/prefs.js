@@ -227,11 +227,16 @@ function _zvInit() {
   }
 
   // ── Scroll step ────────────────────────────────────────────────────────────
+  const smoothScrollCb = document.getElementById("zv-smooth-scroll-enabled");
   scrollInput.value = _zvGet("scrollStep", 60);
   scrollInput.addEventListener("change", () => {
     const v = parseInt(scrollInput.value, 10);
     if (v >= 10 && v <= 500) _zvSet("scrollStep", v);
   });
+  if (smoothScrollCb) {
+    smoothScrollCb.checked = _zvGet("smoothScroll", true);
+    smoothScrollCb.addEventListener("change", () => _zvSet("smoothScroll", smoothScrollCb.checked));
+  }
 
   // ── Default highlight colour ───────────────────────────────────────────────
   const colorSelect = document.getElementById("zv-default-color");

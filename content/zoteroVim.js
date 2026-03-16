@@ -429,7 +429,7 @@ var ZoteroVim = {
 
     // Re-position the visual cursor when the user scrolls the PDF.
     const scrollHandler = () => {
-      if (state.mode === 'visual') this._updateVisualCursor(state, pdfWin);
+      if (state.mode === 'visual') this._updateVisualCursor(state, pdfWin, { autoPan: false });
     };
     let scrollEl = null;
     try {
@@ -1120,7 +1120,7 @@ var ZoteroVim = {
    * the user presses j/k/h/l/w/b etc.  After pressing `o` to swap ends, the
    * cursor jumps to the other end.
    */
-  _updateVisualCursor(state, pdfWin) {
+  _updateVisualCursor(state, pdfWin, opts = null) {
     const doc = pdfWin.document;
     for (const el of doc.querySelectorAll('[data-zv-cursor]')) el.remove();
     if (state.mode !== 'visual') return;
@@ -1155,6 +1155,10 @@ var ZoteroVim = {
     }
     if (!rect || rect.height < 1) return;
 
+    if (opts?.autoPan !== false) {
+      this._autoPanToKeepRectVisible(state, pdfWin, rect);
+    }
+
     const cursor = doc.createElement('div');
     cursor.setAttribute('data-zv-cursor', '1');
     cursor.style.cssText =
@@ -1168,6 +1172,41 @@ var ZoteroVim = {
       'pointer-events:none;' +
       'animation:zv-cursor-blink 1s step-end infinite;';
     doc.body.appendChild(cursor);
+  },
+
+  _autoPanToKeepRectVisible(state, pdfWin, rect) {
+    try {
+      const container = this._getScrollContainer(pdfWin);
+      if (!container) return;
+      const cr = container.getBoundingClientRect?.();
+      if (!cr) return;
+
+      const marginY = 28;
+      const marginX = 20;
+      let dy = 0;
+      let dx = 0;
+
+      if (rect.bottom > cr.bottom - marginY) {
+        dy = rect.bottom - (cr.bottom - marginY);
+      } else if (rect.top < cr.top + marginY) {
+        dy = rect.top - (cr.top + marginY);
+      }
+
+      if (rect.right > cr.right - marginX) {
+        dx = rect.right - (cr.right - marginX);
+      } else if (rect.left < cr.left + marginX) {
+        dx = rect.left - (cr.left + marginX);
+      }
+
+      if (dx || dy) {
+        // Clamp per-update pan to avoid large jumps on irregular text geometry.
+        const maxPan = 120;
+        dx = Math.max(-maxPan, Math.min(maxPan, dx));
+        dy = Math.max(-maxPan, Math.min(maxPan, dy));
+        // Keep cursor tracking tight in visual mode; avoid smooth lag here.
+        this._scrollContainerBy(container, dx, dy, { forceInstant: true });
+      }
+    } catch (_) {}
   },
 
   _selectHint(state, pdfWin, letter) {
@@ -1241,8 +1280,14 @@ var ZoteroVim = {
           } catch (_) { return; }
         } else { return; }
       }
-      // Always keep visualCursor in sync with the ANCHOR (not focus).
-      state.visualCursor = { textNode: sel.anchorNode, offset: sel.anchorOffset };
+      // Keep a stable anchor for visual mode. Re-seeding on every step lets
+      // the browser-normalized range direction flip and makes j/k drift.
+      if (!state.visualCursor) {
+        state.visualCursor = { textNode: sel.anchorNode, offset: sel.anchorOffset };
+      }
+      if (!state.visualCursor.textNode?.isConnected) {
+        state.visualCursor = { textNode: sel.anchorNode, offset: sel.anchorOffset };
+      }
 
       // ── Locate current focus element for geometry ───────────────────────
       const focusNode = sel.focusNode;
@@ -1273,20 +1318,13 @@ var ZoteroVim = {
       // ── Find target node / offset ──────────────────────────────────────
       let targetNode = null, targetOffset = 0;
 
-      // Strategy 1: caretPositionFromPoint — native Gecko API.
-      const targetY = focusMidY + direction * lineH * 1.5;
-      const caret = doc.caretPositionFromPoint?.(focusMidX, targetY);
-      if (caret?.offsetNode && caret.offsetNode !== focusNode) {
-        targetNode   = caret.offsetNode;
-        targetOffset = caret.offset;
-        Zotero.debug('[ZoteroVim] _extendByLine: caretFromPoint → ' +
-                     caret.offsetNode.textContent?.slice(0, 20));
-      }
-
-      // Strategy 2: scan .textLayer spans for nearest line.
+      // Strategy: scan .textLayer spans for the nearest line in the
+      // requested direction. This is more stable than caretFromPoint on
+      // complex PDF layouts with irregular span geometry.
       if (!targetNode) {
-        const minDelta = lineH * 0.4;
-        let bestSpan = null, bestAbsDy = Infinity, bestDist = Infinity;
+        const minDelta = lineH * 0.15;
+        let bestSpan = null, bestMidY = 0;
+        let bestAbsDy = Infinity, bestDist = Infinity;
         for (const span of doc.querySelectorAll('.textLayer span')) {
           const tn = span.firstChild;
           if (!tn || tn.nodeType !== 3 || !span.textContent.trim()) continue;
@@ -1298,21 +1336,31 @@ var ZoteroVim = {
           if (direction < 0 && dy > -minDelta) continue;
           const absDy = Math.abs(dy);
           const distX = Math.abs((r.left + r.right) / 2 - focusMidX);
-          if (absDy < bestAbsDy - lineH * 0.4 ||
-              (absDy < bestAbsDy + lineH * 0.4 && distX < bestDist)) {
-            bestSpan = span; bestAbsDy = absDy; bestDist = distX;
+          if (absDy < bestAbsDy - lineH * 0.2 ||
+              (Math.abs(absDy - bestAbsDy) <= lineH * 0.2 && distX < bestDist)) {
+            bestSpan = span;
+            bestMidY = midY;
+            bestAbsDy = absDy;
+            bestDist = distX;
           }
         }
         if (bestSpan?.firstChild?.nodeType === 3) {
           targetNode   = bestSpan.firstChild;
+          // Keep horizontal intent by projecting current X onto target line.
           targetOffset = 0;
+          try {
+            const cp = doc.caretPositionFromPoint?.(focusMidX, bestMidY);
+            if (cp?.offsetNode === targetNode && typeof cp.offset === 'number') {
+              targetOffset = cp.offset;
+            }
+          } catch (_) {}
           Zotero.debug('[ZoteroVim] _extendByLine: span fallback → ' +
                        targetNode.data?.slice(0, 20));
         }
       }
 
       if (!targetNode) {
-        this._showStatus(state, '✗ j/k: no target node', 2000);
+        this._showStatus(state, '✗ j/k: no target node', 1500);
         Zotero.debug('[ZoteroVim] _extendByLine: could not find target node');
         return;
       }

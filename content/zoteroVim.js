@@ -70,6 +70,8 @@ var ZoteroVim = {
     'normal:v':       'enterVisual',
     'normal:c':       'enterCursor',
     'normal:i':       'enterInsert',
+    'normal:J':       'mainPrevTab',
+    'normal:K':       'mainNextTab',
     'normal:escape':  'clearSearch',
     // Normal mode — space-chord bindings (delegate to main window)
     'normal: ff':  'mainFuzzyAll',
@@ -143,6 +145,8 @@ var ZoteroVim = {
     'main:k':     'mainNavUp',
     'main:gg':    'mainNavFirst',
     'main:G':     'mainNavLast',
+    'main:J':     'mainPrevTab',
+    'main:K':     'mainNextTab',
     'main:return':'mainActivate',         // Enter — open PDF of selected item
   },
 
@@ -1009,6 +1013,8 @@ var ZoteroVim = {
         case 'mainYankCitekey':
         case 'mainOpenPDF':
         case 'mainClosePDF':
+        case 'mainPrevTab':
+        case 'mainNextTab':
           this._delegateToMainWindow(action, count); break;
 
         default: Zotero.debug('[ZoteroVim] Unknown action: ' + action);
@@ -3807,6 +3813,8 @@ var ZoteroVim = {
       case 'mainOpenPDF':
       case 'mainActivate':         this._mainOpenPDF(win, winState);                   break;
       case 'mainClosePDF':         this._mainClosePDF(win);                            break;
+      case 'mainPrevTab':          this._mainCycleTab(win, -1);                        break;
+      case 'mainNextTab':          this._mainCycleTab(win, +1);                        break;
       case 'mainFocusSearch':      this._mainFocusSearch(win);                         break;
       case 'mainNavDown':          this._mainNavigate(win, winState, +1, count);       break;
       case 'mainNavUp':            this._mainNavigate(win, winState, -1, count);       break;
@@ -3896,6 +3904,51 @@ var ZoteroVim = {
       if (tabs) tabs.close(tabs.selectedID);
     } catch (e) {
       Zotero.debug('[ZoteroVim] _mainClosePDF error: ' + e);
+    }
+  },
+
+  _mainCycleTab(win, dir) {
+    try {
+      const tabs = win.Zotero_Tabs;
+      if (!tabs) return;
+
+      const directFns = dir < 0
+        ? ['selectPrev', 'selectPrevious', 'prev']
+        : ['selectNext', 'next'];
+      for (const fn of directFns) {
+        if (typeof tabs[fn] === 'function') {
+          tabs[fn]();
+          return;
+        }
+      }
+
+      const list = Array.isArray(tabs._tabs)
+        ? tabs._tabs
+        : (Array.isArray(tabs.tabs) ? tabs.tabs : null);
+      const selectedID = tabs.selectedID || tabs._selectedID;
+      if (!list || list.length < 2 || !selectedID) return;
+
+      const ids = list
+        .map(t => t?.id || t?.tabID || t?.dataset?.id)
+        .filter(Boolean);
+      const curIdx = ids.indexOf(selectedID);
+      if (curIdx < 0) return;
+
+      const nextIdx = (curIdx + dir + ids.length) % ids.length;
+      const nextID = ids[nextIdx];
+      if (!nextID) return;
+
+      const selectFns = ['select', 'selectTab', 'showTab'];
+      for (const fn of selectFns) {
+        if (typeof tabs[fn] === 'function') {
+          tabs[fn](nextID);
+          return;
+        }
+      }
+
+      tabs.selectedID = nextID;
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] _mainCycleTab error: ' + e);
     }
   },
 

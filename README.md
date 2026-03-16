@@ -150,6 +150,8 @@ Cursor ──v──▶ Visual ──v/Escape──▶ Normal
 | `l` | Next page |
 | `gg` | First page |
 | `G` | Last page |
+| `Shift+J` (`J`) | Switch to previous open tab |
+| `Shift+K` (`K`) | Switch to next open tab |
 
 #### Viewport positioning (like Vim's z commands)
 

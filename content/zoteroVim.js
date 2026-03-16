@@ -76,6 +76,7 @@ var ZoteroVim = {
     // Normal mode — space-chord bindings (delegate to main window)
     'normal: ff':  'mainFuzzyAll',
     'normal: fb':  'mainFuzzyCollection',
+    'normal: bj':  'mainTabPick',
     'normal: yy':  'mainYankCitekey',
     'normal: o':   'mainOpenPDF',
     'normal: q':   'mainClosePDF',
@@ -132,6 +133,7 @@ var ZoteroVim = {
     // Space key produces ' ' from _keyString, so <space>ff → buffer ' ff' → key 'main: ff'
     'main: ff':   'mainFuzzyAll',         // <space>ff  — fuzzy picker, all items
     'main: fb':   'mainFuzzyCollection',  // <space>fb  — fuzzy picker, current collection
+    'main: bj':   'mainTabPick',          // <space>bj  — pick/open tab by hint
     'main: e':    'mainFocusTree',        // <space>e   — focus collection tree
     'main: yy':   'mainYankCitekey',      // <space>yy  — copy citekey of selected item
     'main: o':    'mainOpenPDF',          // <space>o   — open selected item's PDF
@@ -1010,6 +1012,7 @@ var ZoteroVim = {
       // Delegate main-window actions from reader context
         case 'mainFuzzyAll':
         case 'mainFuzzyCollection':
+        case 'mainTabPick':
         case 'mainYankCitekey':
         case 'mainOpenPDF':
         case 'mainClosePDF':
@@ -3805,6 +3808,7 @@ var ZoteroVim = {
     switch (action) {
       case 'mainFuzzyAll':         this._openFuzzyPicker(win, winState, 'all');         break;
       case 'mainFuzzyCollection':  this._openFuzzyPicker(win, winState, 'collection');  break;
+      case 'mainTabPick':          this._openFuzzyPicker(win, winState, 'tabs');        break;
       case 'mainFocusTree':
       case 'mainFocusLeft':        this._mainFocusPanel(win, winState, 'collections');  break;
       case 'mainFocusItems':
@@ -4033,7 +4037,7 @@ var ZoteroVim = {
 
     const input = h('input');
     input.type = 'text';
-    input.placeholder = 'Search items…';
+    input.placeholder = scope === 'tabs' ? 'Pick tab by hint or search tab title...' : 'Search items...';
     input.style.cssText =
       'width:100%;box-sizing:border-box;background:#313244;color:#cdd6f4;' +
       'border:none;outline:none;border-radius:4px;padding:6px 10px;font:13px/1 monospace;';
@@ -4048,7 +4052,9 @@ var ZoteroVim = {
     const hintBar = h('div');
     hintBar.style.cssText =
       'padding:4px 12px;font-size:11px;color:#6c7086;border-top:1px solid #313244;flex-shrink:0;';
-    hintBar.textContent = 'Ctrl+j/k navigate  ·  Enter select  ·  y yank citation  ·  yy yank citekey  ·  Esc close';
+    hintBar.textContent = scope === 'tabs'
+      ? 'Type hint letter (empty query) or search title  ·  Ctrl+j/k navigate  ·  Enter select  ·  Esc close'
+      : 'Ctrl+j/k navigate  ·  Enter select  ·  y yank citation  ·  yy yank citekey  ·  Esc close';
 
     inputWrap.appendChild(input);
     modal.appendChild(inputWrap);
@@ -4064,6 +4070,7 @@ var ZoteroVim = {
     winState._pickerFiltered = [];
     winState._pickerLastKey  = null;
     winState._pickerYTimer   = null;
+    winState._pickerScope    = scope;
 
     // Dismiss on backdrop click
     overlay.addEventListener('mousedown', (ev) => {
@@ -4086,32 +4093,36 @@ var ZoteroVim = {
 
     // ── Load items ──────────────────────────────────────────────────────────
     try {
-      const libID = Zotero.Libraries.userLibraryID;
-      let items;
-      if (scope === 'collection') {
-        const cv   = win.ZoteroPane.collectionsView;
-        const coll = cv?.getSelectedCollection?.();
-        // getChildItems is synchronous; getAll is async — must await
-        items = coll ? Array.from(coll.getChildItems(false, false) || [])
-                     : Array.from((await Zotero.Items.getAll(libID, true, false)) || []);
+      if (scope === 'tabs') {
+        winState._pickerItems = this._buildTabPickerItems(win);
       } else {
-        // onlyTopLevel=true avoids duplicates from child items; deleted=false
-        items = Array.from((await Zotero.Items.getAll(libID, true, false)) || []);
-      }
-      items = items.filter(item => !item.isAttachment() && !item.isNote());
+        const libID = Zotero.Libraries.userLibraryID;
+        let items;
+        if (scope === 'collection') {
+          const cv   = win.ZoteroPane.collectionsView;
+          const coll = cv?.getSelectedCollection?.();
+          // getChildItems is synchronous; getAll is async - must await
+          items = coll ? Array.from(coll.getChildItems(false, false) || [])
+                       : Array.from((await Zotero.Items.getAll(libID, true, false)) || []);
+        } else {
+          // onlyTopLevel=true avoids duplicates from child items; deleted=false
+          items = Array.from((await Zotero.Items.getAll(libID, true, false)) || []);
+        }
+        items = items.filter(item => !item.isAttachment() && !item.isNote());
 
-      winState._pickerItems = items.map(item => {
-        const citekey  = Zotero.BetterBibTeX?.KeyManager?.get(item.id)?.citationKey || '';
-        const title    = item.getField('title') || '';
-        const year     = item.getField('year')  || '';
-        const creators = item.getCreators?.() || [];
-        const author   = creators.length > 0
-          ? (creators[0].lastName || creators[0].name || '') : '';
-        return {
-          id: item.id, citekey, title, year, author,
-          searchStr: [citekey, title, author, year].join(' ').toLowerCase(),
-        };
-      });
+        winState._pickerItems = items.map(item => {
+          const citekey  = Zotero.BetterBibTeX?.KeyManager?.get(item.id)?.citationKey || '';
+          const title    = item.getField('title') || '';
+          const year     = item.getField('year')  || '';
+          const creators = item.getCreators?.() || [];
+          const author   = creators.length > 0
+            ? (creators[0].lastName || creators[0].name || '') : '';
+          return {
+            id: item.id, citekey, title, year, author,
+            searchStr: [citekey, title, author, year].join(' ').toLowerCase(),
+          };
+        });
+      }
     } catch (e) {
       Zotero.debug('[ZoteroVim] _openFuzzyPicker load error: ' + e);
       while (results.firstChild) results.removeChild(results.firstChild);
@@ -4146,6 +4157,8 @@ var ZoteroVim = {
 
   _onPickerKeyDown(e, win, winState) {
     const k = e.key;
+    const keyLower = String(k || '').toLowerCase();
+    const code = String(e.code || '');
     const maxIdx = Math.max(0, (winState._pickerFiltered.length || 1) - 1);
 
     if (k === 'Escape') {
@@ -4162,7 +4175,10 @@ var ZoteroVim = {
       this._pickerSelectItem(win, winState);
       return;
     }
-    if (k === 'ArrowDown' || (e.ctrlKey && (k === 'n' || k === 'j'))) {
+    const isCtrlDown = e.ctrlKey && (keyLower === 'n' || keyLower === 'j' || code === 'KeyN' || code === 'KeyJ');
+    const isCtrlUp = e.ctrlKey && (keyLower === 'p' || keyLower === 'k' || code === 'KeyP' || code === 'KeyK');
+
+    if (k === 'ArrowDown' || isCtrlDown) {
       e.preventDefault(); e.stopPropagation();
       clearTimeout(winState._pickerYTimer);
       winState._pickerLastKey = null;
@@ -4170,7 +4186,7 @@ var ZoteroVim = {
       this._renderPickerResults(winState);
       return;
     }
-    if (k === 'ArrowUp' || (e.ctrlKey && (k === 'p' || k === 'k'))) {
+    if (k === 'ArrowUp' || isCtrlUp) {
       e.preventDefault(); e.stopPropagation();
       clearTimeout(winState._pickerYTimer);
       winState._pickerLastKey = null;
@@ -4178,8 +4194,26 @@ var ZoteroVim = {
       this._renderPickerResults(winState);
       return;
     }
+    if (winState._pickerScope === 'tabs' && !e.ctrlKey && !e.metaKey && !e.altKey && k.length === 1) {
+      const query = (winState._pickerInput?.value || '').trim();
+      if (!query) {
+        const idx = this._pickerIndexFromHint(k, winState._pickerFiltered.length || 0);
+        if (idx >= 0) {
+          e.preventDefault(); e.stopPropagation();
+          clearTimeout(winState._pickerYTimer);
+          winState._pickerLastKey = null;
+          winState._pickerSelected = idx;
+          this._pickerSelectItem(win, winState);
+          return;
+        }
+      }
+    }
     // y = yank full citation; yy = yank citekey only
     if (k === 'y') {
+      if (winState._pickerScope === 'tabs') {
+        e.stopPropagation();
+        return;
+      }
       e.preventDefault(); e.stopPropagation();
       if (winState._pickerLastKey === 'y') {
         clearTimeout(winState._pickerYTimer);
@@ -4243,6 +4277,7 @@ var ZoteroVim = {
 
     const frag = doc.createDocumentFragment();
     const win  = winState._pickerWin;
+    const isTabPicker = winState._pickerScope === 'tabs';
 
     items.forEach((item, i) => {
       const row = h('div');
@@ -4254,7 +4289,12 @@ var ZoteroVim = {
       const line1 = h('div');
       const cite  = h('span');
       cite.style.cssText = 'color:#89b4fa;font-weight:bold;margin-right:8px;';
-      cite.textContent   = item.citekey ? '@' + item.citekey : '(no citekey)';
+      if (isTabPicker) {
+        const hint = this._pickerHintForIndex(i);
+        cite.textContent = hint ? '[' + hint + ']' : '[' + String(i + 1) + ']';
+      } else {
+        cite.textContent = item.citekey ? '@' + item.citekey : '(no citekey)';
+      }
       const titleSpan = h('span');
       titleSpan.style.cssText = 'color:#cdd6f4;';
       titleSpan.textContent   = item.title.length > 72
@@ -4264,7 +4304,9 @@ var ZoteroVim = {
 
       const meta = h('div');
       meta.style.cssText = 'color:#6c7086;font-size:11px;margin-top:1px;padding-left:2px;';
-      meta.textContent   = [item.author, item.year].filter(Boolean).join(', ');
+      meta.textContent   = isTabPicker
+        ? [item.kind, item.selected ? 'selected' : ''].filter(Boolean).join(' · ')
+        : [item.author, item.year].filter(Boolean).join(', ');
 
       row.appendChild(line1);
       row.appendChild(meta);
@@ -4292,12 +4334,82 @@ var ZoteroVim = {
     const item = (winState._pickerFiltered || [])[winState._pickerSelected];
     if (!item) return;
     try {
-      win.ZoteroPane.selectItem(item.id);
-      Zotero.debug('[ZoteroVim] pickerSelectItem: id=' + item.id);
+      if (winState._pickerScope === 'tabs') {
+        this._mainSelectTab(win, item.id);
+        Zotero.debug('[ZoteroVim] pickerSelectTab: id=' + item.id);
+      } else {
+        win.ZoteroPane.selectItem(item.id);
+        Zotero.debug('[ZoteroVim] pickerSelectItem: id=' + item.id);
+      }
     } catch (e) {
       Zotero.debug('[ZoteroVim] _pickerSelectItem error: ' + e);
     }
     this._closeFuzzyPicker(win, winState);
+  },
+
+  _buildTabPickerItems(win) {
+    try {
+      const tabs = win.Zotero_Tabs;
+      if (!tabs) return [];
+      const list = Array.isArray(tabs._tabs)
+        ? tabs._tabs
+        : (Array.isArray(tabs.tabs) ? tabs.tabs : []);
+      const selectedID = tabs.selectedID || tabs._selectedID;
+      return list
+        .map((tab, i) => {
+          const id = tab?.id || tab?.tabID || tab?.dataset?.id;
+          if (!id) return null;
+          const title = (tab?.title || tab?.label || tab?.name || tab?.dataset?.title || '').trim() || id;
+          const typeRaw = tab?.type || tab?.mode || tab?.dataset?.type || '';
+          const kind = String(typeRaw || (String(id).includes('reader') ? 'reader' : 'tab'));
+          const selected = selectedID ? id === selectedID : false;
+          return {
+            id,
+            title,
+            kind,
+            selected,
+            order: i + 1,
+            searchStr: [title, id, kind, selected ? 'selected current' : ''].join(' ').toLowerCase(),
+          };
+        })
+        .filter(Boolean);
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] _buildTabPickerItems error: ' + e);
+      return [];
+    }
+  },
+
+  _mainSelectTab(win, tabID) {
+    try {
+      const tabs = win.Zotero_Tabs;
+      if (!tabs || !tabID) return;
+      const selectFns = ['select', 'selectTab', 'showTab'];
+      for (const fn of selectFns) {
+        if (typeof tabs[fn] === 'function') {
+          tabs[fn](tabID);
+          return;
+        }
+      }
+      tabs.selectedID = tabID;
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] _mainSelectTab error: ' + e);
+    }
+  },
+
+  _pickerHintAlphabet() {
+    return 'asdfghjklqwertyuiopzxcvbnm1234567890';
+  },
+
+  _pickerHintForIndex(i) {
+    const alphabet = this._pickerHintAlphabet();
+    if (i < 0 || i >= alphabet.length) return '';
+    return alphabet[i];
+  },
+
+  _pickerIndexFromHint(key, count) {
+    const alphabet = this._pickerHintAlphabet();
+    const idx = alphabet.indexOf(String(key || '').toLowerCase());
+    return (idx >= 0 && idx < count) ? idx : -1;
   },
 
   _pickerYankCitekey(win, winState) {
@@ -4333,5 +4445,6 @@ var ZoteroVim = {
     winState._pickerFiltered = [];
     winState._pickerCleanup  = null;
     winState._pickerLastKey  = null;
+    winState._pickerScope    = null;
   },
 };

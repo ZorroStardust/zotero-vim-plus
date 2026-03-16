@@ -152,6 +152,7 @@ Cursor ──v──▶ Visual ──v/Escape──▶ Normal
 | `G` | Last page |
 | `Shift+J` (`J`) | Switch to previous open tab |
 | `Shift+K` (`K`) | Switch to next open tab |
+| `<space>bj` | Open tab picker (hint-based jump to open tab) |
 
 #### Viewport positioning (like Vim's z commands)
 
@@ -428,6 +429,7 @@ Open **Edit → Preferences** (macOS: **Zotero → Settings**) and navigate to t
 | `cursorLineStart` | Move caret to start of line (Cursor mode) |
 | `cursorLineEnd` | Move caret to end of line (Cursor mode) |
 | `cursorToVisual` | Enter Visual mode from current caret |
+| `mainTabPick` | Open tab picker for currently open Zotero tabs |
 
 ---
 

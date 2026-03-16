@@ -68,6 +68,7 @@ var ZoteroVim = {
     'normal:Zp':      'filterPurple',
     'normal:Za':      'filterClear',
     'normal:v':       'enterVisual',
+    'normal:c':       'enterCursor',
     'normal:i':       'enterInsert',
     'normal:escape':  'clearSearch',
     // Normal mode — space-chord bindings (delegate to main window)
@@ -105,6 +106,19 @@ var ZoteroVim = {
     // Visual mode — exit
     'visual:v':       'exitMode',
     'visual:escape':  'exitMode',
+
+    // Cursor mode — caret-style navigation without selection
+    'cursor:j':       'cursorDown',
+    'cursor:k':       'cursorUp',
+    'cursor:h':       'cursorLeft',
+    'cursor:l':       'cursorRight',
+    'cursor:w':       'cursorWordForward',
+    'cursor:W':       'cursorBigWordForward',
+    'cursor:b':       'cursorWordBackward',
+    'cursor:B':       'cursorBigWordBackward',
+    'cursor:$':       'cursorLineEnd',
+    'cursor:v':       'cursorToVisual',
+    'cursor:escape':  'exitMode',
 
     // Insert / passthrough mode
     'insert:escape':  'exitMode',
@@ -379,7 +393,11 @@ var ZoteroVim = {
       indicatorEl: null,
       hintMode: false,
       hintMap: {},
+      hintTargetMode: null,
       visualCursor: null,   // { textNode, offset } — restored if selection lost
+      cursorPreferredX: null,
+      cursorLastKey: '',
+      cursorLastKeyTS: 0,
       filterColor: null,    // active colour filter hex string, or null for all
       smoothHold: {
         active: false,
@@ -550,6 +568,7 @@ var ZoteroVim = {
         for (const el of state.pdfWin.document.querySelectorAll('[data-zv-cursor]')) el.remove();
       } catch (_) {}
     }
+    if (mode === 'cursor') this._ensureCursorCaret(state, state.pdfWin);
     this._updateIndicator(state);
   },
 
@@ -568,6 +587,7 @@ var ZoteroVim = {
       '-- ' + mode.toUpperCase() + ' --' + (prefix || buffer ? '  ' + prefix + buffer : '');
     state.indicatorEl.style.background =
       mode === 'visual' ? 'rgba(80,120,200,0.85)' :
+      mode === 'cursor' ? 'rgba(180,120,40,0.9)'  :
       mode === 'insert' ? 'rgba(50,150,80,0.85)'  : 'rgba(0,0,0,0.65)';
   },
 
@@ -724,8 +744,21 @@ var ZoteroVim = {
     const keyStr = this._keyString(event);
     if (!keyStr) return;
 
+    if (state.mode === 'cursor' && !state.countBuffer && !state.keyBuffer) {
+      if (['j', 'k', 'h', 'l', 'w', 'W', 'b', 'B', '$'].includes(keyStr)) {
+        const now = Date.now();
+        if (state.cursorLastKey === keyStr && now - state.cursorLastKeyTS < 35) {
+          event.preventDefault();
+          event.stopPropagation();
+          return;
+        }
+        state.cursorLastKey = keyStr;
+        state.cursorLastKeyTS = now;
+      }
+    }
+
     // Accumulate a count prefix (1–9 to start, 0 to extend) in normal mode.
-    if (state.mode === 'normal' && /^\d$/.test(keyStr)) {
+    if ((state.mode === 'normal' || state.mode === 'cursor') && /^\d$/.test(keyStr)) {
       if (keyStr !== '0' || state.countBuffer) {
         state.countBuffer = (state.countBuffer || '') + keyStr;
         event.preventDefault();
@@ -739,7 +772,7 @@ var ZoteroVim = {
     const bindings  = this.getBindings();
     const modePrefix = state.mode + ':';
 
-    const possible = Object.keys(bindings).filter(k => k.startsWith(modePrefix + newBuffer));
+    const possible = Object.keys(bindings).filter(k => this._bindingMatchesPrefix(k, modePrefix, newBuffer));
     const exact    = bindings[modePrefix + newBuffer];
 
     if (possible.length === 0 && !exact) {
@@ -747,7 +780,7 @@ var ZoteroVim = {
       state.countBuffer = '';
       clearTimeout(state.keyTimeout);
       state.keyTimeout = null;
-      const sp = Object.keys(bindings).filter(k => k.startsWith(modePrefix + keyStr));
+      const sp = Object.keys(bindings).filter(k => this._bindingMatchesPrefix(k, modePrefix, keyStr));
       const se = bindings[modePrefix + keyStr];
       if (sp.length === 0 && !se) return;
       this._processBuffer(keyStr, se, sp, modePrefix, bindings, state);
@@ -808,6 +841,19 @@ var ZoteroVim = {
     if (event.altKey) parts.push('alt');
     parts.push(key.length === 1 ? key : key.toLowerCase());
     return parts.join('+');
+  },
+
+  _bindingMatchesPrefix(bindingKey, modePrefix, buffer) {
+    if (!bindingKey.startsWith(modePrefix)) return false;
+    const tail = bindingKey.slice(modePrefix.length);
+    if (!tail.startsWith(buffer)) return false;
+
+    // Prevent single-letter keys like "c" from waiting on ctrl/alt combos
+    // such as "ctrl+d" due naive string prefix overlap.
+    if (!buffer.includes('+') && buffer.length === 1 && /^[A-Za-z]$/.test(buffer)) {
+      if (tail.startsWith('ctrl+') || tail.startsWith('alt+')) return false;
+    }
+    return true;
   },
 
   // ── Action dispatcher ─────────────────────────────────────────────────────
@@ -896,6 +942,9 @@ var ZoteroVim = {
         case 'enterVisual':
           if (this.isModeEnabled('visual')) this._enterVisualMode(state, pdfWin);
           break;
+        case 'enterCursor':
+          if (this.isModeEnabled('cursor')) this._enterCursorMode(state, pdfWin);
+          break;
         case 'enterInsert':
           if (this.isModeEnabled('insert')) {
             this._setMode(state, 'insert');
@@ -916,8 +965,8 @@ var ZoteroVim = {
         case 'extendUp':                this._extendByLine(state, pdfWin, -1);  break;
         case 'extendRight':             this._extendByChar(state, pdfWin, +1);               break;
         case 'extendLeft':              this._extendByChar(state, pdfWin, -1);               break;
-        case 'extendWordForward':        this._selModify(pdfWin, 'extend', 'forward',  'word'); this._updateVisualCursor(state, pdfWin); break;
-        case 'extendWordBackward':       this._selModify(pdfWin, 'extend', 'backward', 'word'); this._updateVisualCursor(state, pdfWin); break;
+        case 'extendWordForward':        this._extendByWord(state, pdfWin, 'forward', false);   break;
+        case 'extendWordBackward':       this._extendByWord(state, pdfWin, 'backward', false);  break;
         case 'extendSentenceForward':    this._extendBySentence(state, pdfWin, +1);             break;
         case 'extendSentenceBackward':   this._extendBySentence(state, pdfWin, -1);             break;
         case 'extendParagraphForward':   this._extendByParagraph(state, pdfWin, +1);            break;
@@ -932,6 +981,18 @@ var ZoteroVim = {
         case 'copySelection':    this._copySelection(state, pdfWin);                           break;
         case 'searchSelection':  this._searchSelection(state, reader, pdfWin);                 break;
         case 'swapVisualEnds':   this._swapVisualEnds(state, pdfWin);                          break;
+
+      // Cursor mode navigation
+        case 'cursorDown':            this._cursorMoveLine(state, pdfWin, +1, count);          break;
+        case 'cursorUp':              this._cursorMoveLine(state, pdfWin, -1, count);          break;
+        case 'cursorLeft':            this._cursorMoveByGranularity(state, pdfWin, 'backward', 'character', count); break;
+        case 'cursorRight':           this._cursorMoveByGranularity(state, pdfWin, 'forward', 'character', count);  break;
+        case 'cursorWordForward':     this._cursorMoveByGranularity(state, pdfWin, 'forward', 'word', count);       break;
+        case 'cursorBigWordForward':  this._cursorMoveByGranularity(state, pdfWin, 'forward', 'bigword', count);    break;
+        case 'cursorWordBackward':    this._cursorMoveByGranularity(state, pdfWin, 'backward', 'word', count);      break;
+        case 'cursorBigWordBackward': this._cursorMoveByGranularity(state, pdfWin, 'backward', 'bigword', count);   break;
+        case 'cursorLineEnd':         this._cursorMoveByGranularity(state, pdfWin, 'forward', 'lineboundary', count || 1); break;
+        case 'cursorToVisual':        this._cursorToVisual(state, pdfWin);                      break;
 
       // Delegate main-window actions from reader context
         case 'mainFuzzyAll':
@@ -957,21 +1018,463 @@ var ZoteroVim = {
       const sel = pdfWin.getSelection();
       if (sel && !sel.isCollapsed) return;   // keep existing mouse selection
     } catch (_) {}
-    this._showVisualHints(state, pdfWin);
+    this._showVisualHints(state, pdfWin, 'visual');
+  },
+
+  _enterCursorMode(state, pdfWin) {
+    state.visualCursor = null;
+    state.cursorPreferredX = null;
+    this._setMode(state, 'cursor');
+    this._showVisualHints(state, pdfWin, 'cursor');
+  },
+
+  _ensureCursorCaret(state, pdfWin) {
+    try {
+      const sel = pdfWin.getSelection();
+      if (!sel) return false;
+      if (sel.rangeCount > 0 && !sel.isCollapsed) {
+        const r = sel.getRangeAt(0);
+        const c = pdfWin.document.createRange();
+        c.setStart(r.endContainer, r.endOffset);
+        c.collapse(true);
+        sel.removeAllRanges();
+        sel.addRange(c);
+      }
+      if (sel.rangeCount > 0 && sel.isCollapsed) return true;
+
+      if (state.visualCursor?.textNode?.isConnected) {
+        const r = pdfWin.document.createRange();
+        r.setStart(state.visualCursor.textNode, state.visualCursor.offset);
+        r.collapse(true);
+        sel.removeAllRanges();
+        sel.addRange(r);
+        return true;
+      }
+
+      const span = pdfWin.document.querySelector('.textLayer span');
+      const tn = span?.firstChild;
+      if (tn && tn.nodeType === 3) {
+        const r = pdfWin.document.createRange();
+        r.setStart(tn, 0);
+        r.collapse(true);
+        sel.removeAllRanges();
+        sel.addRange(r);
+        state.visualCursor = { textNode: tn, offset: 0 };
+        return true;
+      }
+    } catch (_) {}
+    return false;
+  },
+
+  _cursorToVisual(state, pdfWin) {
+    try {
+      const sel = pdfWin.getSelection();
+      if (!sel || sel.rangeCount === 0) {
+        if (!this._ensureCursorCaret(state, pdfWin)) return;
+      }
+      const anchorNode = sel.anchorNode;
+      const anchorOffset = sel.anchorOffset;
+      this._setMode(state, 'visual');
+      state.visualCursor = { textNode: anchorNode, offset: anchorOffset };
+      this._updateVisualCursor(state, pdfWin);
+    } catch (_) {}
+  },
+
+  _cursorMoveByGranularity(state, pdfWin, direction, granularity, count = 0) {
+    try {
+      if (!this._ensureCursorCaret(state, pdfWin)) return;
+      const times = Math.max(1, count || 1);
+      if (granularity === 'word' || granularity === 'bigword') {
+        this._cursorMoveWord(state, pdfWin, direction, granularity === 'bigword', times);
+        state.cursorPreferredX = this._cursorCurrentX(pdfWin.document, pdfWin.getSelection(), state.cursorPreferredX);
+      } else {
+        const sel = pdfWin.getSelection();
+        if (!sel) return;
+        for (let i = 0; i < times; i++) {
+          sel.modify('move', direction, granularity);
+        }
+        state.visualCursor = { textNode: sel.focusNode, offset: sel.focusOffset };
+        state.cursorPreferredX = this._cursorCurrentX(pdfWin.document, sel, state.cursorPreferredX);
+      }
+      this._updateVisualCursor(state, pdfWin);
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] _cursorMoveByGranularity error: ' + e);
+    }
+  },
+
+  _cursorMoveLine(state, pdfWin, direction, count = 0) {
+    try {
+      const times = Math.max(1, count || 1);
+      for (let i = 0; i < times; i++) {
+        if (!this._cursorMoveLineOnce(state, pdfWin, direction)) break;
+      }
+      this._updateVisualCursor(state, pdfWin);
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] _cursorMoveLine error: ' + e);
+    }
+  },
+
+  _cursorMoveLineOnce(state, pdfWin, direction) {
+    try {
+      if (!this._ensureCursorCaret(state, pdfWin)) return false;
+      const doc = pdfWin.document;
+      const sel = pdfWin.getSelection();
+      if (!sel?.focusNode) return false;
+      const target = this._lineMoveTarget(doc, sel.focusNode, sel.focusOffset, direction, state.cursorPreferredX);
+      if (!target?.node) return false;
+
+      const c = doc.createRange();
+      c.setStart(target.node, Math.max(0, Math.min(target.offset, target.node.length)));
+      c.collapse(true);
+      sel.removeAllRanges();
+      sel.addRange(c);
+      state.visualCursor = {
+        textNode: target.node,
+        offset: Math.max(0, Math.min(target.offset, target.node.length)),
+      };
+      if (!Number.isFinite(state.cursorPreferredX)) {
+        state.cursorPreferredX = this._cursorCurrentX(doc, sel, null);
+      }
+      return true;
+    } catch (_) {
+      return false;
+    }
+  },
+
+  _cursorVisibleLines(doc) {
+    const spans = [];
+    for (const span of doc.querySelectorAll('.textLayer span')) {
+      const tn = span.firstChild;
+      if (!tn || tn.nodeType !== 3 || !span.textContent.trim()) continue;
+      const r = span.getBoundingClientRect();
+      if (r.width < 2 || r.height < 2) continue;
+      spans.push({ tn, rect: r, midY: (r.top + r.bottom) / 2 });
+    }
+
+    spans.sort((a, b) => {
+      const dy = a.midY - b.midY;
+      return Math.abs(dy) > 4 ? dy : a.rect.left - b.rect.left;
+    });
+
+    const lines = [];
+    for (const s of spans) {
+      const last = lines[lines.length - 1];
+      if (!last || Math.abs(last.midY - s.midY) > 4) {
+        lines.push({ midY: s.midY, top: s.rect.top, bottom: s.rect.bottom, spans: [s] });
+      } else {
+        last.spans.push(s);
+        last.top = Math.min(last.top, s.rect.top);
+        last.bottom = Math.max(last.bottom, s.rect.bottom);
+      }
+    }
+    return lines;
+  },
+
+  _lineMoveTarget(doc, focusNode, focusOffset, direction, preferredX = null) {
+    const focusEl = focusNode?.nodeType === 3 ? focusNode.parentElement : focusNode;
+    const focusRect = focusEl?.getBoundingClientRect?.();
+    if (!focusRect) return null;
+
+    let focusX = Number.isFinite(preferredX) ? preferredX : (focusRect.left + focusRect.right) / 2;
+    try {
+      if (focusNode?.nodeType === 3 && focusNode.length > 0) {
+        const off = Math.max(0, Math.min(focusOffset || 0, focusNode.length - 1));
+        const r = doc.createRange();
+        r.setStart(focusNode, off);
+        r.setEnd(focusNode, Math.min(focusNode.length, off + 1));
+        const rects = r.getClientRects();
+        if (!Number.isFinite(preferredX) && rects.length) focusX = (rects[0].left + rects[0].right) / 2;
+      }
+    } catch (_) {}
+
+    const focusY = (focusRect.top + focusRect.bottom) / 2;
+    const lines = this._cursorVisibleLines(doc);
+    if (!lines.length) return null;
+
+    let curLineIdx = lines.findIndex(l => focusY >= l.top - 1 && focusY <= l.bottom + 1);
+    if (curLineIdx < 0) {
+      let best = Infinity;
+      for (let i = 0; i < lines.length; i++) {
+        const d = Math.abs(lines[i].midY - focusY);
+        if (d < best) { best = d; curLineIdx = i; }
+      }
+    }
+    if (curLineIdx < 0) return null;
+
+    const targetLineIdx = curLineIdx + (direction > 0 ? 1 : -1);
+    if (targetLineIdx < 0 || targetLineIdx >= lines.length) return null;
+    const targetLine = lines[targetLineIdx];
+
+    let bestSpan = null;
+    let bestDist = Infinity;
+    for (const s of targetLine.spans) {
+      const distX = Math.abs(((s.rect.left + s.rect.right) / 2) - focusX);
+      if (distX < bestDist) {
+        bestDist = distX;
+        bestSpan = s;
+      }
+    }
+    const node = bestSpan?.tn || null;
+    if (!node) return null;
+
+    let offset = 0;
+    try {
+      const cp = doc.caretPositionFromPoint?.(focusX, targetLine.midY);
+      if (cp?.offsetNode === node && typeof cp.offset === 'number') {
+        offset = cp.offset;
+      }
+    } catch (_) {}
+
+    return { node, offset };
+  },
+
+  _cursorCurrentX(doc, sel, fallback = null) {
+    try {
+      if (!sel?.focusNode) return fallback;
+      const focusNode = sel.focusNode;
+      if (focusNode.nodeType === 3 && focusNode.length > 0) {
+        const off = Math.max(0, Math.min(sel.focusOffset || 0, focusNode.length - 1));
+        const r = doc.createRange();
+        r.setStart(focusNode, off);
+        r.setEnd(focusNode, Math.min(focusNode.length, off + 1));
+        const rects = r.getClientRects();
+        if (rects.length) return (rects[0].left + rects[0].right) / 2;
+      }
+      const el = focusNode.nodeType === 3 ? focusNode.parentElement : focusNode;
+      const rect = el?.getBoundingClientRect?.();
+      if (rect) return (rect.left + rect.right) / 2;
+    } catch (_) {}
+    return fallback;
+  },
+
+  _cursorOrderedTextNodes(doc) {
+    const spans = [];
+    for (const span of doc.querySelectorAll('.textLayer span')) {
+      const tn = span.firstChild;
+      if (!tn || tn.nodeType !== 3) continue;
+      if (!tn.data) continue;
+      const r = span.getBoundingClientRect();
+      if (r.width < 2 || r.height < 2) continue;
+      spans.push({ tn, rect: r });
+    }
+    spans.sort((a, b) => {
+      const dy = a.rect.top - b.rect.top;
+      return Math.abs(dy) > 4 ? dy : a.rect.left - b.rect.left;
+    });
+    return spans.map(s => s.tn);
+  },
+
+  _cursorNodeIndex(nodes, node) {
+    if (!node) return -1;
+    if (node.nodeType === 3) return nodes.indexOf(node);
+    for (let i = 0; i < nodes.length; i++) {
+      if (nodes[i].parentElement === node || node.contains?.(nodes[i])) return i;
+    }
+    return -1;
+  },
+
+  _isKeywordChar(ch) {
+    return /^[A-Za-z0-9_]$/.test(ch || '');
+  },
+
+  _cursorCharAt(nodes, idx, off) {
+    if (idx < 0 || idx >= nodes.length) return null;
+    const n = nodes[idx];
+    if (off < 0 || off >= n.length) return null;
+    return n.data.charAt(off);
+  },
+
+  _cursorAdvancePos(nodes, pos) {
+    let { idx, off } = pos;
+    if (idx < 0 || idx >= nodes.length) return pos;
+    if (off < nodes[idx].length) off++;
+    while (idx < nodes.length && off >= nodes[idx].length) {
+      idx++;
+      off = 0;
+      if (idx >= nodes.length) {
+        return { idx: nodes.length - 1, off: nodes[nodes.length - 1].length };
+      }
+    }
+    return { idx, off };
+  },
+
+  _cursorRetreatPos(nodes, pos) {
+    let { idx, off } = pos;
+    if (idx < 0 || idx >= nodes.length) return pos;
+    if (off > 0) off--;
+    else {
+      idx--;
+      while (idx >= 0 && nodes[idx].length === 0) idx--;
+      if (idx < 0) return { idx: 0, off: 0 };
+      off = Math.max(0, nodes[idx].length - 1);
+    }
+    return { idx, off };
+  },
+
+  _cursorSkipForward(nodes, pos, pred) {
+    let cur = { idx: pos.idx, off: pos.off };
+    while (cur.idx >= 0 && cur.idx < nodes.length) {
+      const ch = this._cursorCharAt(nodes, cur.idx, cur.off);
+      if (ch === null || !pred(ch)) break;
+      const next = this._cursorAdvancePos(nodes, cur);
+      if (next.idx === cur.idx && next.off === cur.off) break;
+      cur = next;
+      if (cur.idx === nodes.length - 1 && cur.off >= nodes[cur.idx].length) break;
+    }
+    return cur;
+  },
+
+  _cursorSkipBackward(nodes, pos, pred) {
+    let cur = { idx: pos.idx, off: pos.off };
+    while (cur.idx >= 0 && cur.idx < nodes.length) {
+      const ch = this._cursorCharAt(nodes, cur.idx, cur.off);
+      if (ch === null || !pred(ch)) break;
+      const prev = this._cursorRetreatPos(nodes, cur);
+      if (prev.idx === cur.idx && prev.off === cur.off) break;
+      cur = prev;
+    }
+    return cur;
+  },
+
+  _cursorMoveWord(state, pdfWin, direction, bigWord, count) {
+    const doc = pdfWin.document;
+    const sel = pdfWin.getSelection();
+    if (!sel) return;
+    const nodes = this._cursorOrderedTextNodes(doc);
+    if (!nodes.length) return;
+
+    let idx = this._cursorNodeIndex(nodes, sel.focusNode);
+    if (idx < 0) idx = 0;
+    const off = Math.max(0, Math.min(sel.focusOffset || 0, nodes[idx].length));
+    const pos = this._cursorComputeWordPosition(nodes, { idx, off }, direction, bigWord, count);
+
+    const targetNode = nodes[Math.max(0, Math.min(pos.idx, nodes.length - 1))];
+    const targetOff = Math.max(0, Math.min(pos.off, targetNode.length));
+    const r = doc.createRange();
+    r.setStart(targetNode, targetOff);
+    r.collapse(true);
+    sel.removeAllRanges();
+    sel.addRange(r);
+    state.visualCursor = { textNode: targetNode, offset: targetOff };
+  },
+
+  _cursorComputeWordPosition(nodes, startPos, direction, bigWord, count) {
+    let pos = { idx: startPos.idx, off: startPos.off };
+    const isSpace = (ch) => /\s/.test(ch);
+
+    for (let i = 0; i < count; i++) {
+      if (direction === 'forward') {
+        let ch = this._cursorCharAt(nodes, pos.idx, pos.off);
+        if (ch === null) break;
+
+        if (isSpace(ch)) {
+          pos = this._cursorSkipForward(nodes, pos, isSpace);
+          continue;
+        }
+
+        const groupPred = bigWord
+          ? (c) => !isSpace(c)
+          : (this._isKeywordChar(ch)
+            ? this._isKeywordChar.bind(this)
+            : (c) => !isSpace(c) && !this._isKeywordChar(c));
+        pos = this._cursorSkipForward(nodes, pos, groupPred);
+        pos = this._cursorSkipForward(nodes, pos, isSpace);
+      } else {
+        pos = this._cursorRetreatPos(nodes, pos);
+        pos = this._cursorSkipBackward(nodes, pos, isSpace);
+        let ch = this._cursorCharAt(nodes, pos.idx, pos.off);
+        if (ch === null) break;
+
+        const groupPred = bigWord
+          ? (c) => !isSpace(c)
+          : (this._isKeywordChar(ch)
+            ? this._isKeywordChar.bind(this)
+            : (c) => !isSpace(c) && !this._isKeywordChar(c));
+
+        while (true) {
+          const prev = this._cursorRetreatPos(nodes, pos);
+          if (prev.idx === pos.idx && prev.off === pos.off) break;
+          const prevCh = this._cursorCharAt(nodes, prev.idx, prev.off);
+          if (prevCh === null || !groupPred(prevCh)) break;
+          pos = prev;
+          if (pos.idx === 0 && pos.off === 0) break;
+        }
+      }
+    }
+
+    return pos;
+  },
+
+  _extendByWord(state, pdfWin, direction, bigWord) {
+    try {
+      pdfWin.focus();
+      const doc = pdfWin.document;
+      const sel = pdfWin.getSelection();
+      if (!sel) return;
+
+      if ((sel.rangeCount === 0 || sel.isCollapsed) && state.visualCursor?.textNode?.isConnected) {
+        const r = doc.createRange();
+        r.setStart(state.visualCursor.textNode, state.visualCursor.offset);
+        r.collapse(true);
+        sel.removeAllRanges();
+        sel.addRange(r);
+      }
+      if (sel.rangeCount === 0) return;
+
+      if (!state.visualCursor || !state.visualCursor.textNode?.isConnected) {
+        state.visualCursor = { textNode: sel.anchorNode, offset: sel.anchorOffset };
+      }
+
+      const nodes = this._cursorOrderedTextNodes(doc);
+      if (!nodes.length) return;
+      let idx = this._cursorNodeIndex(nodes, sel.focusNode);
+      if (idx < 0) idx = 0;
+      const off = Math.max(0, Math.min(sel.focusOffset || 0, nodes[idx].length));
+      const pos = this._cursorComputeWordPosition(nodes, { idx, off }, direction, bigWord, 1);
+      const targetNode = nodes[Math.max(0, Math.min(pos.idx, nodes.length - 1))];
+      const targetOffset = Math.max(0, Math.min(pos.off, targetNode.length));
+
+      const anchorNode = state.visualCursor.textNode;
+      const anchorOffset = state.visualCursor.offset;
+
+      const range = doc.createRange();
+      let anchorFirst = true;
+      if (anchorNode !== targetNode) {
+        anchorFirst = !!(anchorNode.compareDocumentPosition(targetNode) & 4);
+      } else {
+        anchorFirst = anchorOffset <= targetOffset;
+      }
+      if (anchorFirst) {
+        range.setStart(anchorNode, anchorOffset);
+        range.setEnd(targetNode, targetOffset);
+      } else {
+        range.setStart(targetNode, targetOffset);
+        range.setEnd(anchorNode, anchorOffset);
+      }
+      sel.removeAllRanges();
+      sel.addRange(range);
+      this._updateVisualCursor(state, pdfWin);
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] _extendByWord error: ' + e);
+    }
   },
 
   /**
    * Show Tridactyl-style letter hint badges at the start of each visible
    * sentence.  The user presses a letter to anchor selection at that point.
    */
-  _showVisualHints(state, pdfWin) {
+  _showVisualHints(state, pdfWin, targetMode = 'visual') {
     this._clearVisualHints(state, pdfWin);
     const doc      = pdfWin.document;
     const hintChars = 'asdfjklghqwertyuiopzxcvbnm';
     const hints    = {};
     let charIdx    = 0;
 
-    for (const { textNode, offset } of this._findSentenceStarts(pdfWin)) {
+    const starts = targetMode === 'cursor'
+      ? this._findCursorStartsFast(pdfWin)
+      : this._findSentenceStarts(pdfWin);
+
+    for (const { textNode, offset } of starts) {
       if (charIdx >= hintChars.length) break;
       const letter = hintChars[charIdx++];
 
@@ -1010,9 +1513,55 @@ var ZoteroVim = {
     if (Object.keys(hints).length > 0) {
       state.hintMode = true;
       state.hintMap  = hints;
+      state.hintTargetMode = targetMode;
     } else {
       this._placeCursorAtFirstText(state, pdfWin);
     }
+  },
+
+  _findCursorStartsFast(pdfWin) {
+    const doc = pdfWin.document;
+    const container =
+      doc.getElementById('viewerContainer') ||
+      doc.querySelector('.pdfViewer') ||
+      doc.body;
+    const viewRect = container.getBoundingClientRect?.() || {
+      top: 0,
+      bottom: container.clientHeight || 0,
+      left: 0,
+      right: container.clientWidth || 0,
+    };
+
+    const spans = [];
+    for (const span of doc.querySelectorAll('.textLayer span')) {
+      const tn = span.firstChild;
+      if (!tn || tn.nodeType !== 3) continue;
+      const txt = tn.data;
+      if (!txt || !txt.trim()) continue;
+      const r = span.getBoundingClientRect();
+      if (r.bottom < viewRect.top + 2 || r.top > viewRect.bottom - 2) continue;
+      if (r.right < viewRect.left + 2 || r.left > viewRect.right - 2) continue;
+      if (r.width < 3 || r.height < 3) continue;
+      spans.push({ tn, rect: r });
+      if (spans.length >= 120) break;
+    }
+
+    spans.sort((a, b) => {
+      const dy = a.rect.top - b.rect.top;
+      return Math.abs(dy) > 4 ? dy : a.rect.left - b.rect.left;
+    });
+
+    const starts = [];
+    let lastTop = -Infinity;
+    for (const s of spans) {
+      if (Math.abs(s.rect.top - lastTop) < 4) continue;
+      const off = s.tn.data.search(/\S/);
+      if (off < 0) continue;
+      starts.push({ textNode: s.tn, offset: off });
+      lastTop = s.rect.top;
+      if (starts.length >= 26) break;
+    }
+    return starts;
   },
 
   /**
@@ -1107,6 +1656,7 @@ var ZoteroVim = {
   _clearVisualHints(state, pdfWin) {
     state.hintMode = false;
     state.hintMap  = {};
+    state.hintTargetMode = null;
     if (!pdfWin) return;
     try {
       for (const el of pdfWin.document.querySelectorAll('[data-zv-hint]')) el.remove();
@@ -1124,7 +1674,7 @@ var ZoteroVim = {
   _updateVisualCursor(state, pdfWin, opts = null) {
     const doc = pdfWin.document;
     for (const el of doc.querySelectorAll('[data-zv-cursor]')) el.remove();
-    if (state.mode !== 'visual') return;
+    if (state.mode !== 'visual' && state.mode !== 'cursor') return;
 
     // Prefer the selection's focus end; fall back to the saved anchor.
     let focusNode = null, focusOffset = 0;
@@ -1156,7 +1706,8 @@ var ZoteroVim = {
     }
     if (!rect || rect.height < 1) return;
 
-    if (opts?.autoPan !== false) {
+    const shouldAutoPan = opts?.autoPan !== undefined ? !!opts.autoPan : (state.mode === 'visual');
+    if (shouldAutoPan) {
       this._autoPanToKeepRectVisible(state, pdfWin, rect);
     }
 
@@ -1266,105 +1817,23 @@ var ZoteroVim = {
       const doc = pdfWin.document;
       const sel = pdfWin.getSelection();
       if (!sel) return;
-
-      // ── Ensure we have a selection anchor ──────────────────────────────
-      // If the selection was lost (e.g. PDF.js cleared it), restore from the
-      // saved visualCursor.  Otherwise save the current anchor.
-      if (sel.rangeCount === 0 || sel.isCollapsed) {
-        if (state.visualCursor) {
-          try {
-            const r = doc.createRange();
-            r.setStart(state.visualCursor.textNode, state.visualCursor.offset);
-            r.collapse(true);
-            sel.removeAllRanges();
-            sel.addRange(r);
-          } catch (_) { return; }
-        } else { return; }
+      if ((sel.rangeCount === 0 || sel.isCollapsed) && state.visualCursor?.textNode?.isConnected) {
+        const restore = doc.createRange();
+        restore.setStart(state.visualCursor.textNode, state.visualCursor.offset);
+        restore.collapse(true);
+        sel.removeAllRanges();
+        sel.addRange(restore);
       }
-      // Keep a stable anchor for visual mode. Re-seeding on every step lets
-      // the browser-normalized range direction flip and makes j/k drift.
-      if (!state.visualCursor) {
-        state.visualCursor = { textNode: sel.anchorNode, offset: sel.anchorOffset };
-      }
-      if (!state.visualCursor.textNode?.isConnected) {
+      if (sel.rangeCount === 0) return;
+      if (!state.visualCursor || !state.visualCursor.textNode?.isConnected) {
         state.visualCursor = { textNode: sel.anchorNode, offset: sel.anchorOffset };
       }
 
-      // ── Locate current focus element for geometry ───────────────────────
-      const focusNode = sel.focusNode;
-      if (!focusNode) return;
-      const focusEl   = focusNode.nodeType === 3 ? focusNode.parentElement : focusNode;
-      const focusElRect = focusEl?.getBoundingClientRect?.();
-      if (!focusElRect || focusElRect.height < 1) return;
+      const target = this._lineMoveTarget(doc, sel.focusNode, sel.focusOffset, direction);
+      if (!target?.node) return;
 
-      // Use the bounding rect of the actual focus *character* for x-position
-      // rather than the span midpoint — PDF.js spans can be very wide (entire
-      // line), so using the span midpoint causes large horizontal jumps when
-      // caretPositionFromPoint picks a character far from the cursor.
-      let focusMidX = (focusElRect.left + focusElRect.right) / 2;
-      try {
-        const focusOff = sel.focusOffset;
-        const charRange = doc.createRange();
-        charRange.setStart(focusNode, focusOff);
-        charRange.setEnd(focusNode, Math.min(focusOff + 1, focusNode.length || 0));
-        const charRects = charRange.getClientRects();
-        if (charRects.length > 0) {
-          focusMidX = (charRects[0].left + charRects[0].right) / 2;
-        }
-      } catch (_) {}
-
-      const focusMidY = (focusElRect.top  + focusElRect.bottom) / 2;
-      const lineH     = Math.max(focusElRect.height, 8);
-
-      // ── Find target node / offset ──────────────────────────────────────
-      let targetNode = null, targetOffset = 0;
-
-      // Strategy: scan .textLayer spans for the nearest line in the
-      // requested direction. This is more stable than caretFromPoint on
-      // complex PDF layouts with irregular span geometry.
-      if (!targetNode) {
-        const minDelta = lineH * 0.15;
-        let bestSpan = null, bestMidY = 0;
-        let bestAbsDy = Infinity, bestDist = Infinity;
-        for (const span of doc.querySelectorAll('.textLayer span')) {
-          const tn = span.firstChild;
-          if (!tn || tn.nodeType !== 3 || !span.textContent.trim()) continue;
-          const r = span.getBoundingClientRect();
-          if (r.height < 2 || r.width < 2) continue;
-          const midY = (r.top + r.bottom) / 2;
-          const dy   = midY - focusMidY;
-          if (direction > 0 && dy < minDelta)  continue;
-          if (direction < 0 && dy > -minDelta) continue;
-          const absDy = Math.abs(dy);
-          const distX = Math.abs((r.left + r.right) / 2 - focusMidX);
-          if (absDy < bestAbsDy - lineH * 0.2 ||
-              (Math.abs(absDy - bestAbsDy) <= lineH * 0.2 && distX < bestDist)) {
-            bestSpan = span;
-            bestMidY = midY;
-            bestAbsDy = absDy;
-            bestDist = distX;
-          }
-        }
-        if (bestSpan?.firstChild?.nodeType === 3) {
-          targetNode   = bestSpan.firstChild;
-          // Keep horizontal intent by projecting current X onto target line.
-          targetOffset = 0;
-          try {
-            const cp = doc.caretPositionFromPoint?.(focusMidX, bestMidY);
-            if (cp?.offsetNode === targetNode && typeof cp.offset === 'number') {
-              targetOffset = cp.offset;
-            }
-          } catch (_) {}
-          Zotero.debug('[ZoteroVim] _extendByLine: span fallback → ' +
-                       targetNode.data?.slice(0, 20));
-        }
-      }
-
-      if (!targetNode) {
-        this._showStatus(state, '✗ j/k: no target node', 1500);
-        Zotero.debug('[ZoteroVim] _extendByLine: could not find target node');
-        return;
-      }
+      const targetNode = target.node;
+      const targetOffset = target.offset;
 
       // ── Build range from saved anchor to new target ────────────────────
       // We use createRange + addRange instead of sel.extend() because
@@ -1392,13 +1861,11 @@ var ZoteroVim = {
         sel.removeAllRanges();
         sel.addRange(range);
         const selLen = sel.toString().length;
-        Zotero.debug('[ZoteroVim] _extendByLine: range set, len=' + selLen);
-        // Show selection length so user can verify j/k is working visually.
-        this._showStatus(state, '▶ ' + selLen + ' chars', 600);
+        this._showStatus(state, '▶ ' + selLen + ' chars', 400);
         this._updateVisualCursor(state, pdfWin);
       } catch (e) {
         Zotero.debug('[ZoteroVim] _extendByLine range error: ' + e);
-        this._showStatus(state, '✗ range err: ' + String(e).slice(0, 25), 3000);
+        this._showStatus(state, '✗ range err: ' + String(e).slice(0, 25), 2000);
       }
     } catch (e) {
       Zotero.debug('[ZoteroVim] _extendByLine error: ' + e);

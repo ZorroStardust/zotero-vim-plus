@@ -22,6 +22,7 @@ Vibe coded with Claude Sonnet 4.5.
 - [Modes](#modes)
 - [Default keybindings](#default-keybindings)
   - [Normal mode](#normal-mode)
+   - [Cursor mode](#cursor-mode)
   - [Visual mode](#visual-mode)
   - [Insert mode](#insert-mode)
 - [Annotation workflow](#annotation-workflow)
@@ -36,6 +37,8 @@ Vibe coded with Claude Sonnet 4.5.
 - **Normal mode** — scroll, page-navigate, jump between annotations, copy
   annotation text, delete annotations, reposition the viewport (zt/zz/zb),
   and pan horizontally when zoomed in (`Shift+h`/`Shift+l`)
+- **Cursor mode** — move a text caret like browser Vim plugins without
+   selecting text (`hjkl`, `w/W`, `b/B`, `$`, and count prefixes such as `2w`)
 - **Visual mode** — build text selections by line, character, word, sentence,
   or paragraph; create coloured highlights or notes; copy selection or whole
   paragraph to clipboard
@@ -107,14 +110,17 @@ bottom-right corner of the PDF viewer:
 | Mode | Indicator | Purpose |
 |------|-----------|---------|
 | **Normal** | *(hidden)* | Default — navigation and annotation commands |
+| **Cursor** | `-- CURSOR --` | Caret navigation without text selection |
 | **Visual** | `-- VISUAL --` | Text selection and annotation creation |
 | **Insert** | `-- INSERT --` | Passthrough — all keys go to Zotero |
 
 Mode transitions:
 
 ```
+Normal ──c──▶ Cursor ──Escape────▶ Normal
 Normal ──v──▶ Visual ──v/Escape──▶ Normal
 Normal ──i──▶ Insert ──Escape────▶ Normal
+Cursor ──v──▶ Visual ──v/Escape──▶ Normal
 ```
 
 ---
@@ -201,7 +207,38 @@ highlighted in the PDF and scrolled to in the sidebar.
 | Key | Action |
 |-----|--------|
 | `v` | Enter Visual mode |
+| `c` | Enter Cursor mode |
 | `i` | Enter Insert mode |
+
+---
+
+### Cursor mode
+
+Enter Cursor mode with `c` from Normal mode.
+After pressing `c`, the plugin shows hint badges (same visual style as Visual mode)
+at candidate text positions in the viewport. Press a hint letter to place the
+caret there.
+
+#### Caret movement
+
+| Key | Action |
+|-----|--------|
+| `j` / `k` | Move caret down / up by one visual line |
+| `h` / `l` | Move caret left / right by one character |
+| `w` | Move caret forward by one word |
+| `W` | Move caret forward by one WORD (non-whitespace chunk) |
+| `b` | Move caret backward by one word |
+| `B` | Move caret backward by one WORD (non-whitespace chunk) |
+| `$` | Move caret to end of line |
+| `2w`, `3b`, ... | Count prefix repeats the motion |
+
+#### Mode switches
+
+| Key | Action |
+|-----|--------|
+| `a..z` (hint) | Place caret at selected hinted text position |
+| `v` | Enter Visual mode from current caret |
+| `Escape` | Exit to Normal mode |
 
 ---
 
@@ -352,6 +389,7 @@ Open **Edit → Preferences** (macOS: **Zotero → Settings**) and navigate to t
 | `yankAnnotation` | Copy annotation highlighted text |
 | `yankAnnotationComment` | Copy annotation comment text |
 | `enterVisual` | Enter Visual mode |
+| `enterCursor` | Enter Cursor mode |
 | `enterInsert` | Enter Insert mode (also focuses comment if annotation selected) |
 | `exitMode` | Return to Normal mode |
 | `extendDown` | Extend selection down one line |
@@ -374,6 +412,16 @@ Open **Edit → Preferences** (macOS: **Zotero → Settings**) and navigate to t
 | `searchSelection` | Open find bar and search for current selection |
 | `yankParagraph` | Copy whole paragraph to clipboard |
 | `swapVisualEnds` | Swap selection anchor and focus |
+| `cursorDown` | Move caret down one visual line (Cursor mode) |
+| `cursorUp` | Move caret up one visual line (Cursor mode) |
+| `cursorLeft` | Move caret left one character (Cursor mode) |
+| `cursorRight` | Move caret right one character (Cursor mode) |
+| `cursorWordForward` | Move caret forward one word (Cursor mode) |
+| `cursorBigWordForward` | Move caret forward one WORD (Cursor mode) |
+| `cursorWordBackward` | Move caret backward one word (Cursor mode) |
+| `cursorBigWordBackward` | Move caret backward one WORD (Cursor mode) |
+| `cursorLineEnd` | Move caret to end of line (Cursor mode) |
+| `cursorToVisual` | Enter Visual mode from current caret |
 
 ---
 
@@ -382,6 +430,7 @@ Open **Edit → Preferences** (macOS: **Zotero → Settings**) and navigate to t
 | Setting | Default | Description |
 |---------|---------|-------------|
 | Enable Visual mode | on | Allow entering Visual mode with `v` |
+| Enable Cursor mode | on | Allow entering Cursor mode with `c` |
 | Enable Insert mode | on | Allow entering Insert mode with `i` |
 | Scroll step | 60 px | Pixels scrolled per `j`/`k`/`H`/`L` keypress |
 | Smooth scrolling | on | Enable smooth scrolling behavior in the reader |

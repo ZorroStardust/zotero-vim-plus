@@ -1258,7 +1258,7 @@ var ZoteroVim = {
     return fallback;
   },
 
-  _setVisualSelectionFromAnchor(state, pdfWin, targetNode, targetOffset) {
+  _setVisualSelectionFromAnchor(state, pdfWin, targetNode, targetOffset, opts = null) {
     try {
       const sel = pdfWin.getSelection();
       if (!sel || !state.visualCursor?.textNode?.isConnected) return false;
@@ -1275,7 +1275,9 @@ var ZoteroVim = {
         sel.extend(targetNode, targetOffset);
       }
 
-      state.visualPreferredX = this._cursorCurrentX(pdfWin.document, sel, state.visualPreferredX);
+      if (opts?.updatePreferredX !== false) {
+        state.visualPreferredX = this._cursorCurrentX(pdfWin.document, sel, state.visualPreferredX);
+      }
       this._updateVisualCursor(state, pdfWin);
       return true;
     } catch (e) {
@@ -1932,7 +1934,7 @@ var ZoteroVim = {
       );
       if (!target?.node) return;
 
-      if (this._setVisualSelectionFromAnchor(state, pdfWin, target.node, target.offset)) {
+      if (this._setVisualSelectionFromAnchor(state, pdfWin, target.node, target.offset, { updatePreferredX: false })) {
         const selLen = sel.toString().length;
         this._showStatus(state, '▶ ' + selLen + ' chars', 400);
       }

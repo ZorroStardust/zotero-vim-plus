@@ -38,7 +38,7 @@ Vibe coded with Claude Sonnet 4.5.
   annotation text, delete annotations, reposition the viewport (zt/zz/zb),
   and pan horizontally when zoomed in (`Shift+h`/`Shift+l`)
 - **Cursor mode** — move a text caret like browser Vim plugins without
-   selecting text (`hjkl`, `w/W`, `b/B`, `$`, and count prefixes such as `2w`)
+   selecting text (`hjkl`, `w/W`, `b/B`, `0/$`, and count prefixes such as `2w`)
 - **Visual mode** — build text selections by line, character, word, sentence,
   or paragraph; create coloured highlights or notes; copy selection or whole
   paragraph to clipboard

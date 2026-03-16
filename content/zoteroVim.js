@@ -11,6 +11,8 @@
  *     3. PDF.js iframe (reader._internalReader._primaryView._iframeWindow)
  *
  *   We inject a keydown listener (capture) into the inner PDF.js window.
+ *   Existing reader tabs restored on startup may need a separate rescan pass,
+ *   since they do not always re-fire the toolbar render hook we use below.
  *   For annotation creation we first try Zotero's renderTextSelectionPopup
  *   hook; if that fails we compute PDF-coordinate rects from the DOM
  *   selection and call new Zotero.Item() directly.
@@ -260,13 +262,29 @@ var ZoteroVim = {
     );
   },
 
-  _onRenderToolbar(event) {
-    const { reader } = event;
-    if (!reader || !reader._instanceID) return;
-    const id = reader._instanceID;
-    if (this._injectedReaders.has(id)) return;
+  _ensureReaderInjected(reader) {
+    const id = reader?._instanceID;
+    if (!id) return false;
+    if (this._injectedReaders.has(id) || this._readerState.has(id)) return false;
     this._injectedReaders.add(id);
     this._waitAndInject(reader);
+    return true;
+  },
+
+  _onRenderToolbar(event) {
+    const { reader } = event;
+    this._ensureReaderInjected(reader);
+  },
+
+  _rescanSelectedReader(win) {
+    try {
+      const tabID = win?.Zotero_Tabs?.selectedID;
+      if (!tabID) return;
+      const reader = Zotero.Reader.getByTabID?.(tabID);
+      if (reader) this._ensureReaderInjected(reader);
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] _rescanSelectedReader error: ' + e);
+    }
   },
 
   /**
@@ -2694,10 +2712,15 @@ var ZoteroVim = {
       this._executeMainAction(action, win, mainWinState, count);
     this._mainWindowState.set(win, mainWinState);
 
+    const readerScanHandler = () => this._rescanSelectedReader(win);
+    readerScanHandler();
+    const readerScanTimer = win.setInterval(readerScanHandler, 1000);
+
     const keyHandler = (e) => this._onMainKeyDown(e, win, mainWinState);
     win.document.addEventListener('keydown', keyHandler, true);
 
     mainWinState.cleanup = () => {
+      win.clearInterval(readerScanTimer);
       win.document.removeEventListener('keydown', keyHandler, true);
       this._closeFuzzyPicker(win, mainWinState);
       clearTimeout(mainWinState.keyTimeout);

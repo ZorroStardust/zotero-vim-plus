@@ -1858,6 +1858,7 @@ var ZoteroVim = {
   },
 
   _selectHint(state, pdfWin, letter) {
+    const targetMode = state.hintTargetMode;
     const hint = state.hintMap?.[letter];
     this._clearVisualHints(state, pdfWin);
     if (!hint) return;
@@ -1869,6 +1870,11 @@ var ZoteroVim = {
       sel.removeAllRanges();
       sel.addRange(range);
       state.visualCursor = { textNode: hint.textNode, offset: hint.offset };
+      if (targetMode === 'visual') {
+        state.visualPreferredX = this._cursorCurrentX(pdfWin.document, sel, state.visualPreferredX);
+      } else if (targetMode === 'cursor') {
+        state.cursorPreferredX = this._cursorCurrentX(pdfWin.document, sel, state.cursorPreferredX);
+      }
       pdfWin.focus();
       this._updateVisualCursor(state, pdfWin);
       Zotero.debug('[ZoteroVim] Hint selected: ' + letter);
@@ -1923,6 +1929,10 @@ var ZoteroVim = {
       if (sel.rangeCount === 0) return;
       if (!state.visualCursor || !state.visualCursor.textNode?.isConnected) {
         state.visualCursor = { textNode: sel.anchorNode, offset: sel.anchorOffset };
+      }
+
+      if (!Number.isFinite(state.visualPreferredX)) {
+        state.visualPreferredX = this._cursorCurrentX(doc, sel, null);
       }
 
       const target = this._lineMoveTarget(
@@ -2400,6 +2410,7 @@ var ZoteroVim = {
           Zotero.debug('[ZoteroVim] _swapVisualEnds: fallback also failed: ' + e2);
         }
       }
+      state.visualPreferredX = this._cursorCurrentX(pdfWin.document, sel, state.visualPreferredX);
       this._updateVisualCursor(state, pdfWin);
     } catch (e) {
       Zotero.debug('[ZoteroVim] _swapVisualEnds error: ' + e);

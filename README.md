@@ -61,12 +61,12 @@ Vibe coded with Claude Sonnet 4.5.
 
 ## Installation
 
-1. Download `zotero-vim.xpi` from the releases page (or build it yourself —
+1. Download `zoetero-vim-plus.xpi` from the releases page (or build it yourself —
    see below).
 2. Open Zotero.
 3. Go to **Tools → Plugins**.
 4. Click the **gear icon (⚙)** in the top-right of the Plugins window.
-5. Choose **Install Plugin From File…** and select `zotero-vim.xpi`.
+5. Choose **Install Plugin From File…** and select `zoetero-vim-plus.xpi`.
 6. Restart Zotero when prompted.
 
 To update, repeat the same steps with the new `.xpi`. Zotero will replace the
@@ -82,7 +82,7 @@ cd zotero-vim
 ./build.sh
 ```
 
-`build.sh` zips the plugin source into `zotero-vim.xpi`. No build tools or
+`build.sh` zips the plugin source into `zoetero-vim-plus.xpi`. No build tools or
 package managers are required — only `zip` (available by default on macOS and
 most Linux distributions).
 
@@ -90,7 +90,7 @@ most Linux distributions).
 zotero-vim/
 ├── manifest.json          Plugin manifest (ID, version, Zotero version range)
 ├── bootstrap.js           Lifecycle hooks (startup/shutdown/window events)
-├── build.sh               Builds zotero-vim.xpi
+├── build.sh               Builds zoetero-vim-plus.xpi
 ├── content/
 │   ├── zoteroVim.js       Main plugin object — all keybinding logic
 │   ├── preferences.xhtml  Preferences panel UI (XUL/HTML hybrid)
@@ -154,6 +154,24 @@ Cursor ──v──▶ Visual ──v/Escape──▶ Normal
 | `Shift+J` (`J`) | Switch to previous open tab |
 | `Shift+K` (`K`) | Switch to next open tab |
 | `<space>bj` | Open tab picker (hint-based jump to open tab) |
+| `<space>n` | Open notes layout overlay (left: note titles list, right: note preview) |
+
+#### Notes layout overlay
+
+Left side shows note entries (title only), grouped into Current item notes and All notes.
+Right side shows preview content of the currently selected note.
+
+| Key | Action |
+|-----|--------|
+| `j` / `k` | Move note focus down / up |
+| `Ctrl+d` / `Ctrl+u` | Fast move down / up in note list |
+| `Ctrl+j` / `Ctrl+k` | Switch between current-item notes and all-notes sections in the left list |
+| `Ctrl+l` | Move focus to right preview pane |
+| `Ctrl+h` | Move focus back to left note list |
+| `gg` / `G` | Jump to first / last note in overlay |
+| Hint letters | Quick focus by hint label (single or double key) |
+| `Enter` | Open selected note |
+| `Escape` | Close notes layout overlay |
 
 #### Outline explorer
 
@@ -490,6 +508,7 @@ Open **Edit → Preferences** (macOS: **Zotero → Settings**) and navigate to t
 | `cursorLineEnd` | Move caret to end of line (Cursor mode) |
 | `cursorToVisual` | Enter Visual mode from current caret |
 | `mainTabPick` | Open tab picker for currently open Zotero tabs |
+| `mainNotesLayout` | Toggle notes layout overlay (left list + right preview) |
 | `toggleReaderSidebarOutline` | Toggle the custom outline explorer overlay |
 | `focusReaderSidebar` | Focus or reopen the custom outline explorer overlay |
 | `toggleReaderSplitHorizontal` | Toggle reader horizontal split view |

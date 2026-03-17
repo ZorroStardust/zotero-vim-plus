@@ -1,10 +1,10 @@
 {
   "addons": {
-    "zotero-vim@zotero-vim": {
+    "zotero-vim-plus@zotero-vim": {
       "updates": [
         {
-          "version": "1.2.0",
-          "update_link": "https://github.com/ZorroStardust/zotero-vim-plus/releases/download/v1.2.0/zotero-vim.xpi",
+          "version": "1.3.0",
+          "update_link": "https://github.com/ZorroStardust/zotero-vim-plus/releases/download/v1.3.0/zoetero-vim-plus.xpi",
           "applications": {
             "zotero": {
               "strict_min_version": "7.999",

@@ -84,6 +84,7 @@ var ZoteroVim = {
     'normal: ff':  'mainFuzzyAll',
     'normal: fb':  'mainFuzzyCollection',
     'normal: bj':  'mainTabPick',
+    'normal: n':   'mainNotesLayout',
     'normal: yy':  'mainYankCitekey',
     'normal: o':   'mainOpenPDF',
     'normal: q':   'mainClosePDF',
@@ -141,6 +142,7 @@ var ZoteroVim = {
     'main: ff':   'mainFuzzyAll',         // <space>ff  — fuzzy picker, all items
     'main: fb':   'mainFuzzyCollection',  // <space>fb  — fuzzy picker, current collection
     'main: bj':   'mainTabPick',          // <space>bj  — pick/open tab by hint
+    'main: n':    'mainNotesLayout',      // <space>n   — notes layout (current item + all notes)
     'main: e':    'mainFocusTree',        // <space>e   — focus collection tree
     'main: yy':   'mainYankCitekey',      // <space>yy  — copy citekey of selected item
     'main: o':    'mainOpenPDF',          // <space>o   — open selected item's PDF
@@ -866,6 +868,15 @@ var ZoteroVim = {
     const keyStr = this._keyString(event);
     if (!keyStr) return;
 
+    const bindings = this.getBindings();
+    const modePrefix = state.mode + ':';
+    const directAction = bindings[modePrefix + keyStr];
+    if (event.repeat && (directAction === 'mainPrevTab' || directAction === 'mainNextTab')) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+
     if (state.mode === 'cursor' && !state.countBuffer && !state.keyBuffer) {
       if (['j', 'k', 'h', 'l', 'w', 'W', 'b', 'B', '$'].includes(keyStr)) {
         const now = Date.now();
@@ -891,8 +902,6 @@ var ZoteroVim = {
     }
 
     const newBuffer = state.keyBuffer + keyStr;
-    const bindings  = this.getBindings();
-    const modePrefix = state.mode + ':';
 
     const possible = Object.keys(bindings).filter(k => this._bindingMatchesPrefix(k, modePrefix, newBuffer));
     const exact    = bindings[modePrefix + newBuffer];
@@ -1127,6 +1136,7 @@ var ZoteroVim = {
         case 'mainFuzzyAll':
         case 'mainFuzzyCollection':
         case 'mainTabPick':
+        case 'mainNotesLayout':
         case 'mainYankCitekey':
         case 'mainOpenPDF':
         case 'mainClosePDF':
@@ -4952,6 +4962,24 @@ var ZoteroVim = {
       _pickerSelected: 0,
       _pickerWin: win,
       _pickerCleanup: null,
+      notesLayoutOpen: false,
+      _notesOverlay: null,
+      _notesStatusEl: null,
+      _notesListPane: null,
+      _notesPreviewPane: null,
+      _notesFocusPane: 'list',
+      _notesCurrentList: null,
+      _notesAllList: null,
+      _notesCurrentRows: [],
+      _notesAllRows: [],
+      _notesNavRows: [],
+      _notesSelected: 0,
+      _notesHintBuffer: '',
+      _notesHintTimer: null,
+      _notesCmdBuffer: '',
+      _notesCmdTimer: null,
+      _lastDedupedAction: '',
+      _lastDedupedActionTS: 0,
       executeAction: null,  // set below
       cleanup: () => {},
     };
@@ -4970,8 +4998,11 @@ var ZoteroVim = {
       win.clearInterval(readerScanTimer);
       win.document.removeEventListener('keydown', keyHandler, true);
       this._closeFuzzyPicker(win, mainWinState);
+      this._closeMainNotesLayout(win, mainWinState);
       clearTimeout(mainWinState.keyTimeout);
       clearTimeout(mainWinState._statusTimer);
+      clearTimeout(mainWinState._notesHintTimer);
+      clearTimeout(mainWinState._notesCmdTimer);
       try { statusEl.remove(); } catch (_) {}
     };
   },
@@ -4982,6 +5013,11 @@ var ZoteroVim = {
     // so they still reach the input element and filter results.
     if (winState.pickerOpen) {
       this._onPickerKeyDown(e, win, winState);
+      return;
+    }
+
+    if (winState.notesLayoutOpen) {
+      this._onMainNotesKeyDown(e, win, winState);
       return;
     }
 
@@ -5021,6 +5057,15 @@ var ZoteroVim = {
     const keyStr = this._keyString(e);
     if (!keyStr) return;
 
+    const bindings   = this.getBindings();
+    const modePrefix = 'main:';
+    const directAction = bindings[modePrefix + keyStr];
+    if (e.repeat && (directAction === 'mainPrevTab' || directAction === 'mainNextTab')) {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+
     // Count prefix digits
     if (/^\d$/.test(keyStr) && (keyStr !== '0' || winState.countBuffer)) {
       winState.countBuffer = (winState.countBuffer || '') + keyStr;
@@ -5029,8 +5074,6 @@ var ZoteroVim = {
     }
 
     const newBuffer  = winState.keyBuffer + keyStr;
-    const bindings   = this.getBindings();
-    const modePrefix = 'main:';
 
     const possible = Object.keys(bindings).filter(k => k.startsWith(modePrefix + newBuffer));
     const exact    = bindings[modePrefix + newBuffer];
@@ -5054,12 +5097,22 @@ var ZoteroVim = {
   },
 
   _executeMainAction(action, win, winState, count) {
+    if (action === 'mainPrevTab' || action === 'mainNextTab') {
+      const now = Date.now();
+      if (winState._lastDedupedAction === action && now - (winState._lastDedupedActionTS || 0) < 220) {
+        return;
+      }
+      winState._lastDedupedAction = action;
+      winState._lastDedupedActionTS = now;
+    }
+
     this._mainSyncFocusedPanel(win, winState);
     Zotero.debug('[ZoteroVim] Main action: ' + action + ' count:' + count);
     switch (action) {
       case 'mainFuzzyAll':         this._openFuzzyPicker(win, winState, 'all');         break;
       case 'mainFuzzyCollection':  this._openFuzzyPicker(win, winState, 'collection');  break;
       case 'mainTabPick':          this._openFuzzyPicker(win, winState, 'tabs');        break;
+      case 'mainNotesLayout':      this._toggleMainNotesLayout(win, winState);          break;
       case 'mainFocusTree':
       case 'mainFocusLeft':        this._mainFocusPanel(win, winState, 'collections');  break;
       case 'mainFocusItems':
@@ -5671,6 +5724,7 @@ var ZoteroVim = {
 
   async _openFuzzyPicker(win, winState, scope) {
     if (winState.pickerOpen) return;
+    if (winState.notesLayoutOpen) this._closeMainNotesLayout(win, winState);
     winState.pickerOpen  = true;
     winState._pickerWin  = win;
 
@@ -6108,5 +6162,874 @@ var ZoteroVim = {
     winState._pickerCleanup  = null;
     winState._pickerLastKey  = null;
     winState._pickerScope    = null;
+  },
+
+  _toggleMainNotesLayout(win, winState) {
+    if (winState.notesLayoutOpen) {
+      this._closeMainNotesLayout(win, winState);
+      return;
+    }
+    this._openMainNotesLayout(win, winState);
+  },
+
+  _onMainNotesKeyDown(e, win, winState) {
+    if (!winState.notesLayoutOpen) return;
+    const keyStr = this._keyString(e);
+    const key = String(e.key || '');
+    const focusPane = winState._notesFocusPane || 'list';
+
+    if (focusPane === 'preview') {
+      switch (keyStr) {
+        case 'escape':
+          e.preventDefault();
+          e.stopPropagation();
+          this._closeMainNotesLayout(win, winState);
+          return;
+        case 'ctrl+h':
+          e.preventDefault();
+          e.stopPropagation();
+          this._mainNotesSetFocusPane(winState, 'list');
+          this._setMainNotesLayoutStatus(winState, 'Focus list');
+          return;
+        case 'j':
+        case 'arrowdown':
+          e.preventDefault();
+          e.stopPropagation();
+          this._mainNotesScrollPreview(winState, +90);
+          return;
+        case 'k':
+        case 'arrowup':
+          e.preventDefault();
+          e.stopPropagation();
+          this._mainNotesScrollPreview(winState, -90);
+          return;
+        case 'ctrl+d':
+          e.preventDefault();
+          e.stopPropagation();
+          this._mainNotesScrollPreview(winState, this._mainNotesPreviewStep(winState));
+          return;
+        case 'ctrl+u':
+          e.preventDefault();
+          e.stopPropagation();
+          this._mainNotesScrollPreview(winState, -this._mainNotesPreviewStep(winState));
+          return;
+        default:
+          e.stopPropagation();
+          return;
+      }
+    }
+
+    const hintKey = this._mainNotesHintKey(e);
+    if (hintKey) {
+      e.preventDefault();
+      e.stopPropagation();
+      this._mainNotesSelectByHint(winState, hintKey);
+      return;
+    }
+
+    if (keyStr === 'g') {
+      e.preventDefault();
+      e.stopPropagation();
+      if (winState._notesCmdBuffer === 'g') {
+        winState._notesSelected = 0;
+        this._clearMainNotesCmdBuffer(winState, false);
+        this._refreshMainNotesLayout(win, winState);
+      } else {
+        winState._notesCmdBuffer = 'g';
+        clearTimeout(winState._notesCmdTimer);
+        winState._notesCmdTimer = setTimeout(() => this._clearMainNotesCmdBuffer(winState), 700);
+        this._setMainNotesLayoutStatus(winState, 'g ... (gg top)');
+      }
+      return;
+    }
+
+    switch (keyStr) {
+      case 'escape':
+        e.preventDefault();
+        e.stopPropagation();
+        this._closeMainNotesLayout(win, winState);
+        return;
+      case 'j':
+      case 'arrowdown':
+        e.preventDefault();
+        e.stopPropagation();
+        this._mainNotesMoveSelection(win, winState, +1, 1);
+        return;
+      case 'k':
+      case 'arrowup':
+        e.preventDefault();
+        e.stopPropagation();
+        this._mainNotesMoveSelection(win, winState, -1, 1);
+        return;
+      case 'h':
+      case 'ctrl+h':
+        e.preventDefault();
+        e.stopPropagation();
+        this._mainNotesSetFocusPane(winState, 'list');
+        this._setMainNotesLayoutStatus(winState, 'Focus list');
+        return;
+      case 'ctrl+l':
+        e.preventDefault();
+        e.stopPropagation();
+        this._mainNotesSetFocusPane(winState, 'preview');
+        this._setMainNotesLayoutStatus(winState, 'Focus preview');
+        return;
+      case 'ctrl+j':
+        e.preventDefault();
+        e.stopPropagation();
+        this._mainNotesSwitchSection(win, winState, 'all');
+        return;
+      case 'ctrl+k':
+        e.preventDefault();
+        e.stopPropagation();
+        this._mainNotesSwitchSection(win, winState, 'current');
+        return;
+      case 'j':
+      case 'arrowdown':
+        e.preventDefault();
+        e.stopPropagation();
+        this._mainNotesMoveSelection(win, winState, +1, 1);
+        return;
+      case 'k':
+      case 'arrowup':
+        e.preventDefault();
+        e.stopPropagation();
+        this._mainNotesMoveSelection(win, winState, -1, 1);
+        return;
+      case 'ctrl+d':
+        e.preventDefault();
+        e.stopPropagation();
+        this._mainNotesMoveSelection(win, winState, +1, this._mainNotesFastStep(winState));
+        return;
+      case 'ctrl+u':
+        e.preventDefault();
+        e.stopPropagation();
+        this._mainNotesMoveSelection(win, winState, -1, this._mainNotesFastStep(winState));
+        return;
+      case 'G':
+        e.preventDefault();
+        e.stopPropagation();
+        winState._notesSelected = Math.max(0, (winState._notesNavRows || []).length - 1);
+        this._clearMainNotesCmdBuffer(winState, false);
+        this._refreshMainNotesLayout(win, winState);
+        return;
+      case 'enter':
+      case 'return':
+        e.preventDefault();
+        e.stopPropagation();
+        void this._mainNotesOpenSelected(win, winState);
+        return;
+      default:
+        this._clearMainNotesHintBuffer(winState, false);
+        this._clearMainNotesCmdBuffer(winState, false);
+        e.stopPropagation();
+    }
+  },
+
+  async _openMainNotesLayout(win, winState) {
+    if (!winState || winState.notesLayoutOpen) return;
+    this._closeFuzzyPicker(win, winState);
+
+    const doc = win.document;
+    const root = doc.body || doc.documentElement;
+    const H = 'http://www.w3.org/1999/xhtml';
+    const h = (tag) => doc.createElementNS(H, tag);
+
+    const overlay = h('div');
+    overlay.id = 'zv-notes-layout-overlay';
+    overlay.style.cssText =
+      'position:fixed;inset:0;background:rgba(0,0,0,0.62);z-index:99999;' +
+      'display:flex;align-items:center;justify-content:center;padding:4vh 4vw;';
+
+    const modal = h('div');
+    modal.style.cssText =
+      'width:min(1100px, 92vw);height:min(760px, 88vh);background:#10141b;color:#e8edf5;' +
+      'border:1px solid #2b3442;border-radius:10px;overflow:hidden;' +
+      'display:flex;flex-direction:column;box-shadow:0 22px 72px rgba(0,0,0,0.62);' +
+      'font:13px/1.45 monospace;';
+
+    const header = h('div');
+    header.style.cssText =
+      'padding:10px 14px;background:#16202d;border-bottom:1px solid #2b3442;' +
+      'display:flex;justify-content:space-between;align-items:center;gap:10px;';
+    const title = h('div');
+    title.textContent = 'Notes Layout';
+    title.style.cssText = 'font-weight:700;letter-spacing:0.2px;';
+    const hint = h('div');
+    hint.textContent = 'j/k move  ·  Ctrl+d/u fast  ·  Ctrl+j/k section  ·  Ctrl+h/l list/preview  ·  Enter open';
+    hint.style.cssText = 'font-size:11px;color:#9db0c9;';
+    header.appendChild(title);
+    header.appendChild(hint);
+
+    const body = h('div');
+    body.style.cssText = 'display:grid;grid-template-columns:minmax(320px, 38%) 1fr;min-height:0;';
+
+    const listPane = h('div');
+    listPane.style.cssText =
+      'display:grid;grid-template-rows:auto minmax(0,1fr) auto minmax(0,1fr);' +
+      'min-height:0;border-right:1px solid #2b3442;background:#0f141d;';
+
+    const currentWrap = h('section');
+    currentWrap.style.cssText = 'display:contents;';
+    const currentHead = h('div');
+    currentHead.textContent = 'Current item notes';
+    currentHead.style.cssText =
+      'padding:8px 12px;background:#121a25;color:#7db1ff;font-weight:700;' +
+      'border-bottom:1px solid #2b3442;';
+    const currentList = h('div');
+    currentList.style.cssText = 'overflow:auto;padding:8px 8px 10px 8px;';
+
+    const allWrap = h('section');
+    allWrap.style.cssText = 'display:contents;';
+    const allHead = h('div');
+    allHead.textContent = 'All notes in library';
+    allHead.style.cssText =
+      'padding:8px 12px;background:#121a25;color:#8fd4aa;font-weight:700;' +
+      'border-top:1px solid #2b3442;border-bottom:1px solid #2b3442;';
+    const allList = h('div');
+    allList.style.cssText = 'overflow:auto;padding:8px 8px 10px 8px;';
+
+    const previewPane = h('div');
+    previewPane.style.cssText = 'overflow:auto;padding:14px 16px 16px 16px;background:#111825;';
+
+    currentWrap.appendChild(currentHead);
+    currentWrap.appendChild(currentList);
+    allWrap.appendChild(allHead);
+    allWrap.appendChild(allList);
+    listPane.appendChild(currentWrap);
+    listPane.appendChild(allWrap);
+
+    body.appendChild(listPane);
+    body.appendChild(previewPane);
+
+    modal.appendChild(header);
+    modal.appendChild(body);
+    overlay.appendChild(modal);
+    root.appendChild(overlay);
+
+    overlay.addEventListener('mousedown', (ev) => {
+      if (ev.target === overlay) this._closeMainNotesLayout(win, winState);
+    });
+
+    winState.notesLayoutOpen = true;
+    winState._notesOverlay = overlay;
+    winState._notesStatusEl = hint;
+    winState._notesListPane = listPane;
+    winState._notesPreviewPane = previewPane;
+    winState._notesFocusPane = 'list';
+    winState._notesCurrentList = currentList;
+    winState._notesAllList = allList;
+    winState._notesCurrentRows = [];
+    winState._notesAllRows = [];
+    winState._notesNavRows = [];
+    winState._notesSelected = 0;
+    this._clearMainNotesHintBuffer(winState, false);
+    this._clearMainNotesCmdBuffer(winState, false);
+    this._mainNotesSetFocusPane(winState, 'list');
+
+    this._renderMainNotesSection(currentList, [{
+      title: 'Loading current item notes...',
+      text: '',
+      meta: '',
+    }], { loading: true });
+    this._renderMainNotesSection(allList, [{
+      title: 'Loading all notes...',
+      text: '',
+      meta: '',
+    }], { loading: true });
+    this._renderMainNotesPreview(winState._notesPreviewPane, null, {
+      loading: true,
+      message: 'Loading note preview...',
+    });
+
+    try { overlay.focus?.(); } catch (_) {}
+
+    try {
+      const payload = await this._collectMainNotesRows(win);
+      if (!winState.notesLayoutOpen) return;
+      winState._notesCurrentRows = Array.from(payload.current || []);
+      winState._notesAllRows = Array.from(payload.all || []);
+      this._refreshMainNotesLayout(win, winState);
+      if (payload.filteredMachineCount > 0) {
+        this._mainShowStatus(win, '→ hidden ' + payload.filteredMachineCount + ' machine notes', 1800);
+      }
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] _openMainNotesLayout error: ' + e);
+      if (!winState.notesLayoutOpen) return;
+      winState._notesCurrentRows = [];
+      winState._notesAllRows = [];
+      this._renderMainNotesSection(currentList, [], {
+        emptyMessage: 'Failed to load current item notes.',
+      });
+      this._renderMainNotesSection(allList, [], {
+        emptyMessage: 'Failed to load library notes.',
+      });
+      this._renderMainNotesPreview(winState._notesPreviewPane, null, {
+        message: 'Failed to load note preview.',
+      });
+      this._mainShowStatus(win, '✗ failed to load notes');
+    }
+  },
+
+  _notesLayoutHintAlphabet() {
+    return this._readerOutlineExplorerHintAlphabet();
+  },
+
+  _buildMainNotesHints(count) {
+    const alphabet = this._notesLayoutHintAlphabet();
+    const base = alphabet.length;
+    if (count <= base) return alphabet.slice(0, count).split('');
+    const hints = [];
+    for (let i = 0; i < count; i++) {
+      const first = Math.floor(i / base);
+      const second = i % base;
+      hints.push(alphabet[first] + alphabet[second]);
+    }
+    return hints;
+  },
+
+  _mainNotesHintKey(event) {
+    if (event.ctrlKey || event.metaKey || event.altKey) return '';
+    const key = String(event.key || '').toLowerCase();
+    return this._notesLayoutHintAlphabet().includes(key) ? key : '';
+  },
+
+  _setMainNotesLayoutStatus(winState, text = null) {
+    if (!winState?._notesStatusEl) return;
+    winState._notesStatusEl.textContent = text ||
+      'j/k move  ·  Ctrl+d/u fast  ·  Ctrl+j/k section  ·  Ctrl+h/l list/preview  ·  Enter open';
+  },
+
+  _mainNotesSetFocusPane(winState, pane) {
+    const focusPane = pane === 'preview' ? 'preview' : 'list';
+    winState._notesFocusPane = focusPane;
+    const listPane = winState._notesListPane;
+    const previewPane = winState._notesPreviewPane;
+    if (listPane) {
+      listPane.style.boxShadow = focusPane === 'list' ? 'inset 0 0 0 1px rgba(98,156,236,0.75)' : 'none';
+    }
+    if (previewPane) {
+      previewPane.style.boxShadow = focusPane === 'preview' ? 'inset 0 0 0 1px rgba(98,156,236,0.75)' : 'none';
+    }
+  },
+
+  _mainNotesPreviewStep(winState) {
+    const el = winState?._notesPreviewPane;
+    if (!el) return 240;
+    return Math.max(120, Math.floor((el.clientHeight || 480) * 0.55));
+  },
+
+  _mainNotesScrollPreview(winState, delta) {
+    const el = winState?._notesPreviewPane;
+    if (!el || !delta) return;
+    try { el.scrollBy({ top: delta, behavior: 'auto' }); } catch (_) { el.scrollTop += delta; }
+  },
+
+  _clearMainNotesHintBuffer(winState, resetStatus = true) {
+    winState._notesHintBuffer = '';
+    clearTimeout(winState._notesHintTimer);
+    winState._notesHintTimer = null;
+    if (resetStatus) this._setMainNotesLayoutStatus(winState, null);
+  },
+
+  _clearMainNotesCmdBuffer(winState, resetStatus = true) {
+    winState._notesCmdBuffer = '';
+    clearTimeout(winState._notesCmdTimer);
+    winState._notesCmdTimer = null;
+    if (resetStatus && !winState._notesHintBuffer) this._setMainNotesLayoutStatus(winState, null);
+  },
+
+  _refreshMainNotesLayout(win, winState) {
+    const currentRows = Array.from(winState._notesCurrentRows || []);
+    const allRows = Array.from(winState._notesAllRows || []);
+    const navRows = [];
+    for (const row of currentRows) navRows.push({ section: 'current', row });
+    for (const row of allRows) navRows.push({ section: 'all', row });
+    winState._notesNavRows = navRows;
+    if (!navRows.length) {
+      winState._notesSelected = 0;
+      this._renderMainNotesSection(winState._notesCurrentList, currentRows, {
+        emptyMessage: 'No notes under current item.',
+      });
+      this._renderMainNotesSection(winState._notesAllList, allRows, {
+        emptyMessage: 'No notes found in library.',
+      });
+      this._renderMainNotesPreview(winState._notesPreviewPane, null, {
+        message: 'No note selected.',
+      });
+      return;
+    }
+
+    winState._notesSelected = Math.max(0, Math.min(winState._notesSelected || 0, navRows.length - 1));
+    const hints = this._buildMainNotesHints(navRows.length);
+    const hintByID = new Map();
+    const selectedID = navRows[winState._notesSelected]?.row?.id;
+    const selectedEntry = navRows[winState._notesSelected] || null;
+
+    for (let i = 0; i < navRows.length; i++) {
+      const id = navRows[i]?.row?.id;
+      if (!id) continue;
+      hintByID.set(id, hints[i] || '');
+    }
+
+    this._renderMainNotesSection(winState._notesCurrentList, currentRows, {
+      emptyMessage: 'No notes under current item.',
+      selectedID,
+      hintByID,
+      onPick: (rowID) => {
+        const idx = navRows.findIndex(entry => entry.row?.id === rowID);
+        if (idx >= 0) {
+          winState._notesSelected = idx;
+          this._refreshMainNotesLayout(win, winState);
+        }
+      },
+      onOpen: async (rowID) => {
+        const idx = navRows.findIndex(entry => entry.row?.id === rowID);
+        if (idx >= 0) winState._notesSelected = idx;
+        await this._mainNotesOpenSelected(win, winState);
+      },
+    });
+
+    this._renderMainNotesSection(winState._notesAllList, allRows, {
+      emptyMessage: 'No notes found in library.',
+      selectedID,
+      hintByID,
+      onPick: (rowID) => {
+        const idx = navRows.findIndex(entry => entry.row?.id === rowID);
+        if (idx >= 0) {
+          winState._notesSelected = idx;
+          this._refreshMainNotesLayout(win, winState);
+        }
+      },
+      onOpen: async (rowID) => {
+        const idx = navRows.findIndex(entry => entry.row?.id === rowID);
+        if (idx >= 0) winState._notesSelected = idx;
+        await this._mainNotesOpenSelected(win, winState);
+      },
+    });
+
+    this._renderMainNotesPreview(winState._notesPreviewPane, selectedEntry, null);
+  },
+
+  _mainNotesMoveSelection(win, winState, direction, step) {
+    const rows = winState._notesNavRows || [];
+    if (!rows.length) return;
+    this._clearMainNotesHintBuffer(winState, false);
+    this._clearMainNotesCmdBuffer(winState, false);
+    const delta = Math.max(1, step || 1) * (direction >= 0 ? 1 : -1);
+    winState._notesSelected = Math.max(0, Math.min(rows.length - 1, winState._notesSelected + delta));
+    this._refreshMainNotesLayout(win, winState);
+  },
+
+  _mainNotesSwitchSection(win, winState, section) {
+    const rows = winState._notesNavRows || [];
+    if (!rows.length) return;
+    this._clearMainNotesHintBuffer(winState, false);
+    this._clearMainNotesCmdBuffer(winState, false);
+
+    const current = rows[winState._notesSelected];
+    if (current?.section === section) return;
+
+    const targetRows = rows.filter(r => r.section === section);
+    if (!targetRows.length) return;
+
+    const sameSectionRows = rows.filter(r => r.section === (current?.section || 'current'));
+    const localIndex = Math.max(0, sameSectionRows.findIndex(r => r.row?.id === current?.row?.id));
+    const target = targetRows[Math.min(localIndex, targetRows.length - 1)];
+    const nextIndex = rows.findIndex(r => r.row?.id === target.row?.id);
+    if (nextIndex >= 0) {
+      winState._notesSelected = nextIndex;
+      this._mainNotesSetFocusPane(winState, 'list');
+      this._refreshMainNotesLayout(win, winState);
+    }
+  },
+
+  _mainNotesFastStep(winState) {
+    const total = (winState._notesNavRows || []).length;
+    return Math.max(5, Math.floor(total / 10) || 10);
+  },
+
+  _mainNotesSelectByHint(winState, key) {
+    const rows = winState._notesNavRows || [];
+    if (!rows.length) return;
+
+    const hints = this._buildMainNotesHints(rows.length);
+    const buffer = (winState._notesHintBuffer || '') + String(key || '').toLowerCase();
+    const matches = hints
+      .map((hint, idx) => ({ hint, idx }))
+      .filter(({ hint }) => hint && hint.startsWith(buffer));
+
+    if (!matches.length) {
+      this._clearMainNotesHintBuffer(winState, false);
+      this._setMainNotesLayoutStatus(winState, 'Hint not found');
+      return;
+    }
+
+    winState._notesHintBuffer = buffer;
+    clearTimeout(winState._notesHintTimer);
+    winState._notesHintTimer = setTimeout(() => this._clearMainNotesHintBuffer(winState), 1200);
+
+    const exact = matches.find(v => v.hint === buffer);
+    if (exact) {
+      winState._notesSelected = exact.idx;
+      this._clearMainNotesHintBuffer(winState, false);
+      this._setMainNotesLayoutStatus(winState, 'Selected ' + exact.hint + '  ·  Enter open');
+    } else {
+      this._setMainNotesLayoutStatus(winState, 'Hint: ' + buffer);
+    }
+  },
+
+  async _mainNotesOpenSelected(win, winState) {
+    const rows = winState._notesNavRows || [];
+    if (!rows.length) return;
+    const selected = rows[winState._notesSelected]?.row;
+    const noteID = selected?.id;
+    if (!noteID) return;
+
+    try {
+      try { await win?.ZoteroPane?.selectItem?.(noteID); } catch (_) {}
+
+      if (typeof win?.ZoteroPane?.openNote === 'function') {
+        await win.ZoteroPane.openNote(noteID, { openInWindow: false });
+      } else {
+        await Zotero.Notes.open(noteID, null, { openInWindow: false });
+      }
+      this._closeMainNotesLayout(win, winState);
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] _mainNotesOpenSelected error: ' + e);
+      this._mainShowStatus(win, '✗ open note failed');
+    }
+  },
+
+  async _collectMainNotesRows(win) {
+    const rowsFromNotes = (notes, label = '', opts = null) => {
+      const out = [];
+      let filteredMachineCount = 0;
+      for (const note of notes) {
+        if (!note?.isNote?.()) continue;
+        const noteHTML = String(note.getNote?.() || '');
+        const noteText = this._extractNotePlainText(win.document, noteHTML);
+        const title = (note.getDisplayTitle?.() || note.getNoteTitle?.() || note.getField?.('title') || '').trim() || 'Untitled note';
+        const tags = Array.from(note.getTags?.() || []).map(t => String(t?.tag || '')).filter(Boolean);
+        if (opts?.hideMachineRecords && this._shouldHideInAllNotes(note, title, noteText, noteHTML, tags)) {
+          filteredMachineCount++;
+          continue;
+        }
+        out.push({
+          id: note.id,
+          title,
+          text: noteText || '(empty)',
+          meta: label || (tags.length ? ('tags: ' + tags.slice(0, 4).join(', ')) : ''),
+          dateModified: String(note.dateModified || ''),
+        });
+      }
+      return { rows: out, filteredMachineCount };
+    };
+
+    const selected = Array.from(win?.ZoteroPane?.getSelectedItems?.() || []);
+    let currentBaseItem = selected[0] || null;
+    if (currentBaseItem?.isAttachment?.() && currentBaseItem.parentItemID) {
+      currentBaseItem = Zotero.Items.get(currentBaseItem.parentItemID) || currentBaseItem;
+    }
+
+    let currentNotes = [];
+    if (currentBaseItem?.isNote?.()) {
+      currentNotes = [currentBaseItem];
+    } else if (currentBaseItem?.getNotes) {
+      currentNotes = Array.from(currentBaseItem.getNotes() || [])
+        .map(id => Zotero.Items.get(id))
+        .filter(Boolean);
+    }
+
+    const currentLabel = currentBaseItem
+      ? ((currentBaseItem.getDisplayTitle?.() || currentBaseItem.getField?.('title') || '').trim() || 'Current item')
+      : '';
+    const currentRows = rowsFromNotes(currentNotes, currentLabel ? ('from: ' + currentLabel) : '').rows;
+
+    const libID = Zotero.Libraries.userLibraryID;
+    await Zotero.Schema.schemaUpdatePromise;
+    const s = new Zotero.Search();
+    s.libraryID = libID;
+    s.addCondition('itemType', 'is', 'note');
+    const noteIDs = await s.search();
+    const allNotes = Zotero.Items.get(noteIDs).filter(item => item?.isNote?.() && !item.deleted);
+    const allNoteRows = rowsFromNotes(allNotes, '', { hideMachineRecords: true });
+    const allRows = allNoteRows.rows
+      .sort((a, b) => (Date.parse(b.dateModified) || 0) - (Date.parse(a.dateModified) || 0))
+      .slice(0, 400);
+
+    return { current: currentRows, all: allRows, filteredMachineCount: allNoteRows.filteredMachineCount || 0 };
+  },
+
+  _isMachineRecordNote(title, text) {
+    const t = String(title || '').trim();
+    const s = String(text || '').trim();
+    const combined = (t + ' ' + s).trim();
+    if (!combined) return true;
+
+    const hasLetterOrCJK = /[A-Za-z\u4E00-\u9FFF]/.test(combined);
+    const compact = combined.replace(/\s+/g, '');
+    const noiseOnly = compact.replace(/[0-9:\-/.TZ+_#@,;|()[\]{}]/g, '');
+    if (!hasLetterOrCJK && compact.length > 0 && noiseOnly.length <= 2) return true;
+
+    const shortText = s.length <= 120;
+    const tsOnly = /^\d{4}[-/]\d{1,2}[-/]\d{1,2}(?:[ T]\d{1,2}:\d{2}(?::\d{2})?(?:\.\d{1,3})?(?:Z|[+-]\d{2}:?\d{2})?)?$/.test(s)
+      || /^\d{10,13}$/.test(s)
+      || /^\d{1,2}:\d{2}(?::\d{2})?$/.test(s);
+    if (shortText && tsOnly) return true;
+
+    const keyValueLines = s.split(/\n+/).map(v => v.trim()).filter(Boolean);
+    if (keyValueLines.length > 0 && keyValueLines.length <= 4) {
+      const metaKey = /^(timestamp|time|created|updated|modified|date|last\s*sync|synced|epoch|mtime|ctime)\s*[:=]/i;
+      const allMetaKV = keyValueLines.every(line => {
+        if (!metaKey.test(line)) return false;
+        const value = line.replace(/^[^:=]+[:=]\s*/, '');
+        return value.length > 0 && value.length <= 60;
+      });
+      if (allMetaKV) return true;
+    }
+
+    const looksLikeLogTitle = /^(timestamp|time\s*record|sync\s*record|machine\s*record|auto\s*record)$/i.test(t);
+    if (looksLikeLogTitle && shortText) return true;
+
+    return false;
+  },
+
+  _looksLikeMachineJSON(text) {
+    const s = String(text || '').trim();
+    if (!s || s.length > 2000) return false;
+    if (!((s.startsWith('{') && s.endsWith('}')) || (s.startsWith('[') && s.endsWith(']')))) return false;
+    try {
+      const obj = JSON.parse(s);
+      const machineKeys = [
+        'readingtime', 'reading_time', 'readtime', 'duration', 'elapsed',
+        'timestamp', 'startedat', 'endedat', 'updatedat', 'lastread', 'last_read',
+        'heartbeat', 'session', 'progress', 'percent', 'source', 'plugin', 'meta',
+      ];
+      const scan = (value, depth = 0) => {
+        if (depth > 3 || value == null) return { keys: 0, machine: 0 };
+        if (Array.isArray(value)) {
+          return value.slice(0, 20).reduce((acc, it) => {
+            const r = scan(it, depth + 1);
+            acc.keys += r.keys;
+            acc.machine += r.machine;
+            return acc;
+          }, { keys: 0, machine: 0 });
+        }
+        if (typeof value === 'object') {
+          const keys = Object.keys(value);
+          let machine = 0;
+          for (const k of keys) {
+            const key = String(k).toLowerCase().replace(/[^a-z0-9]/g, '');
+            if (machineKeys.some(m => key.includes(m))) machine++;
+          }
+          const nested = keys.slice(0, 20).reduce((acc, k) => {
+            const r = scan(value[k], depth + 1);
+            acc.keys += r.keys;
+            acc.machine += r.machine;
+            return acc;
+          }, { keys: 0, machine: 0 });
+          return { keys: keys.length + nested.keys, machine: machine + nested.machine };
+        }
+        return { keys: 0, machine: 0 };
+      };
+      const stat = scan(obj, 0);
+      return stat.keys > 0 && (stat.machine / stat.keys) >= 0.35;
+    } catch (_) {
+      return false;
+    }
+  },
+
+  _shouldHideInAllNotes(note, title, text, html, tags = null) {
+    if (note?.deleted) return true;
+
+    const t = String(title || '').trim();
+    const body = String(text || '').trim();
+    const raw = (String(html || '') + '\n' + t + '\n' + body).toLowerCase();
+    const tagList = Array.isArray(tags)
+      ? tags
+      : Array.from(note?.getTags?.() || []).map(x => String(x?.tag || '')).filter(Boolean);
+    const tagsLower = tagList.map(v => v.toLowerCase());
+
+    const readingTimePattern = /(reading\s*time|readingtime|read\s*time|readtime|zotero-reading-time)/i;
+    const tagHasReadingTime = tagsLower.some(tag => readingTimePattern.test(tag));
+    const titleHasReadingTime = readingTimePattern.test(t);
+    const bodyHasReadingTime = readingTimePattern.test(body.slice(0, 500));
+    if ((tagHasReadingTime || titleHasReadingTime || bodyHasReadingTime) && body.length < 4000) {
+      return true;
+    }
+
+    if (this._looksLikeMachineJSON(body)) return true;
+
+    if (/<div[^>]+data-schema-version=/i.test(html || '') && !/[\u4E00-\u9FFFA-Za-z]{8,}/.test(body)) {
+      return true;
+    }
+
+    if (this._isMachineRecordNote(t, body)) return true;
+
+    const machineTagPattern = /(timestamp|timelog|time-log|sync-log|heartbeat|machine|auto[-_ ]?record|cache|state)/i;
+    const nonEmptyTags = tagsLower.filter(Boolean);
+    if (nonEmptyTags.length > 0 && nonEmptyTags.every(tag => machineTagPattern.test(tag)) && body.length < 800) {
+      return true;
+    }
+
+    if (!note?.parentID && body.length <= 40 && /^\d{10,13}$/.test(body)) return true;
+
+    return false;
+  },
+
+  _extractNotePlainText(doc, html) {
+    try {
+      const container = doc.createElementNS('http://www.w3.org/1999/xhtml', 'div');
+      container.innerHTML = String(html || '');
+      return String(container.textContent || '')
+        .replace(/\u00a0/g, ' ')
+        .replace(/[ \t]+\n/g, '\n')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+    } catch (_) {
+      return String(html || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+    }
+  },
+
+  _renderMainNotesSection(container, rows, opts = null) {
+    if (!container) return;
+    while (container.firstChild) container.removeChild(container.firstChild);
+
+    const doc = container.ownerDocument;
+    const H = 'http://www.w3.org/1999/xhtml';
+    const h = (tag) => doc.createElementNS(H, tag);
+
+    if (opts?.loading) {
+      const loading = h('div');
+      loading.style.cssText = 'padding:10px;color:#93a6bd;';
+      loading.textContent = rows?.[0]?.title || 'Loading...';
+      container.appendChild(loading);
+      return;
+    }
+
+    if (!rows?.length) {
+      const empty = h('div');
+      empty.style.cssText = 'padding:10px;color:#93a6bd;';
+      empty.textContent = opts?.emptyMessage || 'No notes.';
+      container.appendChild(empty);
+      return;
+    }
+
+    const frag = doc.createDocumentFragment();
+    for (const row of rows) {
+      const card = h('article');
+      const isSelected = opts?.selectedID && row.id === opts.selectedID;
+      const hint = opts?.hintByID?.get?.(row.id) || '';
+      card.style.cssText =
+        'border:1px solid ' + (isSelected ? '#5f93da' : '#293240') + ';' +
+        'background:' + (isSelected ? '#152236' : '#0f151f') + ';border-radius:6px;' +
+        'padding:6px 8px;margin:0 0 6px 0;';
+      card.tabIndex = -1;
+      card.dataset.noteId = String(row.id || '');
+
+      const t = h('div');
+      t.style.cssText = 'display:flex;align-items:center;gap:8px;font-weight:700;color:#d7e5f8;';
+      if (hint) {
+        const badge = h('span');
+        badge.style.cssText =
+          'display:inline-block;min-width:20px;padding:0 5px;border-radius:4px;' +
+          'border:1px solid #43617f;color:#9ec5ff;font-size:11px;line-height:1.6;text-align:center;';
+        badge.textContent = hint;
+        t.appendChild(badge);
+      }
+      const titleText = h('span');
+      titleText.style.cssText = 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+      titleText.textContent = row.title || 'Untitled note';
+      t.appendChild(titleText);
+
+      card.appendChild(t);
+      card.addEventListener('click', () => {
+        if (typeof opts?.onPick === 'function') opts.onPick(row.id);
+      });
+      card.addEventListener('dblclick', () => {
+        if (typeof opts?.onOpen === 'function') void opts.onOpen(row.id);
+      });
+      frag.appendChild(card);
+    }
+    container.appendChild(frag);
+
+    if (opts?.selectedID) {
+      const selectedEl = container.querySelector('article[data-note-id="' + opts.selectedID + '"]');
+      selectedEl?.scrollIntoView?.({ block: 'nearest' });
+    }
+  },
+
+  _renderMainNotesPreview(container, selectedEntry, opts = null) {
+    if (!container) return;
+    while (container.firstChild) container.removeChild(container.firstChild);
+
+    const doc = container.ownerDocument;
+    const H = 'http://www.w3.org/1999/xhtml';
+    const h = (tag) => doc.createElementNS(H, tag);
+
+    if (opts?.loading) {
+      const loading = h('div');
+      loading.style.cssText = 'padding:12px;color:#93a6bd;';
+      loading.textContent = opts.message || 'Loading preview...';
+      container.appendChild(loading);
+      return;
+    }
+
+    const row = selectedEntry?.row || null;
+    if (!row) {
+      const empty = h('div');
+      empty.style.cssText = 'padding:12px;color:#93a6bd;';
+      empty.textContent = opts?.message || 'No note selected.';
+      container.appendChild(empty);
+      return;
+    }
+
+    const section = h('div');
+    section.style.cssText =
+      'display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;' +
+      'border:1px solid #314860;color:#9ec5ff;background:#121f2f;margin-bottom:10px;';
+    section.textContent = selectedEntry.section === 'current' ? 'Current item note' : 'All notes';
+
+    const title = h('h3');
+    title.style.cssText = 'margin:0 0 8px 0;font-size:18px;line-height:1.35;color:#e8edf5;';
+    title.textContent = row.title || 'Untitled note';
+
+    const meta = h('div');
+    meta.style.cssText = 'font-size:12px;color:#8ea4bf;margin-bottom:12px;';
+    meta.textContent = row.meta || '';
+
+    const body = h('div');
+    body.style.cssText =
+      'white-space:pre-wrap;color:#c8d6e8;line-height:1.6;background:#0f151f;' +
+      'border:1px solid #293240;border-radius:8px;padding:12px 14px;min-height:120px;';
+    body.textContent = row.text || '(empty)';
+
+    container.appendChild(section);
+    container.appendChild(title);
+    if (meta.textContent) container.appendChild(meta);
+    container.appendChild(body);
+  },
+
+  _closeMainNotesLayout(win, winState) {
+    if (!winState?.notesLayoutOpen) return;
+    winState.notesLayoutOpen = false;
+    this._clearMainNotesHintBuffer(winState, false);
+    this._clearMainNotesCmdBuffer(winState, false);
+    try {
+      const overlay = winState._notesOverlay;
+      if (overlay?.parentNode) overlay.parentNode.removeChild(overlay);
+    } catch (_) {}
+    winState._notesOverlay = null;
+    winState._notesStatusEl = null;
+    winState._notesListPane = null;
+    winState._notesPreviewPane = null;
+    winState._notesFocusPane = 'list';
+    winState._notesCurrentList = null;
+    winState._notesAllList = null;
+    winState._notesCurrentRows = [];
+    winState._notesAllRows = [];
+    winState._notesNavRows = [];
+    winState._notesSelected = 0;
   },
 };

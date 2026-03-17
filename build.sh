@@ -3,8 +3,8 @@
 # Usage: ./build.sh
 set -euo pipefail
 
-PLUGIN_ID="zotero-vim@zotero-vim"
-OUTPUT="zotero-vim.xpi"
+PLUGIN_ID="zotero-vim-plus@zotero-vim"
+OUTPUT="zoetero-vim-plus.xpi"
 
 echo "Building $OUTPUT ..."
 

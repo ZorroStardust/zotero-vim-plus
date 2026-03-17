@@ -77,6 +77,7 @@ const ZV_DEFAULT_BINDINGS = {
   // Normal mode — space-chord bindings (delegate to main window)
   "normal: ff":  "mainFuzzyAll",
   "normal: fb":  "mainFuzzyCollection",
+  "normal: n":   "mainNotesLayout",
   "normal: yy":  "mainYankCitekey",
   "normal: o":   "mainOpenPDF",
   "normal: q":   "mainClosePDF",
@@ -108,6 +109,7 @@ const ZV_DEFAULT_BINDINGS = {
   // Displayed as <space>xx in the UI to avoid confusion.
   "main: ff":   "mainFuzzyAll",
   "main: fb":   "mainFuzzyCollection",
+  "main: n":    "mainNotesLayout",
   "main: e":    "mainFocusTree",
   "main: yy":   "mainYankCitekey",
   "main: o":    "mainOpenPDF",
@@ -185,6 +187,7 @@ const ZV_ACTION_LABELS = {
   // Main window actions
   mainFuzzyAll:        "Main window: fuzzy picker — all items (<space>ff)",
   mainFuzzyCollection: "Main window: fuzzy picker — current collection (<space>fb)",
+  mainNotesLayout:     "Main window: open notes layout (<space>n)",
   mainFocusTree:       "Main window: focus collection tree (<space>e)",
   mainFocusLeft:       "Main window: focus collection tree (<space>wh)",
   mainFocusRight:      "Main window: focus detail pane (<space>wl)",

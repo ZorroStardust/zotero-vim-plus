@@ -6,8 +6,8 @@
   "author": "Alex Fink, ZorroStardust",
   "homepage_url": "https://github.com/ZorroStardust/zotero-vim-plus",
   "icons": {
-    "48": "icons/vim-48.png",
-    "96": "icons/vim-96.png"
+    "64": "icons/icon-64x64.png",
+    "128": "icons/icon-128x128.png"
   },
   "browser_specific_settings": {
     "gecko": {

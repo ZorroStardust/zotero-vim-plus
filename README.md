@@ -160,6 +160,8 @@ Cursor ──v──▶ Visual ──v/Escape──▶ Normal
 
 Left side shows note entries (title only), grouped into Current item notes and All notes.
 Right side shows preview content of the currently selected note.
+If the current tab is a PDF reader, opening a note from this overlay will
+prefer Zotero's right-side note editor so you can read and edit side by side.
 
 | Key | Action |
 |-----|--------|
@@ -170,7 +172,7 @@ Right side shows preview content of the currently selected note.
 | `Ctrl+h` | Move focus back to left note list |
 | `gg` / `G` | Jump to first / last note in overlay |
 | Hint letters | Quick focus by hint label (single or double key) |
-| `Enter` | Open selected note |
+| `Enter` | Open selected note; in reader tabs, prefer opening it in the right-side note editor |
 | `Escape` | Close notes layout overlay |
 
 #### Outline explorer
@@ -202,10 +204,10 @@ you still press `Enter` to jump.
 |-----|--------|
 | `<space>-` | Toggle horizontal split (top/bottom) |
 | `<space>\|` | Toggle vertical split (left/right) |
-| `Ctrl+h` | Focus split pane to the left (or toggle pane in horizontal split) |
+| `Ctrl+h` | Return from the right-side note editor to the active reader pane; otherwise focus the split pane to the left |
 | `Ctrl+j` | Focus split pane below (or toggle pane in vertical split) |
 | `Ctrl+k` | Focus split pane above (or toggle pane in vertical split) |
-| `Ctrl+l` | Focus split pane to the right (or toggle pane in horizontal split) |
+| `Ctrl+l` | In vertical split, move to the right reader pane first and then the right-side note editor; otherwise focus the split pane to the right |
 
 #### Library tree navigation (left pane)
 

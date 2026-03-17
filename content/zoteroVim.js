@@ -4980,6 +4980,9 @@ var ZoteroVim = {
       _notesCmdTimer: null,
       _lastDedupedAction: '',
       _lastDedupedActionTS: 0,
+      _contextNoteEditorWin: null,
+      _contextNoteEditorDoc: null,
+      _contextNoteEditorKeyHandler: null,
       executeAction: null,  // set below
       cleanup: () => {},
     };
@@ -4987,7 +4990,10 @@ var ZoteroVim = {
       this._executeMainAction(action, win, mainWinState, count);
     this._mainWindowState.set(win, mainWinState);
 
-    const readerScanHandler = () => this._rescanSelectedReader(win);
+    const readerScanHandler = () => {
+      this._rescanSelectedReader(win);
+      this._syncMainContextNoteListener(win, mainWinState);
+    };
     readerScanHandler();
     const readerScanTimer = win.setInterval(readerScanHandler, 1000);
 
@@ -4999,6 +5005,7 @@ var ZoteroVim = {
       win.document.removeEventListener('keydown', keyHandler, true);
       this._closeFuzzyPicker(win, mainWinState);
       this._closeMainNotesLayout(win, mainWinState);
+      this._clearMainContextNoteListener(mainWinState);
       clearTimeout(mainWinState.keyTimeout);
       clearTimeout(mainWinState._statusTimer);
       clearTimeout(mainWinState._notesHintTimer);
@@ -5233,10 +5240,191 @@ var ZoteroVim = {
     this._showStatus(state, orientation === 'vertical' ? '→ split vertical' : '→ split horizontal', 900);
   },
 
+  _getActiveContextNoteEditor(win) {
+    try {
+      const contextPane = win?.ZoteroContextPane;
+      if (!contextPane || contextPane.collapsed) return null;
+      if (contextPane.context?.mode !== 'notes') return null;
+      return contextPane.activeEditor || null;
+    } catch (_) {
+      return null;
+    }
+  },
+
+  _getContextNoteEditorWindow(noteEditor) {
+    try {
+      return noteEditor?._iframe?.contentWindow || noteEditor?._editorInstance?._iframeWindow || null;
+    } catch (_) {
+      return null;
+    }
+  },
+
+  _clearMainContextNoteListener(winState) {
+    const noteWin = winState?._contextNoteEditorWin;
+    const noteDoc = winState?._contextNoteEditorDoc;
+    const handler = winState?._contextNoteEditorKeyHandler;
+    if (noteWin && handler) {
+      try { noteWin.removeEventListener('keydown', handler, true); } catch (_) {}
+    }
+    if (noteDoc && handler) {
+      try { noteDoc.removeEventListener('keydown', handler, true); } catch (_) {}
+    }
+    if (winState) {
+      winState._contextNoteEditorWin = null;
+      winState._contextNoteEditorDoc = null;
+      winState._contextNoteEditorKeyHandler = null;
+    }
+  },
+
+  _syncMainContextNoteListener(win, winState) {
+    const noteEditor = this._getActiveContextNoteEditor(win);
+    const noteWin = this._getContextNoteEditorWindow(noteEditor);
+    const noteDoc = noteWin?.document || null;
+    if (noteWin === winState?._contextNoteEditorWin && noteDoc === winState?._contextNoteEditorDoc) return;
+
+    this._clearMainContextNoteListener(winState);
+
+    if (!noteWin || !winState) return;
+    const handler = (event) => this._onMainContextNoteKeyDown(event, win, winState);
+    try { noteWin.addEventListener('keydown', handler, true); } catch (_) { return; }
+    try { noteDoc?.addEventListener('keydown', handler, true); } catch (_) {}
+    winState._contextNoteEditorWin = noteWin;
+    winState._contextNoteEditorDoc = noteDoc;
+    winState._contextNoteEditorKeyHandler = handler;
+  },
+
+  _onMainContextNoteKeyDown(event, win, _winState) {
+    const keyStr = this._keyString(event);
+    if (!keyStr) return;
+
+    const isCtrlH = keyStr === 'ctrl+h'
+      || keyStr === 'ctrl+backspace'
+      || ((event.ctrlKey || event.metaKey) && (event.key === 'h' || event.key === 'H' || event.code === 'KeyH'));
+
+    if (isCtrlH) {
+      event.preventDefault();
+      event.stopPropagation();
+      void this._focusReaderContent(win);
+      return;
+    }
+
+    if (keyStr === 'ctrl+l') {
+      event.preventDefault();
+      event.stopPropagation();
+      void this._focusContextNoteEditor(win);
+    }
+  },
+
+  async _focusReaderContent(win) {
+    try {
+      const tabID = win?.Zotero_Tabs?.selectedID;
+      const reader = tabID ? Zotero.Reader.getByTabID?.(tabID) : null;
+      if (!reader) return false;
+      const state = this._readerState.get(reader._instanceID)
+        || this._readerStateByItemID.get(reader.itemID)
+        || null;
+      const targetWin = state?.activePdfWin || this._activeReaderPdfWin(reader, null);
+      if (targetWin && this._focusReaderPdfWindow(targetWin, state)) {
+        return true;
+      }
+      await reader.focus?.();
+      return true;
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] _focusReaderContent error: ' + e);
+      return false;
+    }
+  },
+
+  _focusReaderPdfWindow(viewWin, state = null) {
+    if (!viewWin) return false;
+
+    try {
+      if (state) state.activePdfWin = viewWin;
+      viewWin.focus?.();
+
+      const doc = viewWin.document;
+      const focusTarget = doc?.querySelector?.([
+        '#viewerContainer',
+        '#viewer',
+        '.pdfViewer',
+        '.page[data-page-number]',
+        '.textLayer',
+        'body',
+      ].join(','));
+
+      focusTarget?.focus?.({ preventScroll: true });
+      doc?.documentElement?.focus?.({ preventScroll: true });
+      doc?.body?.focus?.({ preventScroll: true });
+      return true;
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] _focusReaderPdfWindow error: ' + e);
+      return false;
+    }
+  },
+
+  async _focusContextNoteEditor(win) {
+    try {
+      const noteEditor = this._getActiveContextNoteEditor(win);
+      if (!noteEditor) return false;
+      await noteEditor.focus?.();
+      return true;
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] _focusContextNoteEditor error: ' + e);
+      return false;
+    }
+  },
+
+  async _openNoteInReaderContextPane(win, noteID) {
+    try {
+      const tabID = win?.Zotero_Tabs?.selectedID;
+      const reader = tabID ? Zotero.Reader.getByTabID?.(tabID) : null;
+      if (!reader || !noteID) return false;
+
+      const noteItem = Zotero.Items.get(noteID);
+      if (!noteItem?.isNote?.()) return false;
+
+      const contextPane = win.ZoteroContextPane;
+      const contextRoot = contextPane?.context;
+      if (!contextPane || !contextRoot) return false;
+
+      const attachment = Zotero.Items.get(reader.itemID);
+      const libraryID = attachment?.libraryID || noteItem.libraryID;
+
+      if (contextPane.collapsed) {
+        contextPane.collapsed = false;
+      }
+      contextRoot.mode = 'notes';
+      if (typeof contextRoot._selectNotesContext === 'function') {
+        contextRoot._selectNotesContext(libraryID);
+      }
+
+      const notesContext = contextRoot._getNotesContext?.(libraryID)
+        || contextRoot._getCurrentNotesContext?.();
+      if (!notesContext || typeof notesContext._setPinnedNote !== 'function') return false;
+
+      notesContext.updateNotesListFromCache?.();
+      notesContext._setPinnedNote(noteItem);
+      contextPane.updateAddToNote?.();
+      const winState = this._mainWindowState.get(win);
+      if (winState) this._syncMainContextNoteListener(win, winState);
+      return true;
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] _openNoteInReaderContextPane error: ' + e);
+      return false;
+    }
+  },
+
   _focusReaderSplit(state, reader, direction, pdfWin) {
     const ir = reader?._internalReader;
     const splitType = String(ir?.splitType || '');
+    const mainWin = Zotero.getMainWindow?.() || null;
+    const noteEditor = this._getActiveContextNoteEditor(mainWin);
     if (!reader || !ir || !['vertical', 'horizontal'].includes(splitType)) {
+      if (direction === 'right' && noteEditor) {
+        void this._focusContextNoteEditor(mainWin);
+        this._showStatus(state, '▶ note', 700);
+        return;
+      }
       this._showStatus(state, '✗ split inactive', 1200);
       return;
     }
@@ -5252,6 +5440,14 @@ var ZoteroVim = {
     let current = null;
     if (focusedWin === secondaryWin) current = 'secondary';
     else if (focusedWin === primaryWin || focusedWin === pdfWin) current = 'primary';
+    else if (state.activePdfWin === secondaryWin) current = 'secondary';
+    else if (state.activePdfWin === primaryWin) current = 'primary';
+
+    if (direction === 'right' && splitType === 'vertical' && current === 'secondary' && noteEditor) {
+      void this._focusContextNoteEditor(mainWin);
+      this._showStatus(state, '▶ note', 700);
+      return;
+    }
 
     let target = null;
     if (splitType === 'vertical') {
@@ -5266,9 +5462,9 @@ var ZoteroVim = {
 
     const targetWin = target === 'secondary' ? secondaryWin : primaryWin;
     try {
-      state.activePdfWin = targetWin;
-      targetWin.focus();
-      targetWin.document?.body?.focus?.();
+      if (!this._focusReaderPdfWindow(targetWin, state)) {
+        throw new Error('focus helper failed');
+      }
       this._showStatus(state, target === 'secondary' ? '▶ split B' : '▶ split A', 700);
     } catch (e) {
       Zotero.debug('[ZoteroVim] _focusReaderSplit error: ' + e);
@@ -6687,6 +6883,11 @@ var ZoteroVim = {
     if (!noteID) return;
 
     try {
+      if (await this._openNoteInReaderContextPane(win, noteID)) {
+        this._closeMainNotesLayout(win, winState);
+        return;
+      }
+
       try { await win?.ZoteroPane?.selectItem?.(noteID); } catch (_) {}
 
       if (typeof win?.ZoteroPane?.openNote === 'function') {

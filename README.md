@@ -183,7 +183,7 @@ you still press `Enter` to jump.
 | Key | Action |
 |-----|--------|
 | `<space>-` | Toggle horizontal split (top/bottom) |
-| `<space>|` | Toggle vertical split (left/right) |
+| `<space>\|` | Toggle vertical split (left/right) |
 | `Ctrl+h` | Focus split pane to the left (or toggle pane in horizontal split) |
 | `Ctrl+j` | Focus split pane below (or toggle pane in vertical split) |
 | `Ctrl+k` | Focus split pane above (or toggle pane in vertical split) |

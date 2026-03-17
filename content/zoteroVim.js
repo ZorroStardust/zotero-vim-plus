@@ -5492,6 +5492,7 @@ var ZoteroVim = {
     winState._contextNoteEditorDoc = noteDoc;
     winState._contextNoteEditorKeyHandler = handler;
     if (!winState._contextNoteMode) winState._contextNoteMode = 'normal';
+    this._syncNoteCursorVisualState(noteDoc, winState._contextNoteMode || 'normal');
     this._mainShowStatus(win, '-- NOTE ' + String(winState._contextNoteMode || 'normal').toUpperCase() + ' --', 1200);
   },
 
@@ -5530,6 +5531,7 @@ var ZoteroVim = {
         event.stopPropagation();
         this._clearMainContextNoteKeyState(winState);
         winState._contextNoteMode = 'normal';
+        this._syncNoteCursorVisualState(event.target?.ownerDocument || null, 'normal', event.target);
         this._mainShowStatus(win, '-- NOTE NORMAL --', 900);
       }
       return;
@@ -5540,6 +5542,7 @@ var ZoteroVim = {
       event.stopPropagation();
       this._clearMainContextNoteKeyState(winState);
       winState._contextNoteMode = 'insert';
+      this._syncNoteCursorVisualState(event.target?.ownerDocument || null, 'insert', event.target);
       this._mainShowStatus(win, '-- NOTE INSERT --', 900);
       return;
     }
@@ -5549,12 +5552,16 @@ var ZoteroVim = {
       event.stopPropagation();
       this._clearMainContextNoteKeyState(winState);
       winState._contextNoteMode = 'normal';
+      this._syncNoteCursorVisualState(event.target?.ownerDocument || null, 'normal', event.target);
       this._mainShowStatus(win, '-- NOTE NORMAL --', 700);
       return;
     }
 
     const handled = this._handleMainContextNoteNormalKey(event, keyStr, win, winState);
     if (handled) {
+      if (String(winState._contextNoteMode || 'normal') === 'normal') {
+        this._syncNoteCursorVisualState(event.target?.ownerDocument || null, 'normal', event.target);
+      }
       event.preventDefault();
       event.stopPropagation();
       return;
@@ -5572,6 +5579,100 @@ var ZoteroVim = {
     winState._contextNoteCountBuffer = '';
     clearTimeout(winState._contextNoteKeyTimeout);
     winState._contextNoteKeyTimeout = null;
+  },
+
+  _syncNoteCursorVisualState(noteDoc, mode = 'normal', target = null) {
+    const doc = noteDoc || target?.ownerDocument || null;
+    if (!doc) return;
+    this._ensureNoteCursorVisualStyle(doc);
+
+    const html = doc.documentElement;
+    if (!html) return;
+    const normalClass = 'zv-note-normal-mode';
+    const insertClass = 'zv-note-insert-mode';
+    const isNormal = String(mode || 'normal') === 'normal';
+
+    if (isNormal) {
+      html.classList.add(normalClass);
+      html.classList.remove(insertClass);
+    } else {
+      html.classList.remove(normalClass);
+      html.classList.add(insertClass);
+    }
+
+    const editableEl = this._resolveEditableFromTarget(target)
+      || this._resolveEditableFromTarget(doc.activeElement)
+      || this._findEditableInDocument(doc);
+    if (!editableEl) return;
+
+    this._noteRestoreLineCaret(editableEl);
+  },
+
+  _ensureNoteCursorVisualStyle(doc) {
+    try {
+      if (!doc) return;
+      let style = doc.getElementById('zv-note-caret-style');
+      if (!style) {
+        style = doc.createElement('style');
+        style.id = 'zv-note-caret-style';
+        (doc.head || doc.documentElement || doc.body)?.appendChild(style);
+      }
+      style.textContent = [
+        'html.zv-note-normal-mode, html.zv-note-normal-mode body,',
+        'html.zv-note-normal-mode [contenteditable="true"], html.zv-note-normal-mode textarea, html.zv-note-normal-mode input {',
+        '  caret-color: rgb(96, 150, 255) !important;',
+        '  caret-animation: auto !important;',
+        '}',
+        'html.zv-note-insert-mode, html.zv-note-insert-mode body,',
+        'html.zv-note-insert-mode [contenteditable="true"], html.zv-note-insert-mode textarea, html.zv-note-insert-mode input {',
+        '  caret-color: rgb(255, 148, 77) !important;',
+        '  caret-animation: auto !important;',
+        '}',
+        '@media (prefers-color-scheme: dark) {',
+        '  html.zv-note-normal-mode, html.zv-note-normal-mode body,',
+        '  html.zv-note-normal-mode [contenteditable="true"], html.zv-note-normal-mode textarea, html.zv-note-normal-mode input {',
+        '    caret-color: rgb(180, 206, 255) !important;',
+        '  }',
+        '  html.zv-note-insert-mode, html.zv-note-insert-mode body,',
+        '  html.zv-note-insert-mode [contenteditable="true"], html.zv-note-insert-mode textarea, html.zv-note-insert-mode input {',
+        '    caret-color: rgb(255, 176, 118) !important;',
+        '  }',
+        '}',
+      ].join('\n');
+    } catch (_) {}
+  },
+
+  _findEditableInDocument(doc) {
+    if (!doc) return null;
+    try {
+      const active = doc.activeElement;
+      if (active && (active.isContentEditable || active.tagName === 'TEXTAREA' || active.tagName === 'INPUT')) return active;
+    } catch (_) {}
+    try {
+      return doc.querySelector?.('[contenteditable="true"], .ProseMirror, .editor-core, .editor') || null;
+    } catch (_) {
+      return null;
+    }
+  },
+
+  _noteRestoreLineCaret(editableEl) {
+    const doc = editableEl?.ownerDocument;
+    const sel = doc?.getSelection?.();
+    if (!sel) return false;
+    if (doc.activeElement !== editableEl) {
+      try { editableEl.focus({ preventScroll: true }); } catch (_) { try { editableEl.focus(); } catch (_) {} }
+    }
+    try {
+      if (!sel.rangeCount) {
+        sel.selectAllChildren(editableEl);
+        sel.collapseToEnd();
+        return true;
+      }
+      if (!sel.isCollapsed) sel.collapseToStart();
+      return true;
+    } catch (_) {
+      return false;
+    }
   },
 
   _handleMainBindingsInNoteNormal(keyStr, win, winState) {
@@ -5623,6 +5724,8 @@ var ZoteroVim = {
       this._clearMainContextNoteKeyState(winState);
       return false;
     }
+
+    this._noteNormalizeCaretForNormalOps(editableEl);
 
     if (this._handleMainBindingsInNoteNormal(keyStr, win, winState)) {
       return true;
@@ -5789,16 +5892,47 @@ var ZoteroVim = {
     }
 
     try {
-      if (!sel.isCollapsed) sel.collapseToEnd();
+      if (!sel.isCollapsed) sel.collapseToStart();
     } catch (_) {}
 
     try {
       const steps = Math.max(1, count || 1);
+      const preserveLineStart = (keyStr === 'j' || keyStr === 'k')
+        ? this._noteIsCaretAtLineStart(editableEl)
+        : false;
       for (let i = 0; i < steps; i += 1) {
         sel.modify('move', spec[0], spec[1]);
+        if (preserveLineStart && (keyStr === 'j' || keyStr === 'k')) {
+          sel.modify('move', 'backward', 'lineboundary');
+        }
       }
       return true;
     } catch (_) {
+      return false;
+    }
+  },
+
+  _noteIsCaretAtLineStart(editableEl) {
+    const doc = editableEl?.ownerDocument;
+    const sel = doc?.getSelection?.();
+    if (!sel || !sel.modify || !sel.rangeCount) return false;
+
+    let bookmark = null;
+    try {
+      if (!sel.isCollapsed) sel.collapseToStart();
+      bookmark = sel.getRangeAt(0).cloneRange();
+      sel.modify('extend', 'backward', 'lineboundary');
+      const atStart = sel.isCollapsed || String(sel.toString() || '').length === 0;
+      sel.removeAllRanges();
+      sel.addRange(bookmark);
+      return atStart;
+    } catch (_) {
+      try {
+        if (bookmark) {
+          sel.removeAllRanges();
+          sel.addRange(bookmark);
+        }
+      } catch (_) {}
       return false;
     }
   },
@@ -5870,7 +6004,7 @@ var ZoteroVim = {
     }
 
     try {
-      if (!sel.isCollapsed) sel.collapseToEnd();
+      if (!sel.isCollapsed) sel.collapseToStart();
     } catch (_) {}
 
     try {
@@ -5966,7 +6100,7 @@ var ZoteroVim = {
       try { editableEl.focus({ preventScroll: true }); } catch (_) { try { editableEl.focus(); } catch (_) {} }
     }
     try {
-      if (!sel.isCollapsed) sel.collapseToEnd();
+      if (!sel.isCollapsed) sel.collapseToStart();
       sel.modify('move', 'backward', 'word');
       sel.modify('extend', 'forward', 'word');
       const steps = Math.max(1, count || 1);
@@ -5977,6 +6111,20 @@ var ZoteroVim = {
     } catch (_) {
       return null;
     }
+  },
+
+  _noteNormalizeCaretForNormalOps(editableEl) {
+    const doc = editableEl?.ownerDocument;
+    const sel = doc?.getSelection?.();
+    if (!sel) return;
+    try {
+      if (!sel.rangeCount) {
+        sel.selectAllChildren(editableEl);
+        sel.collapseToStart();
+        return;
+      }
+      if (!sel.isCollapsed) sel.collapseToStart();
+    } catch (_) {}
   },
 
   _noteOperateTextObject(editableEl, operator, textObject, count, win, winState) {

@@ -6402,6 +6402,11 @@ var ZoteroVim = {
           e.stopPropagation();
           this._closeMainNotesLayout(win, winState);
           return;
+        case 'N':
+          e.preventDefault();
+          e.stopPropagation();
+          void this._mainNotesCreateAndOpen(win, winState);
+          return;
         case 'ctrl+h':
           e.preventDefault();
           e.stopPropagation();
@@ -6536,10 +6541,40 @@ var ZoteroVim = {
         e.stopPropagation();
         void this._mainNotesOpenSelected(win, winState);
         return;
+      case 'N':
+        e.preventDefault();
+        e.stopPropagation();
+        void this._mainNotesCreateAndOpen(win, winState);
+        return;
       default:
         this._clearMainNotesHintBuffer(winState, false);
         this._clearMainNotesCmdBuffer(winState, false);
         e.stopPropagation();
+    }
+  },
+
+  async _mainNotesCreateAndOpen(win, winState) {
+    try {
+      const createdNoteID = await this._createMainCurrentChildNote(win);
+      if (!createdNoteID) return;
+
+      if (await this._openNoteInReaderContextPane(win, createdNoteID)) {
+        this._closeMainNotesLayout(win, winState);
+        this._mainShowStatus(win, '✓ new child note', 1200);
+        return;
+      }
+
+      try { await win?.ZoteroPane?.selectItem?.(createdNoteID); } catch (_) {}
+      if (typeof win?.ZoteroPane?.openNote === 'function') {
+        await win.ZoteroPane.openNote(createdNoteID, { openInWindow: false });
+      } else {
+        await Zotero.Notes.open(createdNoteID, null, { openInWindow: false });
+      }
+      this._closeMainNotesLayout(win, winState);
+      this._mainShowStatus(win, '✓ new child note', 1200);
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] _mainNotesCreateAndOpen error: ' + e);
+      this._mainShowStatus(win, '✗ create note failed');
     }
   },
 
@@ -6573,7 +6608,7 @@ var ZoteroVim = {
     title.textContent = 'Notes Layout';
     title.style.cssText = 'font-weight:700;letter-spacing:0.2px;';
     const hint = h('div');
-    hint.textContent = 'j/k move  ·  Ctrl+d/u fast  ·  Ctrl+j/k section  ·  Ctrl+h/l list/preview  ·  Enter open';
+    hint.textContent = 'j/k move  ·  Ctrl+d/u fast  ·  Ctrl+j/k section  ·  Ctrl+h/l list/preview  ·  Shift+N new  ·  Enter open';
     hint.style.cssText = 'font-size:11px;color:#9db0c9;';
     header.appendChild(title);
     header.appendChild(hint);
@@ -6706,7 +6741,7 @@ var ZoteroVim = {
   },
 
   _mainNotesHintKey(event) {
-    if (event.ctrlKey || event.metaKey || event.altKey) return '';
+    if (event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return '';
     const key = String(event.key || '').toLowerCase();
     return this._notesLayoutHintAlphabet().includes(key) ? key : '';
   },
@@ -6714,7 +6749,7 @@ var ZoteroVim = {
   _setMainNotesLayoutStatus(winState, text = null) {
     if (!winState?._notesStatusEl) return;
     winState._notesStatusEl.textContent = text ||
-      'j/k move  ·  Ctrl+d/u fast  ·  Ctrl+j/k section  ·  Ctrl+h/l list/preview  ·  Enter open';
+      'j/k move  ·  Ctrl+d/u fast  ·  Ctrl+j/k section  ·  Ctrl+h/l list/preview  ·  Shift+N new  ·  Enter open';
   },
 
   _mainNotesSetFocusPane(winState, pane) {
@@ -6923,6 +6958,46 @@ var ZoteroVim = {
     }
   },
 
+  _getMainCurrentBaseItem(win) {
+    const selected = Array.from(win?.ZoteroPane?.getSelectedItems?.() || []);
+    let currentBaseItem = selected[0] || null;
+    if (currentBaseItem?.isAttachment?.() && currentBaseItem.parentItemID) {
+      currentBaseItem = Zotero.Items.get(currentBaseItem.parentItemID) || currentBaseItem;
+    }
+    return currentBaseItem || null;
+  },
+
+  async _createMainCurrentChildNote(win) {
+    const currentBaseItem = this._getMainCurrentBaseItem(win);
+    if (!currentBaseItem) {
+      this._mainShowStatus(win, '✗ no current item selected');
+      return null;
+    }
+
+    if (currentBaseItem?.isNote?.()) {
+      this._mainShowStatus(win, '✗ select a parent item to create child note');
+      return null;
+    }
+
+    if (currentBaseItem?.isAttachment?.()) {
+      this._mainShowStatus(win, '✗ select a parent item to create child note');
+      return null;
+    }
+
+    try {
+      const note = new Zotero.Item('note');
+      note.libraryID = currentBaseItem.libraryID || Zotero.Libraries.userLibraryID;
+      note.parentID = currentBaseItem.id;
+      note.setNote('<p></p>');
+      await note.saveTx();
+      return note.id || null;
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] _createMainCurrentChildNote error: ' + e);
+      this._mainShowStatus(win, '✗ create note failed');
+      return null;
+    }
+  },
+
   async _collectMainNotesRows(win) {
     const rowsFromNotes = (notes, label = '', opts = null) => {
       const out = [];
@@ -6948,11 +7023,7 @@ var ZoteroVim = {
       return { rows: out, filteredMachineCount };
     };
 
-    const selected = Array.from(win?.ZoteroPane?.getSelectedItems?.() || []);
-    let currentBaseItem = selected[0] || null;
-    if (currentBaseItem?.isAttachment?.() && currentBaseItem.parentItemID) {
-      currentBaseItem = Zotero.Items.get(currentBaseItem.parentItemID) || currentBaseItem;
-    }
+    const currentBaseItem = this._getMainCurrentBaseItem(win);
 
     let currentNotes = [];
     if (currentBaseItem?.isNote?.()) {

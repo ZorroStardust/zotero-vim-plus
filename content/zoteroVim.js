@@ -5090,6 +5090,22 @@ var ZoteroVim = {
       }
     }
 
+    const keyStr = this._keyString(e);
+    if (!keyStr) return;
+
+    // Keep tab cycling responsive even when a heavy reader tab is still loading.
+    // In that phase focus is often on <browser> and normal reader listeners are not ready.
+    const bindings = this.getBindings();
+    const modePrefix = 'main:';
+    const directAction = bindings[modePrefix + keyStr];
+    if (directAction === 'mainPrevTab' || directAction === 'mainNextTab') {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.repeat) return;
+      this._executeMainAction(directAction, win, winState, 1);
+      return;
+    }
+
     // Skip when focus is inside an embedded browser element (PDF reader)
     if (active && active.localName === 'browser') return;
 
@@ -5098,18 +5114,6 @@ var ZoteroVim = {
       const tabID = win.Zotero_Tabs?.selectedID;
       if (tabID && Zotero.Reader.getByTabID?.(tabID)) return;
     } catch (_) {}
-
-    const keyStr = this._keyString(e);
-    if (!keyStr) return;
-
-    const bindings   = this.getBindings();
-    const modePrefix = 'main:';
-    const directAction = bindings[modePrefix + keyStr];
-    if (e.repeat && (directAction === 'mainPrevTab' || directAction === 'mainNextTab')) {
-      e.preventDefault();
-      e.stopPropagation();
-      return;
-    }
 
     // Count prefix digits
     if (/^\d$/.test(keyStr) && (keyStr !== '0' || winState.countBuffer)) {

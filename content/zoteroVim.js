@@ -551,6 +551,10 @@ var ZoteroVim = {
     const secondaryWin = reader?._internalReader?._secondaryView?._iframeWindow;
     const wantedWins = [primaryWin, secondaryWin].filter(Boolean);
 
+    if (state.activePdfWin && !wantedWins.includes(state.activePdfWin)) {
+      state.activePdfWin = primaryWin || secondaryWin || null;
+    }
+
     for (const [viewWin, handlers] of state._pdfViewHandlers.entries()) {
       if (wantedWins.includes(viewWin)) continue;
       try { viewWin.removeEventListener('keydown', handlers.keyDown, true); } catch (_) {}
@@ -5215,6 +5219,7 @@ var ZoteroVim = {
 
     const method = orientation === 'vertical' ? 'toggleVerticalSplit' : 'toggleHorizontalSplit';
     const ir = reader._internalReader;
+    const fallbackPrimaryWin = ir?._primaryView?._iframeWindow || state?.activePdfWin || null;
     let ok = false;
 
     try {
@@ -5234,8 +5239,24 @@ var ZoteroVim = {
       return;
     }
 
-    setTimeout(() => this._syncReaderPdfViewListeners(reader, state), 60);
-    setTimeout(() => this._syncReaderPdfViewListeners(reader, state), 220);
+    const syncAndRecoverFocus = () => {
+      this._syncReaderPdfViewListeners(reader, state);
+
+      const irNow = reader?._internalReader;
+      const splitTypeNow = String(irNow?.splitType || '');
+      const primaryNow = irNow?._primaryView?._iframeWindow || fallbackPrimaryWin;
+      const secondaryNow = irNow?._secondaryView?._iframeWindow;
+      const splitActive = !!(primaryNow && secondaryNow && ['vertical', 'horizontal'].includes(splitTypeNow));
+
+      // When split is just closed, focus can remain on a defunct secondary iframe.
+      // Pull focus back to a live reader pane so hjkl continues to work immediately.
+      if (!splitActive && primaryNow) {
+        this._focusReaderPdfWindow(primaryNow, state);
+      }
+    };
+
+    setTimeout(syncAndRecoverFocus, 60);
+    setTimeout(syncAndRecoverFocus, 220);
 
     this._showStatus(state, orientation === 'vertical' ? '→ split vertical' : '→ split horizontal', 900);
   },

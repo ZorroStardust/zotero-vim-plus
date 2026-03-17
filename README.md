@@ -210,6 +210,40 @@ you still press `Enter` to jump.
 | `Ctrl+k` | Focus split pane above (or toggle pane in vertical split) |
 | `Ctrl+l` | In vertical split, move to the right reader pane first and then the right-side note editor; otherwise focus the split pane to the right |
 
+#### Note editor (context pane and standalone note tab)
+
+When a Zotero note editor has focus (right-side context pane or a standalone
+note tab), the plugin provides a minimal Vim-like layer.
+
+| Key | Action |
+|-----|--------|
+| `i` | Enter note Insert mode (pass through typing) |
+| `a` / `A` / `I` | Enter Insert mode at next char / line end / line start |
+| `o` / `O` | Open line below / above and enter Insert mode |
+| `Escape` | Return to note Normal mode |
+| `h` / `l` | Move caret left / right |
+| `j` / `k` | Move caret down / up line |
+| `w` / `e` / `b` | Move by word (forward start / forward end / backward) |
+| `W` / `E` / `B` | Big-word variants |
+| `0` / `^` / `$` | Move to line start / first non-blank (approx) / line end |
+| `gg` | Jump to first line |
+| `G` | Jump to last line |
+| `3j` (example) | Count prefix for motions (repeat 3 times) |
+| `3G` / `12gg` | Count prefix to jump to a specific line number |
+| `x` | Delete character at caret |
+| `dd` | Delete current line |
+| `yy` | Yank current line to clipboard |
+| `dw` / `de` / `db` / `d$` | Delete by motion (word/word-end/back-word/to line end) |
+| `yw` / `ye` / `yb` / `y$` | Yank by motion |
+| `cw` / `ce` / `c$` | Change by motion (delete range and enter Insert mode) |
+| `diw` / `yiw` / `ciw` | Inner-word text object (delete/yank/change) |
+| `p` / `P` | Paste last yanked/deleted text after / before caret |
+| `u` / `Ctrl+r` | Undo / redo bridge |
+
+`dd`, `yy`, and `x` support count prefixes (for example `3dd`, `5yy`, `4x`).
+Operator+motion combos also support counts (for example `3dw`, `2y$`).
+`p` and `P` use the plugin's internal note register (updated by `yy` and `dd`).
+
 #### Library tree navigation (left pane)
 
 These bindings act on Zotero's native left collection tree when that tree has focus.

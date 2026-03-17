@@ -4987,6 +4987,11 @@ var ZoteroVim = {
       _contextNoteEditorWin: null,
       _contextNoteEditorDoc: null,
       _contextNoteEditorKeyHandler: null,
+      _contextNoteMode: 'normal',
+      _contextNoteKeyBuffer: '',
+      _contextNoteCountBuffer: '',
+      _contextNoteKeyTimeout: null,
+      _contextNoteLastYank: '',
       executeAction: null,  // set below
       cleanup: () => {},
     };
@@ -5014,6 +5019,7 @@ var ZoteroVim = {
       clearTimeout(mainWinState._statusTimer);
       clearTimeout(mainWinState._notesHintTimer);
       clearTimeout(mainWinState._notesCmdTimer);
+      clearTimeout(mainWinState._contextNoteKeyTimeout);
       try { statusEl.remove(); } catch (_) {}
     };
   },
@@ -5029,6 +5035,29 @@ var ZoteroVim = {
 
     if (winState.notesLayoutOpen) {
       this._onMainNotesKeyDown(e, win, winState);
+      return;
+    }
+
+    // In standalone note tabs, route keys to note-vim first.
+    // This prevents main item-list handlers from stealing hjkl/backspace.
+    if (this._isStandaloneNoteTabSelected(win)) {
+      const noteMode = String(winState?._contextNoteMode || 'normal');
+      const keyStr = this._keyString(e);
+
+      // Keep global tab cycling available in note Normal mode.
+      if (noteMode === 'normal' && (keyStr === 'J' || keyStr === 'K')) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (keyStr === 'J') this._executeMainAction('mainPrevTab', win, winState, 1);
+        else this._executeMainAction('mainNextTab', win, winState, 1);
+        return;
+      }
+
+      this._onMainContextNoteKeyDown(e, win, winState);
+      if (!e.defaultPrevented && noteMode === 'normal') {
+        e.preventDefault();
+        e.stopPropagation();
+      }
       return;
     }
 
@@ -5272,6 +5301,142 @@ var ZoteroVim = {
     }
   },
 
+  _getSelectedMainTab(win) {
+    try {
+      const tabs = win?.Zotero_Tabs;
+      if (!tabs) return null;
+      const list = Array.isArray(tabs._tabs)
+        ? tabs._tabs
+        : (Array.isArray(tabs.tabs) ? tabs.tabs : []);
+      const selectedID = tabs.selectedID || tabs._selectedID;
+      if (!selectedID || !Array.isArray(list) || !list.length) return null;
+      return list.find((tab) => {
+        const id = tab?.id || tab?.tabID || tab?.dataset?.id;
+        return id === selectedID;
+      }) || null;
+    } catch (_) {
+      return null;
+    }
+  },
+
+  _isStandaloneNoteTabSelected(win) {
+    try {
+      const tab = this._getSelectedMainTab(win);
+      if (!tab) return false;
+      const text = [
+        tab?.type,
+        tab?.mode,
+        tab?.kind,
+        tab?.dataset?.type,
+        tab?.id,
+        tab?.tabID,
+        tab?.title,
+        tab?.label,
+      ].filter(Boolean).join(' ').toLowerCase();
+      if (!text) return false;
+      if (/\breader\b|\bpdf\b/.test(text)) return false;
+      return /\bnote\b|\bnotes\b/.test(text);
+    } catch (_) {
+      return false;
+    }
+  },
+
+  _scanStandaloneNoteEditorWindowFromMainDocument(win) {
+    try {
+      const doc = win?.document;
+      if (!doc) return null;
+      const nodes = Array.from(doc.querySelectorAll('browser, iframe'));
+      const candidates = [];
+      for (const node of nodes) {
+        let cw = null;
+        try { cw = node?.contentWindow || null; } catch (_) { cw = null; }
+        if (cw) candidates.push(cw);
+      }
+
+      const focusedWin = Services.focus?.focusedWindow || null;
+      if (focusedWin && candidates.includes(focusedWin) && this._isLikelyMainNoteEditorWindow(focusedWin, win)) {
+        return focusedWin;
+      }
+
+      for (const candidate of candidates) {
+        if (this._isLikelyMainNoteEditorWindow(candidate, win)) {
+          return candidate;
+        }
+      }
+      return null;
+    } catch (_) {
+      return null;
+    }
+  },
+
+  _isLikelyMainNoteEditorWindow(noteWin, mainWin = null) {
+    try {
+      if (!noteWin) return false;
+      if (mainWin && noteWin === mainWin) return false;
+      if (noteWin.PDFViewerApplication) return false;
+
+      const doc = noteWin.document;
+      if (!doc) return false;
+
+      const href = String(noteWin.location?.href || '').toLowerCase();
+      if (href.includes('reader.html') || href.includes('pdf.js')) return false;
+
+      const body = doc.body;
+      const editableBody = !!(body && (body.isContentEditable || String(body.getAttribute?.('contenteditable') || '').toLowerCase() === 'true'));
+      const editableNode = !!doc.querySelector?.('[contenteditable="true"], .ProseMirror, .editor-core, .editor, .tox-edit-area iframe');
+      const designModeOn = String(doc.designMode || '').toLowerCase() === 'on';
+
+      return editableBody || editableNode || designModeOn;
+    } catch (_) {
+      return false;
+    }
+  },
+
+  _getActiveStandaloneNoteEditorWindow(win) {
+    try {
+      const tab = this._getSelectedMainTab(win);
+      const maybeNoteTab = this._isStandaloneNoteTabSelected(win);
+
+      const focusedWin = Services.focus?.focusedWindow || null;
+      if (this._isLikelyMainNoteEditorWindow(focusedWin, win)) {
+        return focusedWin;
+      }
+
+      if (!maybeNoteTab) return null;
+
+      const nestedCandidates = [
+        tab?.browser?.contentWindow,
+        tab?.iframe?.contentWindow,
+        tab?._iframe?.contentWindow,
+        tab?.contentWindow,
+        tab?._iframeWindow,
+      ];
+      for (const candidate of nestedCandidates) {
+        if (this._isLikelyMainNoteEditorWindow(candidate, win)) {
+          return candidate;
+        }
+      }
+
+      const scanned = this._scanStandaloneNoteEditorWindowFromMainDocument(win);
+      if (this._isLikelyMainNoteEditorWindow(scanned, win)) return scanned;
+      return null;
+    } catch (_) {
+      return null;
+    }
+  },
+
+  _getActiveMainNoteEditorWindow(win) {
+    try {
+      const contextEditor = this._getActiveContextNoteEditor(win);
+      const contextWin = this._getContextNoteEditorWindow(contextEditor);
+      if (this._isLikelyMainNoteEditorWindow(contextWin, win)) return contextWin;
+
+      return this._getActiveStandaloneNoteEditorWindow(win);
+    } catch (_) {
+      return null;
+    }
+  },
+
   _getContextNoteEditorWindow(noteEditor) {
     try {
       return noteEditor?._iframe?.contentWindow || noteEditor?._editorInstance?._iframeWindow || null;
@@ -5281,6 +5446,7 @@ var ZoteroVim = {
   },
 
   _clearMainContextNoteListener(winState) {
+    this._clearMainContextNoteKeyState(winState);
     const noteWin = winState?._contextNoteEditorWin;
     const noteDoc = winState?._contextNoteEditorDoc;
     const handler = winState?._contextNoteEditorKeyHandler;
@@ -5298,8 +5464,7 @@ var ZoteroVim = {
   },
 
   _syncMainContextNoteListener(win, winState) {
-    const noteEditor = this._getActiveContextNoteEditor(win);
-    const noteWin = this._getContextNoteEditorWindow(noteEditor);
+    const noteWin = this._getActiveMainNoteEditorWindow(win);
     const noteDoc = noteWin?.document || null;
     if (noteWin === winState?._contextNoteEditorWin && noteDoc === winState?._contextNoteEditorDoc) return;
 
@@ -5312,9 +5477,12 @@ var ZoteroVim = {
     winState._contextNoteEditorWin = noteWin;
     winState._contextNoteEditorDoc = noteDoc;
     winState._contextNoteEditorKeyHandler = handler;
+    if (!winState._contextNoteMode) winState._contextNoteMode = 'normal';
+    this._mainShowStatus(win, '-- NOTE ' + String(winState._contextNoteMode || 'normal').toUpperCase() + ' --', 1200);
   },
 
-  _onMainContextNoteKeyDown(event, win, _winState) {
+  _onMainContextNoteKeyDown(event, win, winState) {
+    if (!winState) return;
     const keyStr = this._keyString(event);
     if (!keyStr) return;
 
@@ -5323,6 +5491,7 @@ var ZoteroVim = {
       || ((event.ctrlKey || event.metaKey) && (event.key === 'h' || event.key === 'H' || event.code === 'KeyH'));
 
     if (isCtrlH) {
+      this._clearMainContextNoteKeyState(winState);
       event.preventDefault();
       event.stopPropagation();
       void this._focusReaderContent(win);
@@ -5330,10 +5499,654 @@ var ZoteroVim = {
     }
 
     if (keyStr === 'ctrl+l') {
+      this._clearMainContextNoteKeyState(winState);
       event.preventDefault();
       event.stopPropagation();
       void this._focusContextNoteEditor(win);
+      this._mainShowStatus(win, '▶ note', 700);
+      return;
     }
+
+    const mode = winState._contextNoteMode || 'normal';
+
+    if (mode === 'insert') {
+      if (keyStr === 'escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        this._clearMainContextNoteKeyState(winState);
+        winState._contextNoteMode = 'normal';
+        this._mainShowStatus(win, '-- NOTE NORMAL --', 900);
+      }
+      return;
+    }
+
+    if (keyStr === 'i') {
+      event.preventDefault();
+      event.stopPropagation();
+      this._clearMainContextNoteKeyState(winState);
+      winState._contextNoteMode = 'insert';
+      this._mainShowStatus(win, '-- NOTE INSERT --', 900);
+      return;
+    }
+
+    if (keyStr === 'escape') {
+      event.preventDefault();
+      event.stopPropagation();
+      this._clearMainContextNoteKeyState(winState);
+      winState._contextNoteMode = 'normal';
+      this._mainShowStatus(win, '-- NOTE NORMAL --', 700);
+      return;
+    }
+
+    const handled = this._handleMainContextNoteNormalKey(event, keyStr, win, winState);
+    if (handled) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+
+    // In note Normal mode, unbound keys should not be typed into the editor.
+    event.preventDefault();
+    event.stopPropagation();
+  },
+
+  _clearMainContextNoteKeyState(winState) {
+    if (!winState) return;
+    winState._contextNoteKeyBuffer = '';
+    winState._contextNoteCountBuffer = '';
+    clearTimeout(winState._contextNoteKeyTimeout);
+    winState._contextNoteKeyTimeout = null;
+  },
+
+  _handleMainContextNoteNormalKey(event, keyStr, win, winState) {
+    const editableEl = this._resolveEditableFromTarget(event.target);
+    if (!editableEl) {
+      this._clearMainContextNoteKeyState(winState);
+      return false;
+    }
+
+    if (/^\d$/.test(keyStr) && (keyStr !== '0' || winState._contextNoteCountBuffer)) {
+      winState._contextNoteCountBuffer = (winState._contextNoteCountBuffer || '') + keyStr;
+      clearTimeout(winState._contextNoteKeyTimeout);
+      winState._contextNoteKeyTimeout = setTimeout(() => this._clearMainContextNoteKeyState(winState), 1200);
+      return true;
+    }
+
+    const newBuffer = (winState._contextNoteKeyBuffer || '') + keyStr;
+    const command = this._matchMainContextNoteCommand(newBuffer, keyStr);
+
+    if (command === 'pending') {
+      winState._contextNoteKeyBuffer = newBuffer;
+      clearTimeout(winState._contextNoteKeyTimeout);
+      winState._contextNoteKeyTimeout = setTimeout(() => this._clearMainContextNoteKeyState(winState), 1200);
+      return true;
+    }
+
+    if (!command) {
+      this._clearMainContextNoteKeyState(winState);
+      const fallback = this._matchMainContextNoteCommand(keyStr, keyStr);
+      if (!fallback || fallback === 'pending') return false;
+      return this._executeMainContextNoteCommand(editableEl, fallback, 1, win, winState);
+    }
+
+    const count = parseInt(winState._contextNoteCountBuffer || '0', 10) || 1;
+    this._clearMainContextNoteKeyState(winState);
+    return this._executeMainContextNoteCommand(editableEl, command, count, win, winState);
+  },
+
+  _matchMainContextNoteCommand(buffer, keyStr) {
+    if (buffer === 'g') return 'pending';
+    if (buffer === 'd') return 'pending';
+    if (buffer === 'y') return 'pending';
+    if (buffer === 'c') return 'pending';
+    if (buffer === 'di' || buffer === 'yi' || buffer === 'ci') return 'pending';
+    if (buffer === 'diw' || buffer === 'yiw' || buffer === 'ciw') return buffer;
+
+    const opMotions = new Set(['h', 'j', 'k', 'l', 'w', 'W', 'e', 'E', 'b', 'B', '0', '^', '$', 'G']);
+    if (buffer.length === 2 && (buffer[0] === 'd' || buffer[0] === 'y' || buffer[0] === 'c') && opMotions.has(buffer[1])) {
+      return buffer;
+    }
+
+    if (buffer === 'gg') return 'gg';
+    if (buffer === 'dd') return 'dd';
+    if (buffer === 'yy') return 'yy';
+    if (['h', 'j', 'k', 'l', 'w', 'W', 'e', 'E', 'b', 'B', '0', '^', '$', 'G', 'x', 'a', 'A', 'I', 'o', 'O', 'p', 'P', 'u', 'ctrl+r'].includes(buffer)) return buffer;
+    if (['h', 'j', 'k', 'l', 'w', 'W', 'e', 'E', 'b', 'B', '0', '^', '$', 'G', 'x', 'a', 'A', 'I', 'o', 'O', 'p', 'P', 'u', 'ctrl+r'].includes(keyStr)) return keyStr;
+    return null;
+  },
+
+  _executeMainContextNoteCommand(editableEl, command, count, win, winState) {
+    if (!editableEl) return false;
+
+    if (/^[dyc][hjklwebWEB0\^\$G]$/.test(command)) {
+      return this._noteOperateByMotion(editableEl, command[0], command[1], count, win, winState);
+    }
+    if (/^[dyc]iw$/.test(command)) {
+      return this._noteOperateTextObject(editableEl, command[0], 'iw', count, win, winState);
+    }
+
+    switch (command) {
+      case 'h':
+      case 'j':
+      case 'k':
+      case 'l':
+      case 'w':
+      case 'W':
+      case 'e':
+      case 'E':
+      case 'b':
+      case 'B':
+      case '0':
+      case '^':
+      case '$':
+        return this._moveNoteCaretByKey(editableEl, command, count);
+      case 'a':
+      case 'A':
+      case 'I':
+      case 'o':
+      case 'O': {
+        const placement = command === 'a' ? 'append-char'
+          : command === 'A' ? 'append-line'
+            : command === 'I' ? 'insert-line-start'
+              : command === 'o' ? 'open-below'
+                : 'open-above';
+        const switched = this._noteSwitchToInsert(editableEl, placement);
+        if (switched) {
+          winState._contextNoteMode = 'insert';
+          this._mainShowStatus(win, '-- NOTE INSERT --', 900);
+        }
+        return switched;
+      }
+      case 'gg':
+        return this._noteGoToLine(editableEl, count);
+      case 'G':
+        return count > 1
+          ? this._noteGoToLine(editableEl, count)
+          : this._noteGoToLastLine(editableEl);
+      case 'x':
+        return this._noteDeleteChar(editableEl, count);
+      case 'u':
+        return this._noteUndoRedo(editableEl, false);
+      case 'ctrl+r':
+        return this._noteUndoRedo(editableEl, true);
+      case 'p':
+        return this._notePasteRegister(editableEl, winState, false);
+      case 'P':
+        return this._notePasteRegister(editableEl, winState, true);
+      case 'dd': {
+        const deletedText = this._noteDeleteLines(editableEl, count);
+        if (deletedText) {
+          winState._contextNoteLastYank = deletedText;
+          this._mainShowStatus(win, '▶ dd', 700);
+          return true;
+        }
+        return false;
+      }
+      case 'yy': {
+        const yankedText = this._noteYankLines(editableEl, count);
+        if (yankedText) {
+          winState._contextNoteLastYank = yankedText;
+          this._mainShowStatus(win, '✓ yy', 900);
+          return true;
+        }
+        return false;
+      }
+      default:
+        this._clearMainContextNoteKeyState(winState);
+        return false;
+    }
+  },
+
+  _moveNoteCaretByKey(editableEl, keyStr, count = 1) {
+    const doc = editableEl.ownerDocument;
+    const sel = doc?.getSelection?.();
+    if (!sel || !sel.modify) return false;
+
+    const map = {
+      h: ['backward', 'character'],
+      l: ['forward', 'character'],
+      j: ['forward', 'line'],
+      k: ['backward', 'line'],
+      w: ['forward', 'word'],
+      W: ['forward', 'word'],
+      e: ['forward', 'word'],
+      E: ['forward', 'word'],
+      b: ['backward', 'word'],
+      B: ['backward', 'word'],
+      '0': ['backward', 'lineboundary'],
+      '^': ['backward', 'lineboundary'],
+      '$': ['forward', 'lineboundary'],
+    };
+
+    const spec = map[keyStr];
+    if (!spec) return false;
+
+    if (doc.activeElement !== editableEl) {
+      try { editableEl.focus({ preventScroll: true }); } catch (_) { try { editableEl.focus(); } catch (_) {} }
+    }
+
+    try {
+      if (!sel.isCollapsed) sel.collapseToEnd();
+    } catch (_) {}
+
+    try {
+      const steps = Math.max(1, count || 1);
+      for (let i = 0; i < steps; i += 1) {
+        sel.modify('move', spec[0], spec[1]);
+      }
+      return true;
+    } catch (_) {
+      return false;
+    }
+  },
+
+  _noteGoToLine(editableEl, lineNumber) {
+    const doc = editableEl.ownerDocument;
+    const sel = doc?.getSelection?.();
+    if (!sel || !sel.modify) return false;
+    if (doc.activeElement !== editableEl) {
+      try { editableEl.focus({ preventScroll: true }); } catch (_) { try { editableEl.focus(); } catch (_) {} }
+    }
+    try {
+      sel.selectAllChildren(editableEl);
+      sel.collapseToStart();
+      const target = Math.max(1, lineNumber || 1);
+      for (let i = 1; i < target; i += 1) {
+        sel.modify('move', 'forward', 'line');
+      }
+      sel.modify('move', 'backward', 'lineboundary');
+      return true;
+    } catch (_) {
+      return false;
+    }
+  },
+
+  _noteGoToLastLine(editableEl) {
+    const doc = editableEl.ownerDocument;
+    const sel = doc?.getSelection?.();
+    if (!sel) return false;
+    if (doc.activeElement !== editableEl) {
+      try { editableEl.focus({ preventScroll: true }); } catch (_) { try { editableEl.focus(); } catch (_) {} }
+    }
+    try {
+      sel.selectAllChildren(editableEl);
+      sel.collapseToEnd();
+      return true;
+    } catch (_) {
+      return false;
+    }
+  },
+
+  _noteDeleteChar(editableEl, count = 1) {
+    const doc = editableEl.ownerDocument;
+    const sel = doc?.getSelection?.();
+    if (!sel || !sel.modify || !sel.deleteFromDocument) return false;
+    if (doc.activeElement !== editableEl) {
+      try { editableEl.focus({ preventScroll: true }); } catch (_) { try { editableEl.focus(); } catch (_) {} }
+    }
+    try {
+      if (sel.isCollapsed) {
+        const steps = Math.max(1, count || 1);
+        for (let i = 0; i < steps; i += 1) {
+          sel.modify('extend', 'forward', 'character');
+        }
+      }
+      sel.deleteFromDocument();
+      return true;
+    } catch (_) {
+      return false;
+    }
+  },
+
+  _noteSelectRangeByMotion(editableEl, motion, count = 1) {
+    const doc = editableEl.ownerDocument;
+    const sel = doc?.getSelection?.();
+    if (!sel || !sel.modify) return null;
+    if (doc.activeElement !== editableEl) {
+      try { editableEl.focus({ preventScroll: true }); } catch (_) { try { editableEl.focus(); } catch (_) {} }
+    }
+
+    try {
+      if (!sel.isCollapsed) sel.collapseToEnd();
+    } catch (_) {}
+
+    try {
+      const steps = Math.max(1, count || 1);
+      if (motion === 'G') {
+        for (let i = 0; i < steps; i += 1) {
+          sel.modify('extend', 'forward', 'documentboundary');
+        }
+        return sel;
+      }
+
+      const map = {
+        h: ['backward', 'character'],
+        l: ['forward', 'character'],
+        j: ['forward', 'line'],
+        k: ['backward', 'line'],
+        w: ['forward', 'word'],
+        W: ['forward', 'word'],
+        e: ['forward', 'word'],
+        E: ['forward', 'word'],
+        b: ['backward', 'word'],
+        B: ['backward', 'word'],
+        '0': ['backward', 'lineboundary'],
+        '^': ['backward', 'lineboundary'],
+        '$': ['forward', 'lineboundary'],
+      };
+
+      const spec = map[motion];
+      if (!spec) return null;
+      for (let i = 0; i < steps; i += 1) {
+        sel.modify('extend', spec[0], spec[1]);
+      }
+      return sel;
+    } catch (_) {
+      return null;
+    }
+  },
+
+  _noteOperateByMotion(editableEl, operator, motion, count, win, winState) {
+    const sel = this._noteSelectRangeByMotion(editableEl, motion, count);
+    if (!sel || sel.isCollapsed) return false;
+
+    const text = String(sel.toString() || '');
+    if (!text) return false;
+
+    if (operator === 'y') {
+      try {
+        Components.classes['@mozilla.org/widget/clipboardhelper;1']
+          .getService(Components.interfaces.nsIClipboardHelper)
+          .copyString(text);
+        if (winState) winState._contextNoteLastYank = text;
+        try { sel.collapseToStart(); } catch (_) {}
+        this._mainShowStatus(win, '✓ y' + motion, 900);
+        return true;
+      } catch (_) {
+        return false;
+      }
+    }
+
+    if (operator === 'd') {
+      if (!sel.deleteFromDocument) return false;
+      try {
+        sel.deleteFromDocument();
+        if (winState) winState._contextNoteLastYank = text;
+        this._mainShowStatus(win, '▶ d' + motion, 800);
+        return true;
+      } catch (_) {
+        return false;
+      }
+    }
+
+    if (operator === 'c') {
+      if (!sel.deleteFromDocument) return false;
+      try {
+        sel.deleteFromDocument();
+        if (winState) winState._contextNoteLastYank = text;
+        if (winState) winState._contextNoteMode = 'insert';
+        this._mainShowStatus(win, '-- NOTE INSERT --', 900);
+        return true;
+      } catch (_) {
+        return false;
+      }
+    }
+
+    return false;
+  },
+
+  _noteSelectInnerWord(editableEl, count = 1) {
+    const doc = editableEl.ownerDocument;
+    const sel = doc?.getSelection?.();
+    if (!sel || !sel.modify) return null;
+    if (doc.activeElement !== editableEl) {
+      try { editableEl.focus({ preventScroll: true }); } catch (_) { try { editableEl.focus(); } catch (_) {} }
+    }
+    try {
+      if (!sel.isCollapsed) sel.collapseToEnd();
+      sel.modify('move', 'backward', 'word');
+      sel.modify('extend', 'forward', 'word');
+      const steps = Math.max(1, count || 1);
+      for (let i = 1; i < steps; i += 1) {
+        sel.modify('extend', 'forward', 'word');
+      }
+      return sel;
+    } catch (_) {
+      return null;
+    }
+  },
+
+  _noteOperateTextObject(editableEl, operator, textObject, count, win, winState) {
+    if (textObject !== 'iw') return false;
+    const sel = this._noteSelectInnerWord(editableEl, count);
+    if (!sel || sel.isCollapsed) return false;
+
+    const text = String(sel.toString() || '');
+    if (!text) return false;
+
+    if (operator === 'y') {
+      try {
+        Components.classes['@mozilla.org/widget/clipboardhelper;1']
+          .getService(Components.interfaces.nsIClipboardHelper)
+          .copyString(text);
+        if (winState) winState._contextNoteLastYank = text;
+        try { sel.collapseToStart(); } catch (_) {}
+        this._mainShowStatus(win, '✓ yiw', 900);
+        return true;
+      } catch (_) {
+        return false;
+      }
+    }
+
+    if (operator === 'd' || operator === 'c') {
+      if (!sel.deleteFromDocument) return false;
+      try {
+        sel.deleteFromDocument();
+        if (winState) winState._contextNoteLastYank = text;
+        if (operator === 'c') {
+          if (winState) winState._contextNoteMode = 'insert';
+          this._mainShowStatus(win, '-- NOTE INSERT --', 900);
+        } else {
+          this._mainShowStatus(win, '▶ diw', 800);
+        }
+        return true;
+      } catch (_) {
+        return false;
+      }
+    }
+
+    return false;
+  },
+
+  _noteUndoRedo(editableEl, redo = false) {
+    const doc = editableEl.ownerDocument;
+    if (doc.activeElement !== editableEl) {
+      try { editableEl.focus({ preventScroll: true }); } catch (_) { try { editableEl.focus(); } catch (_) {} }
+    }
+
+    try {
+      const cmd = redo ? 'redo' : 'undo';
+      if (!doc.queryCommandSupported || doc.queryCommandSupported(cmd)) {
+        if (doc.execCommand(cmd)) return true;
+      }
+    } catch (_) {}
+
+    try {
+      const winObj = doc.defaultView;
+      if (!winObj || !winObj.KeyboardEvent) return false;
+      const ev = new winObj.KeyboardEvent('keydown', {
+        key: redo ? 'z' : 'z',
+        ctrlKey: true,
+        shiftKey: !!redo,
+        bubbles: true,
+        cancelable: true,
+      });
+      editableEl.dispatchEvent(ev);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  },
+
+  _selectNoteLines(editableEl, count = 1) {
+    const doc = editableEl.ownerDocument;
+    const sel = doc?.getSelection?.();
+    if (!sel || !sel.modify) return null;
+    if (doc.activeElement !== editableEl) {
+      try { editableEl.focus({ preventScroll: true }); } catch (_) { try { editableEl.focus(); } catch (_) {} }
+    }
+    try {
+      if (!sel.isCollapsed) sel.collapseToStart();
+      sel.modify('move', 'backward', 'lineboundary');
+      sel.modify('extend', 'forward', 'lineboundary');
+      const steps = Math.max(1, count || 1);
+      for (let i = 1; i < steps; i += 1) {
+        sel.modify('extend', 'forward', 'line');
+        sel.modify('extend', 'forward', 'lineboundary');
+      }
+      return sel;
+    } catch (_) {
+      return null;
+    }
+  },
+
+  _noteDeleteLines(editableEl, count = 1) {
+    const sel = this._selectNoteLines(editableEl, count);
+    if (!sel || !sel.deleteFromDocument || sel.isCollapsed) return false;
+    const text = String(sel.toString() || '');
+    if (!text) return false;
+    try {
+      sel.deleteFromDocument();
+      return text;
+    } catch (_) {
+      return '';
+    }
+  },
+
+  _noteYankLines(editableEl, count = 1) {
+    const sel = this._selectNoteLines(editableEl, count);
+    if (!sel || sel.isCollapsed) return '';
+    const text = String(sel.toString() || '');
+    if (!text) return '';
+    try {
+      Components.classes['@mozilla.org/widget/clipboardhelper;1']
+        .getService(Components.interfaces.nsIClipboardHelper)
+        .copyString(text);
+      sel.collapseToStart();
+      return text;
+    } catch (_) {
+      return '';
+    }
+  },
+
+  _noteEnterInsertAt(editableEl, placement) {
+    const doc = editableEl.ownerDocument;
+    const sel = doc?.getSelection?.();
+    if (!sel || !sel.modify) return false;
+    if (doc.activeElement !== editableEl) {
+      try { editableEl.focus({ preventScroll: true }); } catch (_) { try { editableEl.focus(); } catch (_) {} }
+    }
+    try {
+      if (!sel.isCollapsed) sel.collapseToEnd();
+      if (placement === 'append-char') {
+        sel.modify('move', 'forward', 'character');
+      } else if (placement === 'append-line') {
+        sel.modify('move', 'forward', 'lineboundary');
+      } else if (placement === 'insert-line-start') {
+        sel.modify('move', 'backward', 'lineboundary');
+      }
+      return true;
+    } catch (_) {
+      return false;
+    }
+  },
+
+  _noteSwitchToInsert(editableEl, placement) {
+    if (placement === 'open-below') return this._noteOpenLine(editableEl, false);
+    if (placement === 'open-above') return this._noteOpenLine(editableEl, true);
+    return this._noteEnterInsertAt(editableEl, placement);
+  },
+
+  _noteOpenLine(editableEl, above = false) {
+    const doc = editableEl.ownerDocument;
+    const sel = doc?.getSelection?.();
+    if (!sel || !sel.modify) return false;
+    if (doc.activeElement !== editableEl) {
+      try { editableEl.focus({ preventScroll: true }); } catch (_) { try { editableEl.focus(); } catch (_) {} }
+    }
+    try {
+      if (!sel.isCollapsed) sel.collapseToEnd();
+      sel.modify('move', above ? 'backward' : 'forward', 'lineboundary');
+      return this._noteInsertTextAtCaret(editableEl, '\n');
+    } catch (_) {
+      return false;
+    }
+  },
+
+  _notePasteRegister(editableEl, winState, before = false) {
+    const text = String(winState?._contextNoteLastYank || '');
+    if (!text) return false;
+    if (!before) this._moveNoteCaretByKey(editableEl, 'l', 1);
+    return this._noteInsertTextAtCaret(editableEl, text);
+  },
+
+  _noteInsertTextAtCaret(editableEl, text) {
+    if (!editableEl || !text) return false;
+    const tag = String(editableEl.tagName || '').toUpperCase();
+    if (tag === 'TEXTAREA' || tag === 'INPUT') {
+      try {
+        const el = editableEl;
+        const start = Number(el.selectionStart || 0);
+        const end = Number(el.selectionEnd || start);
+        const value = String(el.value || '');
+        el.value = value.slice(0, start) + text + value.slice(end);
+        const pos = start + text.length;
+        el.selectionStart = pos;
+        el.selectionEnd = pos;
+        return true;
+      } catch (_) {
+        return false;
+      }
+    }
+
+    const doc = editableEl.ownerDocument;
+    const sel = doc?.getSelection?.();
+    if (!sel) return false;
+    if (doc.activeElement !== editableEl) {
+      try { editableEl.focus({ preventScroll: true }); } catch (_) { try { editableEl.focus(); } catch (_) {} }
+    }
+    try {
+      if (sel.rangeCount === 0) {
+        const r = doc.createRange();
+        r.selectNodeContents(editableEl);
+        r.collapse(false);
+        sel.removeAllRanges();
+        sel.addRange(r);
+      }
+      const range = sel.getRangeAt(0);
+      range.deleteContents();
+      const node = doc.createTextNode(text);
+      range.insertNode(node);
+      range.setStartAfter(node);
+      range.collapse(true);
+      sel.removeAllRanges();
+      sel.addRange(range);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  },
+
+  _resolveEditableFromTarget(target) {
+    if (!target) return null;
+    let el = target.nodeType === 1 ? target : target.parentElement;
+    while (el) {
+      if (el.isContentEditable) return el;
+      const tag = String(el.tagName || '').toUpperCase();
+      if (tag === 'TEXTAREA' || tag === 'INPUT') return el;
+      el = el.parentElement;
+    }
+    return null;
   },
 
   async _focusReaderContent(win) {
@@ -5386,8 +6199,17 @@ var ZoteroVim = {
   async _focusContextNoteEditor(win) {
     try {
       const noteEditor = this._getActiveContextNoteEditor(win);
-      if (!noteEditor) return false;
-      await noteEditor.focus?.();
+      if (noteEditor?.focus) {
+        await noteEditor.focus();
+        return true;
+      }
+
+      const noteWin = this._getActiveMainNoteEditorWindow(win);
+      if (!noteWin) return false;
+      noteWin.focus?.();
+      const doc = noteWin.document;
+      const target = doc?.querySelector?.('[contenteditable="true"], .ProseMirror, .editor, .editor-core, body') || doc?.body || null;
+      target?.focus?.({ preventScroll: true });
       return true;
     } catch (e) {
       Zotero.debug('[ZoteroVim] _focusContextNoteEditor error: ' + e);
@@ -5439,7 +6261,7 @@ var ZoteroVim = {
     const ir = reader?._internalReader;
     const splitType = String(ir?.splitType || '');
     const mainWin = Zotero.getMainWindow?.() || null;
-    const noteEditor = this._getActiveContextNoteEditor(mainWin);
+    const noteEditor = this._getActiveMainNoteEditorWindow(mainWin);
     if (!reader || !ir || !['vertical', 'horizontal'].includes(splitType)) {
       if (direction === 'right' && noteEditor) {
         void this._focusContextNoteEditor(mainWin);

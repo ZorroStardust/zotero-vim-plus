@@ -189,6 +189,22 @@ you still press `Enter` to jump.
 | `Ctrl+k` | Focus split pane above (or toggle pane in vertical split) |
 | `Ctrl+l` | Focus split pane to the right (or toggle pane in horizontal split) |
 
+#### Library tree navigation (left pane)
+
+These bindings act on Zotero's native left collection tree when that tree has focus.
+
+| Key | Action |
+|-----|--------|
+| `h` | In item list, move focus back to collection tree; in collection tree, collapse selected collection or jump to parent |
+| `l` | In collection tree, expand selected collection; if already expanded or a leaf, move focus into item list |
+| `Enter` | In collection tree, move focus into item list; in item list, open the selected item/PDF |
+| `Backspace` | Jump to parent collection |
+| `za` | Toggle expand/collapse for the currently selected collection row |
+| `zo` | Expand the current collection row (if already open, keep it open) |
+| `zc` | Collapse the current collection row (if already closed, keep it closed) |
+| `R` | Expand all collections in the current library tree |
+| `M` | Collapse all collections in the current library tree |
+
 #### Viewport positioning (like Vim's z commands)
 
 | Key | Action |
@@ -482,6 +498,15 @@ Open **Edit → Preferences** (macOS: **Zotero → Settings**) and navigate to t
 | `focusReaderSplitDown` | Focus lower split pane (or toggle in vertical split) |
 | `focusReaderSplitUp` | Focus upper split pane (or toggle in vertical split) |
 | `focusReaderSplitRight` | Focus right split pane (or toggle in horizontal split) |
+| `mainActivate` | In collections, enter the item list; in items, open the selected item/PDF |
+| `mainTreeToggle` | Toggle expand/collapse for the selected collection |
+| `mainTreeOpenOnly` | Expand the selected collection without changing pane |
+| `mainTreeCloseOnly` | Collapse the selected collection without moving to parent |
+| `mainTreeExpand` | Expand selected collection or move focus into the item list |
+| `mainTreeCollapse` | Collapse selected collection, move to parent, or return focus to the collection tree |
+| `mainTreeParent` | Move selection to parent collection |
+| `mainTreeExpandAll` | Expand all collections in the left tree |
+| `mainTreeCollapseAll` | Collapse all collections in the left tree |
 
 ---
 

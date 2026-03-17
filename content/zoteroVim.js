@@ -150,12 +150,21 @@ var ZoteroVim = {
     'main: wl':   'mainFocusRight',       // <space>wl  — focus detail pane
     'main: ww':   'mainFocusItems',       // <space>ww  — focus items list
     // Main window — panel-scoped navigation
+    'main:h':     'mainTreeCollapse',
+    'main:l':     'mainTreeExpand',
     'main:j':     'mainNavDown',
     'main:k':     'mainNavUp',
+    'main:za':    'mainTreeToggle',
+    'main:zo':    'mainTreeOpenOnly',
+    'main:zc':    'mainTreeCloseOnly',
+    'main:R':     'mainTreeExpandAll',
+    'main:M':     'mainTreeCollapseAll',
+    'main:backspace': 'mainTreeParent',
     'main:gg':    'mainNavFirst',
     'main:G':     'mainNavLast',
     'main:J':     'mainPrevTab',
     'main:K':     'mainNextTab',
+    'main:enter': 'mainActivate',
     'main:return':'mainActivate',         // Enter — open PDF of selected item
   },
 
@@ -5045,6 +5054,7 @@ var ZoteroVim = {
   },
 
   _executeMainAction(action, win, winState, count) {
+    this._mainSyncFocusedPanel(win, winState);
     Zotero.debug('[ZoteroVim] Main action: ' + action + ' count:' + count);
     switch (action) {
       case 'mainFuzzyAll':         this._openFuzzyPicker(win, winState, 'all');         break;
@@ -5056,13 +5066,22 @@ var ZoteroVim = {
       case 'mainFocusRight':       this._mainFocusPanel(win, winState, 'items');        break;
       case 'mainYankCitekey':      this._mainYankCitekey(win, winState);               break;
       case 'mainOpenPDF':
-      case 'mainActivate':         this._mainOpenPDF(win, winState);                   break;
+                                   this._mainOpenPDF(win, winState);                   break;
+      case 'mainActivate':         this._mainActivate(win, winState);                  break;
       case 'mainClosePDF':         this._mainClosePDF(win);                            break;
       case 'mainPrevTab':          this._mainCycleTab(win, -1);                        break;
       case 'mainNextTab':          this._mainCycleTab(win, +1);                        break;
       case 'mainFocusSearch':      this._mainFocusSearch(win);                         break;
       case 'mainNavDown':          this._mainNavigate(win, winState, +1, count);       break;
       case 'mainNavUp':            this._mainNavigate(win, winState, -1, count);       break;
+      case 'mainTreeToggle':       this._mainTreeToggle(win, winState);                break;
+      case 'mainTreeOpenOnly':     this._mainTreeOpenOnly(win, winState);              break;
+      case 'mainTreeCloseOnly':    this._mainTreeCloseOnly(win, winState);             break;
+      case 'mainTreeExpand':       this._mainTreeExpand(win, winState);                break;
+      case 'mainTreeCollapse':     this._mainTreeCollapse(win, winState);              break;
+      case 'mainTreeParent':       this._mainTreeParent(win, winState);                break;
+      case 'mainTreeExpandAll':    this._mainTreeExpandAll(win, winState);             break;
+      case 'mainTreeCollapseAll':  this._mainTreeCollapseAll(win, winState);           break;
       case 'mainNavFirst':         this._mainNavigate(win, winState, 'first', 0);      break;
       case 'mainNavLast':          this._mainNavigate(win, winState, 'last',  count);  break;
       default: Zotero.debug('[ZoteroVim] Unknown main action: ' + action);
@@ -5074,6 +5093,58 @@ var ZoteroVim = {
     if (!entry) return;
     const [mainWin, mainState] = entry;
     this._executeMainAction(action, mainWin, mainState, count);
+  },
+
+  _mainSyncFocusedPanel(win, winState) {
+    const panel = this._mainDetectFocusedPanel(win, winState);
+    if (panel) winState.activePanelFocus = panel;
+    return winState.activePanelFocus;
+  },
+
+  _mainDetectFocusedPanel(win, winState) {
+    const active = win?.document?.activeElement;
+    const zp = win?.ZoteroPane;
+    const cv = zp?.collectionsView;
+    const iv = zp?.itemsView;
+
+    const isWithin = (root, node) => {
+      if (!root || !node) return false;
+      if (root === node) return true;
+      try {
+        if (typeof root.contains === 'function' && root.contains(node)) return true;
+      } catch (_) {}
+      return false;
+    };
+
+    const collectionTargets = [
+      cv?.tree,
+      cv?.domEl,
+      win?.document?.getElementById('collection-tree'),
+      win?.document?.getElementById('zotero-collections-tree'),
+      win?.document?.querySelector('#zotero-collections-tree .virtualized-table'),
+    ].filter(Boolean);
+
+    const itemTargets = [
+      iv?.tree,
+      iv?.domEl,
+      win?.document?.getElementById('item-tree-main-default'),
+      win?.document?.getElementById('zotero-items-tree'),
+      win?.document?.querySelector('#zotero-items-tree .virtualized-table'),
+    ].filter(Boolean);
+
+    if (active) {
+      for (const target of collectionTargets) {
+        if (isWithin(target, active) || isWithin(active, target)) return 'collections';
+      }
+      for (const target of itemTargets) {
+        if (isWithin(target, active) || isWithin(active, target)) return 'items';
+      }
+      if (active.id === 'collection-tree' || active.id === 'zotero-collections-tree') return 'collections';
+      if (active.id === 'item-tree-main-default' || active.id === 'zotero-items-tree') return 'items';
+    }
+
+    if (cv?.selection?.count) return 'collections';
+    return winState?.activePanelFocus || 'items';
   },
 
   _toggleReaderSplit(state, reader, orientation) {
@@ -5155,7 +5226,7 @@ var ZoteroVim = {
   _mainNavigate(win, winState, dir, count) {
     try {
       const zp = win.ZoteroPane;
-      if (winState.activePanelFocus === 'collections') {
+      if (this._mainSyncFocusedPanel(win, winState) === 'collections') {
         const cv = zp.collectionsView;
         if (!cv) return;
         const cur  = cv.selection?.focused ?? 0;
@@ -5181,15 +5252,285 @@ var ZoteroVim = {
     }
   },
 
-  _mainFocusPanel(win, winState, panel) {
-    winState.activePanelFocus = panel;
+  _mainActivate(win, winState) {
+    const panel = this._mainSyncFocusedPanel(win, winState);
+    if (panel === 'collections') {
+      this._mainFocusPanel(win, winState, 'items');
+      this._mainShowStatus(win, '▶ items', 900);
+      return;
+    }
+    this._mainOpenPDF(win, winState);
+  },
+
+  _mainCollectionsView(win, winState, { requireFocused = true } = {}) {
+    const panel = this._mainSyncFocusedPanel(win, winState);
+    if (requireFocused && panel !== 'collections') {
+      this._mainShowStatus(win, '✗ focus collections tree first');
+      return null;
+    }
+    const cv = win?.ZoteroPane?.collectionsView;
+    if (!cv) {
+      this._mainShowStatus(win, '✗ collections tree unavailable');
+      return null;
+    }
+    return cv;
+  },
+
+  _mainTreeExpand(win, winState) {
+    const panel = this._mainSyncFocusedPanel(win, winState);
+    if (panel !== 'collections') {
+      this._mainFocusPanel(win, winState, 'items');
+      this._mainShowStatus(win, '▶ items', 900);
+      return;
+    }
+
+    const cv = this._mainCollectionsView(win, winState);
+    if (!cv) return;
+    const idx = cv.selection?.focused ?? -1;
+    if (idx < 0) return;
+
+    if (cv.isContainer?.(idx) && !cv.isContainerOpen?.(idx) && !cv.isContainerEmpty?.(idx)) {
+      cv.toggleOpenState?.(idx);
+      this._mainShowStatus(win, '→ expanded');
+      return;
+    }
+    this._mainFocusPanel(win, winState, 'items');
+    this._mainShowStatus(win, '▶ items', 900);
+  },
+
+  async _mainTreeToggle(win, winState) {
     try {
-      const sel = panel === 'collections'
-        ? '#zotero-collections-tree'
-        : '#item-tree-main-default';
-      const el = win.document.querySelector(sel) ||
-                 win.document.querySelector('.virtualized-table');
-      if (el) el.focus();
+      const cv = this._mainEnsureCollectionsFocus(win, winState, { ensureSelection: false });
+      if (!cv) return;
+      const idx = this._mainResolveCollectionsRow(cv);
+      if (idx < 0) return;
+      if (!cv.isContainer?.(idx) || cv.isContainerEmpty?.(idx)) {
+        this._mainShowStatus(win, '→ no child collections', 1000);
+        this._mainRefocusCollectionsTree(win, cv);
+        return;
+      }
+      const isOpen = !!cv.isContainerOpen?.(idx);
+      await cv.toggleOpenState?.(idx);
+      this._mainRefocusCollectionsTree(win, cv);
+      this._mainShowStatus(win, isOpen ? '→ collapsed' : '→ expanded', 900);
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] _mainTreeToggle error: ' + e);
+      this._mainShowStatus(win, '✗ toggle failed');
+    }
+  },
+
+  async _mainTreeOpenOnly(win, winState) {
+    try {
+      const cv = this._mainEnsureCollectionsFocus(win, winState, { ensureSelection: false });
+      if (!cv) return;
+      const idx = this._mainResolveCollectionsRow(cv);
+      if (idx < 0) return;
+      if (!cv.isContainer?.(idx) || cv.isContainerEmpty?.(idx)) {
+        this._mainShowStatus(win, '→ no child collections', 1000);
+        this._mainRefocusCollectionsTree(win, cv);
+        return;
+      }
+      if (cv.isContainerOpen?.(idx)) {
+        this._mainRefocusCollectionsTree(win, cv);
+        this._mainShowStatus(win, '→ already expanded', 900);
+        return;
+      }
+      await cv.toggleOpenState?.(idx);
+      this._mainRefocusCollectionsTree(win, cv);
+      this._mainShowStatus(win, '→ expanded', 900);
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] _mainTreeOpenOnly error: ' + e);
+      this._mainShowStatus(win, '✗ open failed');
+    }
+  },
+
+  async _mainTreeCloseOnly(win, winState) {
+    try {
+      const cv = this._mainEnsureCollectionsFocus(win, winState, { ensureSelection: false });
+      if (!cv) return;
+      const idx = this._mainResolveCollectionsRow(cv);
+      if (idx < 0) return;
+      if (!cv.isContainer?.(idx) || cv.isContainerEmpty?.(idx)) {
+        this._mainShowStatus(win, '→ no child collections', 1000);
+        this._mainRefocusCollectionsTree(win, cv);
+        return;
+      }
+      if (!cv.isContainerOpen?.(idx)) {
+        this._mainRefocusCollectionsTree(win, cv);
+        this._mainShowStatus(win, '→ already collapsed', 900);
+        return;
+      }
+      await cv.toggleOpenState?.(idx);
+      this._mainRefocusCollectionsTree(win, cv);
+      this._mainShowStatus(win, '→ collapsed', 900);
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] _mainTreeCloseOnly error: ' + e);
+      this._mainShowStatus(win, '✗ collapse failed');
+    }
+  },
+
+  _mainEnsureCollectionsFocus(win, winState, opts = null) {
+    const cv = win?.ZoteroPane?.collectionsView;
+    if (!cv) {
+      this._mainShowStatus(win, '✗ collections tree unavailable');
+      return null;
+    }
+    try { cv.focus?.(); } catch (_) {}
+    if (opts?.ensureSelection !== false) {
+      this._mainEnsureCollectionsSelection(cv, { fallbackToFirst: opts?.fallbackToFirst !== false });
+    }
+    winState.activePanelFocus = 'collections';
+    return cv;
+  },
+
+  _mainResolveCollectionsRow(cv) {
+    try {
+      if (!cv) return -1;
+      const focused = Number.isInteger(cv.selection?.focused) ? cv.selection.focused : -1;
+      if (focused >= 0 && cv.getRow?.(focused)) return focused;
+
+      const selectedCollectionID = cv.getSelectedCollection?.(true);
+      if (selectedCollectionID) {
+        const selectedIdx = cv.getRowIndexByID?.('C' + selectedCollectionID);
+        if (typeof selectedIdx === 'number' && selectedIdx >= 0) return selectedIdx;
+      }
+    } catch (_) {}
+    return -1;
+  },
+
+  _mainEnsureCollectionsSelection(cv, opts = null) {
+    try {
+      if (!cv?.selection) return;
+      const focused = Number.isInteger(cv.selection.focused) ? cv.selection.focused : -1;
+      if (cv.selection.count > 0 && focused >= 0) return;
+      const resolved = this._mainResolveCollectionsRow(cv);
+      if (resolved >= 0) {
+        cv.selection.select?.(resolved);
+        cv.ensureRowIsVisible?.(resolved);
+        return;
+      }
+      if (opts?.fallbackToFirst === false) return;
+      if ((cv.rowCount || 0) <= 0) return;
+      const idx = focused >= 0 ? Math.min(focused, cv.rowCount - 1) : 0;
+      cv.selection.select?.(idx);
+      cv.ensureRowIsVisible?.(idx);
+    } catch (_) {}
+  },
+
+  _mainEnsureItemsSelection(iv) {
+    try {
+      if (!iv?.selection) return;
+      const focused = Number.isInteger(iv.selection.focused) ? iv.selection.focused : -1;
+      if (iv.selection.count > 0 && focused >= 0) return;
+      if ((iv.rowCount || 0) <= 0) return;
+      const idx = focused >= 0 ? Math.min(focused, iv.rowCount - 1) : 0;
+      iv.selection.select?.(idx);
+      iv.ensureRowIsVisible?.(idx);
+    } catch (_) {}
+  },
+
+  _mainRefocusCollectionsTree(win, cv) {
+    const doc = win?.document;
+    const target = cv?.tree
+      || doc?.getElementById('collection-tree')
+      || doc?.querySelector('#zotero-collections-tree .virtualized-table')
+      || doc?.getElementById('zotero-collections-tree');
+    try { cv?.focus?.(); } catch (_) {}
+    try { target?.focus?.(); } catch (_) {}
+    setTimeout(() => {
+      try { cv?.focus?.(); } catch (_) {}
+      try { target?.focus?.(); } catch (_) {}
+    }, 30);
+  },
+
+  _mainTreeCollapse(win, winState) {
+    const panel = this._mainSyncFocusedPanel(win, winState);
+    if (panel !== 'collections') {
+      this._mainFocusPanel(win, winState, 'collections');
+      this._mainShowStatus(win, '▶ collections', 900);
+      return;
+    }
+
+    const cv = this._mainCollectionsView(win, winState);
+    if (!cv) return;
+    const idx = cv.selection?.focused ?? -1;
+    if (idx < 0) return;
+
+    if (cv.isContainer?.(idx) && cv.isContainerOpen?.(idx)) {
+      cv.toggleOpenState?.(idx);
+      this._mainShowStatus(win, '→ collapsed');
+      return;
+    }
+    this._mainTreeParent(win, winState, { silentIfMissing: true });
+  },
+
+  _mainTreeParent(win, winState, opts = null) {
+    const cv = this._mainCollectionsView(win, winState);
+    if (!cv) return;
+    const idx = cv.selection?.focused ?? -1;
+    if (idx < 0) return;
+
+    const parent = cv.getParentIndex?.(idx);
+    if (typeof parent === 'number' && parent >= 0) {
+      cv.selection?.select?.(parent);
+      cv.ensureRowIsVisible?.(parent);
+      this._mainShowStatus(win, '→ parent', 900);
+      return;
+    }
+    if (!opts?.silentIfMissing) this._mainShowStatus(win, '→ top level', 900);
+  },
+
+  _mainTreeExpandAll(win, winState) {
+    const cv = this._mainCollectionsView(win, winState);
+    if (!cv) return;
+
+    let changed = false;
+    const maxPasses = Math.min(300, Math.max(25, (cv.rowCount || 0) + 10));
+    for (let pass = 0; pass < maxPasses; pass++) {
+      let passChanged = false;
+      const rows = cv.rowCount || 0;
+      for (let i = 0; i < rows; i++) {
+        if (!cv.isContainer?.(i) || cv.isContainerOpen?.(i) || cv.isContainerEmpty?.(i)) continue;
+        cv.toggleOpenState?.(i);
+        passChanged = true;
+        changed = true;
+      }
+      if (!passChanged) break;
+    }
+    this._mainShowStatus(win, changed ? '→ expanded all' : '→ already expanded', 900);
+  },
+
+  _mainTreeCollapseAll(win, winState) {
+    const cv = this._mainCollectionsView(win, winState);
+    if (!cv) return;
+
+    let changed = false;
+    for (let i = (cv.rowCount || 0) - 1; i >= 0; i--) {
+      if (!cv.isContainer?.(i) || !cv.isContainerOpen?.(i)) continue;
+      cv.toggleOpenState?.(i);
+      changed = true;
+    }
+    this._mainShowStatus(win, changed ? '→ collapsed all' : '→ already collapsed', 900);
+  },
+
+  _mainFocusPanel(win, winState, panel) {
+    try {
+      const target = panel === 'collections'
+        ? (win.ZoteroPane?.collectionsView?.tree
+          || win.document.getElementById('collection-tree')
+          || win.document.querySelector('#zotero-collections-tree .virtualized-table')
+          || win.document.getElementById('zotero-collections-tree'))
+        : (win.ZoteroPane?.itemsView?.tree
+          || win.document.getElementById('item-tree-main-default')
+          || win.document.querySelector('#zotero-items-tree .virtualized-table')
+          || win.document.getElementById('zotero-items-tree'));
+      if (target?.focus) target.focus();
+      winState.activePanelFocus = panel;
+      if (panel === 'collections') {
+        this._mainEnsureCollectionsSelection(win.ZoteroPane?.collectionsView);
+      } else {
+        this._mainEnsureItemsSelection(win.ZoteroPane?.itemsView);
+      }
       Zotero.debug('[ZoteroVim] _mainFocusPanel: ' + panel);
     } catch (e) {
       Zotero.debug('[ZoteroVim] _mainFocusPanel error: ' + e);
@@ -5198,7 +5539,11 @@ var ZoteroVim = {
 
   _mainOpenPDF(win, winState) {
     try {
-      const items = win.ZoteroPane.getSelectedItems();
+      let items = win.ZoteroPane.getSelectedItems();
+      if (!items.length) {
+        this._mainEnsureItemsSelection(win.ZoteroPane?.itemsView);
+        items = win.ZoteroPane.getSelectedItems();
+      }
       if (!items.length) { this._mainShowStatus(win, '✗ No item selected'); return; }
       const item = items[0];
       let attID;

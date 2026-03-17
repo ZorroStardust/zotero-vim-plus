@@ -6887,6 +6887,7 @@ var ZoteroVim = {
       for (const fn of directFns) {
         if (typeof tabs[fn] === 'function') {
           tabs[fn]();
+          this._postMainTabSwitchRecover(win);
           return;
         }
       }
@@ -6911,14 +6912,36 @@ var ZoteroVim = {
       for (const fn of selectFns) {
         if (typeof tabs[fn] === 'function') {
           tabs[fn](nextID);
+          this._postMainTabSwitchRecover(win);
           return;
         }
       }
 
       tabs.selectedID = nextID;
+      this._postMainTabSwitchRecover(win);
     } catch (e) {
       Zotero.debug('[ZoteroVim] _mainCycleTab error: ' + e);
     }
+  },
+
+  _postMainTabSwitchRecover(win) {
+    if (!win) return;
+
+    const run = () => {
+      try { this._rescanSelectedReader(win); } catch (_) {}
+      try {
+        const winState = this._mainWindowState.get(win);
+        if (winState) this._syncMainContextNoteListener(win, winState);
+      } catch (_) {}
+      void this._focusReaderContent(win);
+    };
+
+    // Tab content (especially large readers) may need multiple ticks to become focusable.
+    setTimeout(run, 0);
+    setTimeout(run, 60);
+    setTimeout(run, 180);
+    setTimeout(run, 420);
+    setTimeout(run, 900);
   },
 
   _mainFocusSearch(win) {
@@ -7353,10 +7376,12 @@ var ZoteroVim = {
       for (const fn of selectFns) {
         if (typeof tabs[fn] === 'function') {
           tabs[fn](tabID);
+          this._postMainTabSwitchRecover(win);
           return;
         }
       }
       tabs.selectedID = tabID;
+      this._postMainTabSwitchRecover(win);
     } catch (e) {
       Zotero.debug('[ZoteroVim] _mainSelectTab error: ' + e);
     }

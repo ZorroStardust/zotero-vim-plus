@@ -160,7 +160,6 @@ Cursor ──v──▶ Visual ──v/Escape──▶ Normal
 | Key | Action |
 |-----|--------|
 | `<space>e` | Toggle custom outline explorer overlay |
-| `Ctrl+h` | Focus / reopen outline explorer overlay |
 | `j` / `k` | Move outline selection down / up |
 | `Ctrl+d` / `Ctrl+u` | Fast move down / up |
 | `l` | Expand selected outline node |
@@ -178,6 +177,17 @@ item also shows a hint label.
 If the number of items is small the hints are single characters; otherwise they
 expand to two-character hints. Typing a hint only changes the current selection;
 you still press `Enter` to jump.
+
+#### Reader split view
+
+| Key | Action |
+|-----|--------|
+| `<space>-` | Toggle horizontal split (top/bottom) |
+| `<space>|` | Toggle vertical split (left/right) |
+| `Ctrl+h` | Focus split pane to the left (or toggle pane in horizontal split) |
+| `Ctrl+j` | Focus split pane below (or toggle pane in vertical split) |
+| `Ctrl+k` | Focus split pane above (or toggle pane in vertical split) |
+| `Ctrl+l` | Focus split pane to the right (or toggle pane in horizontal split) |
 
 #### Viewport positioning (like Vim's z commands)
 
@@ -466,6 +476,12 @@ Open **Edit → Preferences** (macOS: **Zotero → Settings**) and navigate to t
 | `mainTabPick` | Open tab picker for currently open Zotero tabs |
 | `toggleReaderSidebarOutline` | Toggle the custom outline explorer overlay |
 | `focusReaderSidebar` | Focus or reopen the custom outline explorer overlay |
+| `toggleReaderSplitHorizontal` | Toggle reader horizontal split view |
+| `toggleReaderSplitVertical` | Toggle reader vertical split view |
+| `focusReaderSplitLeft` | Focus left split pane (or toggle in horizontal split) |
+| `focusReaderSplitDown` | Focus lower split pane (or toggle in vertical split) |
+| `focusReaderSplitUp` | Focus upper split pane (or toggle in vertical split) |
+| `focusReaderSplitRight` | Focus right split pane (or toggle in horizontal split) |
 
 ---
 

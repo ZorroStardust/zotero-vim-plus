@@ -72,10 +72,15 @@ var ZoteroVim = {
     'normal:i':       'enterInsert',
     'normal:J':       'mainPrevTab',
     'normal:K':       'mainNextTab',
-    'normal:ctrl+h':  'focusReaderSidebar',
+    'normal:ctrl+h':  'focusReaderSplitLeft',
+    'normal:ctrl+j':  'focusReaderSplitDown',
+    'normal:ctrl+k':  'focusReaderSplitUp',
+    'normal:ctrl+l':  'focusReaderSplitRight',
     'normal:escape':  'clearSearch',
     // Normal mode — space-chord bindings (delegate to main window)
     'normal: e':   'toggleReaderSidebarOutline',
+    'normal: -':   'toggleReaderSplitHorizontal',
+    'normal: |':   'toggleReaderSplitVertical',
     'normal: ff':  'mainFuzzyAll',
     'normal: fb':  'mainFuzzyCollection',
     'normal: bj':  'mainTabPick',
@@ -435,13 +440,19 @@ var ZoteroVim = {
       _outlineExplorerOverlay: null,
       _outlineExplorerList: null,
       _outlineExplorerStatus: null,
+      activePdfWin: pdfWin,
+      _pdfViewHandlers: new Map(),
+      _pdfViewSyncTimer: null,
       reader: reader,       // reference for direct annotation creation
       pdfWin: pdfWin,       // stored for _setMode → _clearVisualHints
       cleanup: () => {},
       executeAction: null,  // set below
     };
     this._readerState.set(instanceID, state);
-    state.executeAction = (action, count) => this._executeAction(action, reader, state, pdfWin, count);
+    state.executeAction = (action, count) => {
+      const activePdfWin = state.activePdfWin || this._activeReaderPdfWin(reader, pdfWin) || pdfWin;
+      this._executeAction(action, reader, state, activePdfWin, count);
+    };
     if (reader.itemID) {
       this._readerStateByItemID.set(reader.itemID, state);
     }
@@ -453,37 +464,10 @@ var ZoteroVim = {
 
     // Force text-layer spans to be selectable and show selection highlight.
     this._injectSelectionCSS(pdfWin);
-
-    const keyHandler = (e) => this._onKeyDown(e, reader, state, pdfWin);
-    const keyUpHandler = (e) => this._onKeyUp(e, state, pdfWin);
-    const blurHandler = () => this._stopSmoothHoldScroll(state, pdfWin);
-    // Register on the WINDOW (not document) so we capture keys before PDF.js's
-    // own window-level keydown handlers (which handle j/k scrolling etc.).
-    pdfWin.addEventListener('keydown', keyHandler, true);
-    pdfWin.addEventListener('keyup', keyUpHandler, true);
-    pdfWin.addEventListener('blur', blurHandler, true);
-
-    // Clear cached params when selection becomes collapsed.
-    const selectionHandler = () => {
-      try {
-        const sel = pdfWin.getSelection?.();
-        if (!sel || sel.isCollapsed) state.selectionParams = null;
-      } catch (_) {}
-    };
-    pdfWin.document.addEventListener('selectionchange', selectionHandler);
-
-    // Re-position the visual cursor when the user scrolls the PDF.
-    const scrollHandler = () => {
-      if (state.mode === 'visual' || state.mode === 'cursor') {
-        this._updateVisualCursor(state, pdfWin, { autoPan: false });
-      }
-    };
-    let scrollEl = null;
-    try {
-      scrollEl = pdfWin.document.getElementById('viewerContainer') ||
-                 pdfWin.document.querySelector('.pdfViewer');
-      if (scrollEl) scrollEl.addEventListener('scroll', scrollHandler, { passive: true });
-    } catch (_) {}
+    this._syncReaderPdfViewListeners(reader, state);
+    state._pdfViewSyncTimer = setInterval(() => {
+      this._syncReaderPdfViewListeners(reader, state);
+    }, 800);
 
     // ── Outer reader.html: Escape returns from annotation comment editing ──
     // When the user focuses a comment textarea (in the outer reader.html doc),
@@ -499,7 +483,12 @@ var ZoteroVim = {
         e.stopPropagation();
         active.blur();
         this._setMode(state, 'normal');
-        setTimeout(() => { try { pdfWin.focus(); } catch (_) {} }, 30);
+        setTimeout(() => {
+          try {
+            const targetWin = this._activeReaderPdfWin(reader, pdfWin) || pdfWin;
+            targetWin.focus();
+          } catch (_) {}
+        }, 30);
       }
     };
     const outerKeyHandler = (e) => {
@@ -511,9 +500,10 @@ var ZoteroVim = {
       const keyStr = this._keyString(e);
       if (!keyStr) return;
       const shouldHandle = state.sidebarNavActive || state.outlineExplorerOpen
-        || !!state.keyBuffer || keyStr === ' ' || keyStr === 'ctrl+h' || keyStr === 'escape';
+        || !!state.keyBuffer || keyStr === ' ' || keyStr === 'escape';
       if (!shouldHandle) return;
-      this._onKeyDown(e, reader, state, pdfWin);
+      const activePdfWin = this._activeReaderPdfWin(reader, pdfWin) || pdfWin;
+      this._onKeyDown(e, reader, state, activePdfWin);
     };
     if (outerDoc) {
       outerDoc.addEventListener('keydown', outerEscapeHandler, true);
@@ -523,11 +513,8 @@ var ZoteroVim = {
     state.cleanup = () => {
       this._stopSmoothHoldScroll(state, pdfWin);
       this._closeReaderOutlineExplorer(state);
-      pdfWin.removeEventListener('keydown', keyHandler, true);
-      pdfWin.removeEventListener('keyup', keyUpHandler, true);
-      pdfWin.removeEventListener('blur', blurHandler, true);
-      pdfWin.document.removeEventListener('selectionchange', selectionHandler);
-      if (scrollEl) scrollEl.removeEventListener('scroll', scrollHandler, { passive: true });
+      clearInterval(state._pdfViewSyncTimer);
+      this._clearReaderPdfViewListeners(state);
       if (outerDoc) outerDoc.removeEventListener('keydown', outerEscapeHandler, true);
       if (outerDoc) outerDoc.removeEventListener('keydown', outerKeyHandler, true);
       state.indicatorEl?.remove();
@@ -535,6 +522,80 @@ var ZoteroVim = {
       clearTimeout(state.keyTimeout);
       if (reader.itemID) this._readerStateByItemID.delete(reader.itemID);
     };
+  },
+
+  _activeReaderPdfWin(reader, fallback = null) {
+    const focusedWin = Services.focus?.focusedWindow;
+    const primaryWin = reader?._internalReader?._primaryView?._iframeWindow || fallback;
+    const secondaryWin = reader?._internalReader?._secondaryView?._iframeWindow;
+    if (focusedWin === secondaryWin) return secondaryWin;
+    if (focusedWin === primaryWin) return primaryWin;
+    return primaryWin || secondaryWin || fallback;
+  },
+
+  _syncReaderPdfViewListeners(reader, state) {
+    if (!state?._pdfViewHandlers) return;
+
+    const primaryWin = reader?._internalReader?._primaryView?._iframeWindow;
+    const secondaryWin = reader?._internalReader?._secondaryView?._iframeWindow;
+    const wantedWins = [primaryWin, secondaryWin].filter(Boolean);
+
+    for (const [viewWin, handlers] of state._pdfViewHandlers.entries()) {
+      if (wantedWins.includes(viewWin)) continue;
+      try { viewWin.removeEventListener('keydown', handlers.keyDown, true); } catch (_) {}
+      try { viewWin.removeEventListener('keyup', handlers.keyUp, true); } catch (_) {}
+      try { viewWin.removeEventListener('blur', handlers.blur, true); } catch (_) {}
+      try { viewWin.document.removeEventListener('selectionchange', handlers.selection); } catch (_) {}
+      try { handlers.scrollEl?.removeEventListener('scroll', handlers.scroll, { passive: true }); } catch (_) {}
+      state._pdfViewHandlers.delete(viewWin);
+    }
+
+    for (const viewWin of wantedWins) {
+      if (state._pdfViewHandlers.has(viewWin)) continue;
+
+      this._injectSelectionCSS(viewWin);
+      const handlers = {
+        keyDown: (e) => this._onKeyDown(e, reader, state, viewWin),
+        keyUp: (e) => this._onKeyUp(e, state, viewWin),
+        blur: () => this._stopSmoothHoldScroll(state, viewWin),
+        selection: () => {
+          try {
+            const sel = viewWin.getSelection?.();
+            if (!sel || sel.isCollapsed) state.selectionParams = null;
+          } catch (_) {}
+        },
+        scroll: () => {
+          if (state.mode === 'visual' || state.mode === 'cursor') {
+            this._updateVisualCursor(state, viewWin, { autoPan: false });
+          }
+        },
+        scrollEl: null,
+      };
+
+      try { viewWin.addEventListener('keydown', handlers.keyDown, true); } catch (_) {}
+      try { viewWin.addEventListener('keyup', handlers.keyUp, true); } catch (_) {}
+      try { viewWin.addEventListener('blur', handlers.blur, true); } catch (_) {}
+      try { viewWin.document.addEventListener('selectionchange', handlers.selection); } catch (_) {}
+      try {
+        handlers.scrollEl = viewWin.document.getElementById('viewerContainer')
+          || viewWin.document.querySelector('.pdfViewer');
+        handlers.scrollEl?.addEventListener('scroll', handlers.scroll, { passive: true });
+      } catch (_) {}
+
+      state._pdfViewHandlers.set(viewWin, handlers);
+    }
+  },
+
+  _clearReaderPdfViewListeners(state) {
+    if (!state?._pdfViewHandlers) return;
+    for (const [viewWin, handlers] of state._pdfViewHandlers.entries()) {
+      try { viewWin.removeEventListener('keydown', handlers.keyDown, true); } catch (_) {}
+      try { viewWin.removeEventListener('keyup', handlers.keyUp, true); } catch (_) {}
+      try { viewWin.removeEventListener('blur', handlers.blur, true); } catch (_) {}
+      try { viewWin.document.removeEventListener('selectionchange', handlers.selection); } catch (_) {}
+      try { handlers.scrollEl?.removeEventListener('scroll', handlers.scroll, { passive: true }); } catch (_) {}
+    }
+    state._pdfViewHandlers.clear();
   },
 
   // ── Mode indicator ────────────────────────────────────────────────────────
@@ -745,6 +806,8 @@ var ZoteroVim = {
   },
 
   _onKeyDown(event, reader, state, pdfWin) {
+    state.activePdfWin = pdfWin || state.activePdfWin;
+
     if (state.outlineExplorerOpen) {
       if (this._onReaderOutlineExplorerKeyDown(event, reader, state, pdfWin)) {
         return;
@@ -1061,6 +1124,19 @@ var ZoteroVim = {
         case 'mainPrevTab':
         case 'mainNextTab':
           this._delegateToMainWindow(action, count); break;
+
+        case 'toggleReaderSplitHorizontal':
+          this._toggleReaderSplit(state, reader, 'horizontal'); break;
+        case 'toggleReaderSplitVertical':
+          this._toggleReaderSplit(state, reader, 'vertical'); break;
+        case 'focusReaderSplitLeft':
+          this._focusReaderSplit(state, reader, 'left', pdfWin); break;
+        case 'focusReaderSplitDown':
+          this._focusReaderSplit(state, reader, 'down', pdfWin); break;
+        case 'focusReaderSplitUp':
+          this._focusReaderSplit(state, reader, 'up', pdfWin); break;
+        case 'focusReaderSplitRight':
+          this._focusReaderSplit(state, reader, 'right', pdfWin); break;
 
         default: Zotero.debug('[ZoteroVim] Unknown action: ' + action);
       }
@@ -4998,6 +5074,82 @@ var ZoteroVim = {
     if (!entry) return;
     const [mainWin, mainState] = entry;
     this._executeMainAction(action, mainWin, mainState, count);
+  },
+
+  _toggleReaderSplit(state, reader, orientation) {
+    if (!reader) {
+      this._showStatus(state, '✗ reader not ready', 1200);
+      return;
+    }
+
+    const method = orientation === 'vertical' ? 'toggleVerticalSplit' : 'toggleHorizontalSplit';
+    const ir = reader._internalReader;
+    let ok = false;
+
+    try {
+      if (typeof reader[method] === 'function') {
+        reader[method]();
+        ok = true;
+      } else if (typeof ir?.[method] === 'function') {
+        ir[method]();
+        ok = true;
+      }
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] _toggleReaderSplit ' + method + ' error: ' + e);
+    }
+
+    if (!ok) {
+      this._showStatus(state, '✗ split unsupported', 1400);
+      return;
+    }
+
+    setTimeout(() => this._syncReaderPdfViewListeners(reader, state), 60);
+    setTimeout(() => this._syncReaderPdfViewListeners(reader, state), 220);
+
+    this._showStatus(state, orientation === 'vertical' ? '→ split vertical' : '→ split horizontal', 900);
+  },
+
+  _focusReaderSplit(state, reader, direction, pdfWin) {
+    const ir = reader?._internalReader;
+    const splitType = String(ir?.splitType || '');
+    if (!reader || !ir || !['vertical', 'horizontal'].includes(splitType)) {
+      this._showStatus(state, '✗ split inactive', 1200);
+      return;
+    }
+
+    const primaryWin = ir._primaryView?._iframeWindow || pdfWin;
+    const secondaryWin = ir._secondaryView?._iframeWindow;
+    if (!primaryWin || !secondaryWin) {
+      this._showStatus(state, '✗ split view unavailable', 1400);
+      return;
+    }
+
+    const focusedWin = Services.focus?.focusedWindow;
+    let current = null;
+    if (focusedWin === secondaryWin) current = 'secondary';
+    else if (focusedWin === primaryWin || focusedWin === pdfWin) current = 'primary';
+
+    let target = null;
+    if (splitType === 'vertical') {
+      if (direction === 'left') target = 'primary';
+      else if (direction === 'right') target = 'secondary';
+      else target = current === 'secondary' ? 'primary' : 'secondary';
+    } else {
+      if (direction === 'up') target = 'primary';
+      else if (direction === 'down') target = 'secondary';
+      else target = current === 'secondary' ? 'primary' : 'secondary';
+    }
+
+    const targetWin = target === 'secondary' ? secondaryWin : primaryWin;
+    try {
+      state.activePdfWin = targetWin;
+      targetWin.focus();
+      targetWin.document?.body?.focus?.();
+      this._showStatus(state, target === 'secondary' ? '▶ split B' : '▶ split A', 700);
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] _focusReaderSplit error: ' + e);
+      this._showStatus(state, '✗ focus failed', 1200);
+    }
   },
 
   _mainNavigate(win, winState, dir, count) {

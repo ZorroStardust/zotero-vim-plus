@@ -170,10 +170,12 @@ prefer Zotero's right-side note editor so you can read and edit side by side.
 | `Ctrl+j` / `Ctrl+k` | Switch between current-item notes and all-notes sections in the left list |
 | `Ctrl+l` | Move focus to right preview pane |
 | `Ctrl+h` | Move focus back to left note list |
-| `Shift+N` | Create a new child note under current selected item and open note editor |
+| `n` | Create a new child note under the selected note's parent item and open in right-side note editor |
+| `Shift+N` | Create a new child note under current selected item and open in a new note tab |
 | `gg` / `G` | Jump to first / last note in overlay |
 | Hint letters | Quick focus by hint label (single or double key) |
-| `Enter` | Open selected note; in reader tabs, prefer opening it in the right-side note editor |
+| `Enter` | Open selected note in right-side note editor (reader tabs preferred) |
+| `Shift+Enter` | Open selected note in a new note tab |
 | `Escape` | Close notes layout overlay |
 
 #### Outline explorer

@@ -7224,10 +7224,21 @@ var ZoteroVim = {
           e.stopPropagation();
           this._closeMainNotesLayout(win, winState);
           return;
+        case 'n':
+          e.preventDefault();
+          e.stopPropagation();
+          void this._mainNotesCreateAndOpen(win, winState, { usePreviousItem: true, openTarget: 'context' });
+          return;
         case 'N':
           e.preventDefault();
           e.stopPropagation();
-          void this._mainNotesCreateAndOpen(win, winState);
+          void this._mainNotesCreateAndOpen(win, winState, { usePreviousItem: false, openTarget: 'tab' });
+          return;
+        case 'enter':
+        case 'return':
+          e.preventDefault();
+          e.stopPropagation();
+          void this._mainNotesOpenSelected(win, winState, { openTarget: e.shiftKey ? 'tab' : 'context' });
           return;
         case 'ctrl+h':
           e.preventDefault();
@@ -7263,14 +7274,6 @@ var ZoteroVim = {
       }
     }
 
-    const hintKey = this._mainNotesHintKey(e);
-    if (hintKey) {
-      e.preventDefault();
-      e.stopPropagation();
-      this._mainNotesSelectByHint(winState, hintKey);
-      return;
-    }
-
     if (keyStr === 'g') {
       e.preventDefault();
       e.stopPropagation();
@@ -7284,6 +7287,22 @@ var ZoteroVim = {
         winState._notesCmdTimer = setTimeout(() => this._clearMainNotesCmdBuffer(winState), 700);
         this._setMainNotesLayoutStatus(winState, 'g ... (gg top)');
       }
+      return;
+    }
+
+    // 'n' is a command key (create note), not a hint key.
+    if (keyStr === 'n') {
+      e.preventDefault();
+      e.stopPropagation();
+      void this._mainNotesCreateAndOpen(win, winState, { usePreviousItem: true, openTarget: 'context' });
+      return;
+    }
+
+    const hintKey = this._mainNotesHintKey(e);
+    if (hintKey) {
+      e.preventDefault();
+      e.stopPropagation();
+      this._mainNotesSelectByHint(winState, hintKey);
       return;
     }
 
@@ -7361,12 +7380,12 @@ var ZoteroVim = {
       case 'return':
         e.preventDefault();
         e.stopPropagation();
-        void this._mainNotesOpenSelected(win, winState);
+        void this._mainNotesOpenSelected(win, winState, { openTarget: e.shiftKey ? 'tab' : 'context' });
         return;
       case 'N':
         e.preventDefault();
         e.stopPropagation();
-        void this._mainNotesCreateAndOpen(win, winState);
+        void this._mainNotesCreateAndOpen(win, winState, { usePreviousItem: false, openTarget: 'tab' });
         return;
       default:
         this._clearMainNotesHintBuffer(winState, false);
@@ -7375,23 +7394,22 @@ var ZoteroVim = {
     }
   },
 
-  async _mainNotesCreateAndOpen(win, winState) {
+  async _mainNotesCreateAndOpen(win, winState, opts = null) {
     try {
-      const createdNoteID = await this._createMainCurrentChildNote(win);
+      const usePreviousItem = !!opts?.usePreviousItem;
+      const openTarget = (opts?.openTarget === 'tab') ? 'tab' : 'context';
+      const createdNoteID = usePreviousItem
+        ? await this._createMainPreviousChildNote(win, winState)
+        : await this._createMainCurrentChildNote(win);
       if (!createdNoteID) return;
 
-      if (await this._openNoteInReaderContextPane(win, createdNoteID)) {
+      if (openTarget === 'context' && await this._openNoteInReaderContextPane(win, createdNoteID)) {
         this._closeMainNotesLayout(win, winState);
         this._mainShowStatus(win, '✓ new child note', 1200);
         return;
       }
 
-      try { await win?.ZoteroPane?.selectItem?.(createdNoteID); } catch (_) {}
-      if (typeof win?.ZoteroPane?.openNote === 'function') {
-        await win.ZoteroPane.openNote(createdNoteID, { openInWindow: false });
-      } else {
-        await Zotero.Notes.open(createdNoteID, null, { openInWindow: false });
-      }
+      await this._openNoteByTarget(win, createdNoteID, { openInWindow: false });
       this._closeMainNotesLayout(win, winState);
       this._mainShowStatus(win, '✓ new child note', 1200);
     } catch (e) {
@@ -7430,7 +7448,7 @@ var ZoteroVim = {
     title.textContent = 'Notes Layout';
     title.style.cssText = 'font-weight:700;letter-spacing:0.2px;';
     const hint = h('div');
-    hint.textContent = 'j/k move  ·  Ctrl+d/u fast  ·  Ctrl+j/k section  ·  Ctrl+h/l list/preview  ·  Shift+N new  ·  Enter open';
+    hint.textContent = 'j/k move  ·  Ctrl+d/u fast  ·  Ctrl+j/k section  ·  Ctrl+h/l list/preview  ·  n/N new  ·  Enter/Shift+Enter open';
     hint.style.cssText = 'font-size:11px;color:#9db0c9;';
     header.appendChild(title);
     header.appendChild(hint);
@@ -7571,7 +7589,7 @@ var ZoteroVim = {
   _setMainNotesLayoutStatus(winState, text = null) {
     if (!winState?._notesStatusEl) return;
     winState._notesStatusEl.textContent = text ||
-      'j/k move  ·  Ctrl+d/u fast  ·  Ctrl+j/k section  ·  Ctrl+h/l list/preview  ·  Shift+N new  ·  Enter open';
+      'j/k move  ·  Ctrl+d/u fast  ·  Ctrl+j/k section  ·  Ctrl+h/l list/preview  ·  n/N new  ·  Enter/Shift+Enter open';
   },
 
   _mainNotesSetFocusPane(winState, pane) {
@@ -7753,30 +7771,41 @@ var ZoteroVim = {
     }
   },
 
-  async _mainNotesOpenSelected(win, winState) {
+  async _mainNotesOpenSelected(win, winState, opts = null) {
     const rows = winState._notesNavRows || [];
     if (!rows.length) return;
     const selected = rows[winState._notesSelected]?.row;
     const noteID = selected?.id;
     if (!noteID) return;
+    const openTarget = (opts?.openTarget === 'tab') ? 'tab' : 'context';
 
     try {
-      if (await this._openNoteInReaderContextPane(win, noteID)) {
+      if (openTarget === 'context' && await this._openNoteInReaderContextPane(win, noteID)) {
         this._closeMainNotesLayout(win, winState);
         return;
       }
 
-      try { await win?.ZoteroPane?.selectItem?.(noteID); } catch (_) {}
-
-      if (typeof win?.ZoteroPane?.openNote === 'function') {
-        await win.ZoteroPane.openNote(noteID, { openInWindow: false });
-      } else {
-        await Zotero.Notes.open(noteID, null, { openInWindow: false });
-      }
+      await this._openNoteByTarget(win, noteID, { openInWindow: false });
       this._closeMainNotesLayout(win, winState);
     } catch (e) {
       Zotero.debug('[ZoteroVim] _mainNotesOpenSelected error: ' + e);
       this._mainShowStatus(win, '✗ open note failed');
+    }
+  },
+
+  async _openNoteByTarget(win, noteID, opts = null) {
+    try {
+      const openInWindow = !!opts?.openInWindow;
+      try { await win?.ZoteroPane?.selectItem?.(noteID); } catch (_) {}
+      if (typeof win?.ZoteroPane?.openNote === 'function') {
+        await win.ZoteroPane.openNote(noteID, { openInWindow: !!openInWindow });
+      } else {
+        await Zotero.Notes.open(noteID, null, { openInWindow: !!openInWindow });
+      }
+      return true;
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] _openNoteByTarget error: ' + e);
+      throw e;
     }
   },
 
@@ -7815,6 +7844,50 @@ var ZoteroVim = {
       return note.id || null;
     } catch (e) {
       Zotero.debug('[ZoteroVim] _createMainCurrentChildNote error: ' + e);
+      this._mainShowStatus(win, '✗ create note failed');
+      return null;
+    }
+  },
+
+  _getMainNotesSelectedBaseItem(winState) {
+    try {
+      const rows = winState?._notesNavRows || [];
+      const selected = rows[winState?._notesSelected]?.row;
+      const noteID = selected?.id;
+      if (!noteID) return null;
+      const note = Zotero.Items.get(noteID);
+      if (!note?.isNote?.()) return null;
+      let baseItem = note.parentID ? Zotero.Items.get(note.parentID) : null;
+      if (baseItem?.isAttachment?.() && baseItem.parentItemID) {
+        baseItem = Zotero.Items.get(baseItem.parentItemID) || baseItem;
+      }
+      return baseItem || null;
+    } catch (_) {
+      return null;
+    }
+  },
+
+  async _createMainPreviousChildNote(win, winState) {
+    const previousBaseItem = this._getMainNotesSelectedBaseItem(winState);
+    if (!previousBaseItem) {
+      this._mainShowStatus(win, '✗ no previous item from selected note');
+      return null;
+    }
+
+    if (previousBaseItem?.isNote?.() || previousBaseItem?.isAttachment?.()) {
+      this._mainShowStatus(win, '✗ selected note has no valid parent item');
+      return null;
+    }
+
+    try {
+      const note = new Zotero.Item('note');
+      note.libraryID = previousBaseItem.libraryID || Zotero.Libraries.userLibraryID;
+      note.parentID = previousBaseItem.id;
+      note.setNote('<p></p>');
+      await note.saveTx();
+      return note.id || null;
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] _createMainPreviousChildNote error: ' + e);
       this._mainShowStatus(win, '✗ create note failed');
       return null;
     }

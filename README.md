@@ -241,6 +241,8 @@ note tab), the plugin provides a minimal Vim-like layer.
 | `diw` / `yiw` / `ciw` | Inner-word text object (delete/yank/change) |
 | `p` / `P` | Paste last yanked/deleted text after / before caret |
 | `u` / `Ctrl+r` | Undo / redo bridge |
+| `<space>...` | Main-window leader bindings are available in note Normal mode (for example `<space>n`, `<space>ff`) |
+| `Shift+J` / `Shift+K` | Switch to previous / next tab from note Normal mode |
 
 `dd`, `yy`, and `x` support count prefixes (for example `3dd`, `5yy`, `4x`).
 Operator+motion combos also support counts (for example `3dw`, `2y$`).

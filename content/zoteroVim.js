@@ -4993,6 +4993,7 @@ var ZoteroVim = {
       _contextNoteEditorKeyHandler: null,
       _contextNoteMode: 'normal',
       _contextNoteKeyBuffer: '',
+      _contextNoteMainBuffer: '',
       _contextNoteCountBuffer: '',
       _contextNoteKeyTimeout: null,
       _contextNoteLastYank: '',
@@ -5563,9 +5564,53 @@ var ZoteroVim = {
   _clearMainContextNoteKeyState(winState) {
     if (!winState) return;
     winState._contextNoteKeyBuffer = '';
+    winState._contextNoteMainBuffer = '';
     winState._contextNoteCountBuffer = '';
     clearTimeout(winState._contextNoteKeyTimeout);
     winState._contextNoteKeyTimeout = null;
+  },
+
+  _handleMainBindingsInNoteNormal(keyStr, win, winState) {
+    if (!winState || !keyStr) return false;
+
+    const bindings = this.getBindings();
+    const modePrefix = 'main:';
+    const mainBuffer = String(winState._contextNoteMainBuffer || '');
+
+    // Keep Shift+J/K global tab switching available in note Normal mode.
+    if (!mainBuffer && (keyStr === 'J' || keyStr === 'K')) {
+      const action = bindings[modePrefix + keyStr];
+      if (action === 'mainPrevTab' || action === 'mainNextTab') {
+        this._clearMainContextNoteKeyState(winState);
+        this._executeMainAction(action, win, winState, 1);
+        return true;
+      }
+    }
+
+    // Bridge <space> leader bindings from main mode while focus is in note editor.
+    if (mainBuffer || keyStr === ' ') {
+      const candidate = mainBuffer + keyStr;
+      const possible = Object.keys(bindings).filter((k) => this._bindingMatchesPrefix(k, modePrefix, candidate));
+      const exact = bindings[modePrefix + candidate];
+
+      if (possible.length === 0 && !exact) {
+        this._clearMainContextNoteKeyState(winState);
+        return true;
+      }
+
+      if (!exact) {
+        winState._contextNoteMainBuffer = candidate;
+        clearTimeout(winState._contextNoteKeyTimeout);
+        winState._contextNoteKeyTimeout = setTimeout(() => this._clearMainContextNoteKeyState(winState), 1200);
+        return true;
+      }
+
+      this._clearMainContextNoteKeyState(winState);
+      this._executeMainAction(exact, win, winState, 1);
+      return true;
+    }
+
+    return false;
   },
 
   _handleMainContextNoteNormalKey(event, keyStr, win, winState) {
@@ -5573,6 +5618,10 @@ var ZoteroVim = {
     if (!editableEl) {
       this._clearMainContextNoteKeyState(winState);
       return false;
+    }
+
+    if (this._handleMainBindingsInNoteNormal(keyStr, win, winState)) {
+      return true;
     }
 
     if (/^\d$/.test(keyStr) && (keyStr !== '0' || winState._contextNoteCountBuffer)) {

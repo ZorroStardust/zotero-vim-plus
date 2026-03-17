@@ -246,6 +246,7 @@ function _zvInit() {
   // ── Modes ──────────────────────────────────────────────────────────────────
   const visualCb = document.getElementById("zv-visual-enabled");
   const insertCb = document.getElementById("zv-insert-enabled");
+  const noteEditorCb = document.getElementById("zv-note-editor-enabled");
 
   if (visualCb) {
     visualCb.checked = _zvGet("mode.visual.enabled", true);
@@ -254,6 +255,10 @@ function _zvInit() {
   if (insertCb) {
     insertCb.checked = _zvGet("mode.insert.enabled", true);
     insertCb.addEventListener("change", () => _zvSet("mode.insert.enabled", insertCb.checked));
+  }
+  if (noteEditorCb) {
+    noteEditorCb.checked = _zvGet("noteEditor.enabled", true);
+    noteEditorCb.addEventListener("change", () => _zvSet("noteEditor.enabled", noteEditorCb.checked));
   }
 
   // ── Scroll step ────────────────────────────────────────────────────────────

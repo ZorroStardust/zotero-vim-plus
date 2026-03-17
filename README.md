@@ -469,6 +469,7 @@ Open **Edit → Preferences** (macOS: **Zotero → Settings**) and navigate to t
 - Click **Apply bindings** to save keybinding changes.
 - Scroll behavior settings have a separate **Apply configuration** button.
 - Highlight colour and mode-enable toggles save automatically on change.
+- Note editor Vim mode can be turned on or off independently from the Preferences panel.
 - Click **Reset to defaults** to restore all bindings to their defaults.
 
 ### Action reference

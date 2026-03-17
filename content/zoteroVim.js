@@ -296,6 +296,10 @@ var ZoteroVim = {
     return this.COLORS[name] || this.COLORS.yellow;
   },
 
+  isNoteEditorVimEnabled() {
+    return this.getPref('noteEditor.enabled', true);
+  },
+
   isModeEnabled(mode) {
     if (mode === 'normal') return true;
     return this.getPref('mode.' + mode + '.enabled', true);
@@ -5040,7 +5044,7 @@ var ZoteroVim = {
 
     // In standalone note tabs, route keys to note-vim first.
     // This prevents main item-list handlers from stealing hjkl/backspace.
-    if (this._isStandaloneNoteTabSelected(win)) {
+    if (this.isNoteEditorVimEnabled() && this._isStandaloneNoteTabSelected(win)) {
       const noteMode = String(winState?._contextNoteMode || 'normal');
       const keyStr = this._keyString(e);
 
@@ -5464,6 +5468,11 @@ var ZoteroVim = {
   },
 
   _syncMainContextNoteListener(win, winState) {
+    if (!this.isNoteEditorVimEnabled()) {
+      this._clearMainContextNoteListener(winState);
+      return;
+    }
+
     const noteWin = this._getActiveMainNoteEditorWindow(win);
     const noteDoc = noteWin?.document || null;
     if (noteWin === winState?._contextNoteEditorWin && noteDoc === winState?._contextNoteEditorDoc) return;
@@ -5483,6 +5492,7 @@ var ZoteroVim = {
 
   _onMainContextNoteKeyDown(event, win, winState) {
     if (!winState) return;
+    if (!this.isNoteEditorVimEnabled()) return;
     const keyStr = this._keyString(event);
     if (!keyStr) return;
 

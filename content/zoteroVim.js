@@ -5819,6 +5819,7 @@ var ZoteroVim = {
         const switched = this._noteSwitchToInsert(editableEl, placement);
         if (switched) {
           winState._contextNoteMode = 'insert';
+          this._syncNoteCursorVisualState(editableEl.ownerDocument || null, 'insert', editableEl);
           this._mainShowStatus(win, '-- NOTE INSERT --', 900);
         }
         return switched;
@@ -6280,15 +6281,157 @@ var ZoteroVim = {
 
   _noteOpenLine(editableEl, above = false) {
     const doc = editableEl.ownerDocument;
-    const sel = doc?.getSelection?.();
-    if (!sel || !sel.modify) return false;
     if (doc.activeElement !== editableEl) {
       try { editableEl.focus({ preventScroll: true }); } catch (_) { try { editableEl.focus(); } catch (_) {} }
     }
+
+    const tag = String(editableEl.tagName || '').toUpperCase();
+    if (tag === 'TEXTAREA' || tag === 'INPUT') {
+      return this._noteOpenLineInTextControl(editableEl, above);
+    }
+
+    if (editableEl.isContentEditable) {
+      return this._noteOpenLineInContentEditable(editableEl, above);
+    }
+
+    const sel = doc?.getSelection?.();
+    if (!sel || !sel.modify) return false;
     try {
       if (!sel.isCollapsed) sel.collapseToEnd();
       sel.modify('move', above ? 'backward' : 'forward', 'lineboundary');
       return this._noteInsertTextAtCaret(editableEl, '\n');
+    } catch (_) {
+      return false;
+    }
+  },
+
+  _noteOpenLineInTextControl(editableEl, above = false) {
+    try {
+      const el = editableEl;
+      const value = String(el.value || '');
+      const caret = Number(el.selectionStart || 0);
+      const lineStart = value.lastIndexOf('\n', Math.max(0, caret - 1)) + 1;
+      let lineEnd = value.indexOf('\n', caret);
+      if (lineEnd < 0) lineEnd = value.length;
+
+      const insertPos = above ? lineStart : lineEnd;
+      el.value = value.slice(0, insertPos) + '\n' + value.slice(insertPos);
+
+      const nextCaret = above ? insertPos : (insertPos + 1);
+      el.selectionStart = nextCaret;
+      el.selectionEnd = nextCaret;
+      return true;
+    } catch (_) {
+      return false;
+    }
+  },
+
+  _noteOpenLineInContentEditable(editableEl, above = false) {
+    const doc = editableEl?.ownerDocument;
+    const sel = doc?.getSelection?.();
+    if (!doc || !sel) return false;
+
+    try {
+      const lineEl = this._noteGetTopLevelLineNode(editableEl, sel);
+      const preferredTag = String(lineEl?.tagName || '').toUpperCase();
+      const newLine = this._noteCreateEmptyLineElement(doc, preferredTag);
+
+      if (lineEl && lineEl.parentNode === editableEl) {
+        if (above) {
+          editableEl.insertBefore(newLine, lineEl);
+        } else {
+          editableEl.insertBefore(newLine, lineEl.nextSibling);
+        }
+      } else if (above) {
+        editableEl.insertBefore(newLine, editableEl.firstChild);
+      } else {
+        editableEl.appendChild(newLine);
+      }
+
+      const range = doc.createRange();
+      range.selectNodeContents(newLine);
+      range.collapse(true);
+      sel.removeAllRanges();
+      sel.addRange(range);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  },
+
+  _noteGetTopLevelLineNode(editableEl, sel) {
+    if (!editableEl || !sel) return null;
+
+    let node = sel.focusNode || sel.anchorNode || null;
+    if (node && node.nodeType !== 1) node = node.parentElement;
+
+    while (node && node !== editableEl) {
+      if (node.parentNode === editableEl) return node;
+      node = node.parentNode;
+    }
+
+    if (sel.rangeCount) {
+      const range = sel.getRangeAt(0);
+      const container = range.startContainer;
+      if (container === editableEl) {
+        const offset = Math.max(0, Math.min(range.startOffset, editableEl.childNodes.length));
+        if (offset < editableEl.childNodes.length) return editableEl.childNodes[offset];
+        if (offset > 0) return editableEl.childNodes[offset - 1];
+      }
+    }
+
+    return null;
+  },
+
+  _noteCreateEmptyLineElement(doc, preferredTag = '') {
+    const allowedTags = new Set([
+      'P', 'DIV', 'LI', 'BLOCKQUOTE', 'PRE',
+      'H1', 'H2', 'H3', 'H4', 'H5', 'H6',
+    ]);
+    const tag = allowedTags.has(preferredTag) ? preferredTag.toLowerCase() : 'p';
+    const newLine = doc.createElement(tag);
+    newLine.appendChild(doc.createElement('br'));
+    return newLine;
+  },
+
+  _noteInsertParagraphAtCaret(editableEl) {
+    const doc = editableEl?.ownerDocument;
+    if (!doc) return false;
+    if (doc.activeElement !== editableEl) {
+      try { editableEl.focus({ preventScroll: true }); } catch (_) { try { editableEl.focus(); } catch (_) {} }
+    }
+
+    try {
+      if (!doc.queryCommandSupported || doc.queryCommandSupported('insertParagraph')) {
+        if (doc.execCommand('insertParagraph')) return true;
+      }
+    } catch (_) {}
+
+    try {
+      const winObj = doc.defaultView;
+      if (!winObj || !winObj.KeyboardEvent) return false;
+      const keyDown = new winObj.KeyboardEvent('keydown', {
+        key: 'Enter',
+        code: 'Enter',
+        bubbles: true,
+        cancelable: true,
+      });
+      const keyPress = new winObj.KeyboardEvent('keypress', {
+        key: 'Enter',
+        code: 'Enter',
+        bubbles: true,
+        cancelable: true,
+      });
+      const keyUp = new winObj.KeyboardEvent('keyup', {
+        key: 'Enter',
+        code: 'Enter',
+        bubbles: true,
+        cancelable: true,
+      });
+      editableEl.dispatchEvent(keyDown);
+      editableEl.dispatchEvent(keyPress);
+      editableEl.dispatchEvent(keyUp);
+      return true;
     } catch (_) {
       return false;
     }

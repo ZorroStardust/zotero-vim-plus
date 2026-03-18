@@ -1,5 +1,45 @@
 # Pending Issues
 
+## ZV-002: Note editor `o` / `O` still splits text after caret (shelved)
+
+- Status: Shelved (temporarily)
+- Reported on: 2026-03-18
+- Area: Note editor Vim emulation (`content/zoteroVim.js`)
+
+### Summary
+In note editor Normal mode, pressing `o` or `O` is intended to open a new line below/above and enter insert mode.
+Current behavior is still inconsistent in some editor DOM states: pressing `o`/`O` can move text after the caret to the new line (line split) rather than creating a clean empty line relative to the current logical line.
+
+### Reproduction
+1. Open a note editor and ensure Normal mode is active.
+2. Place caret in the middle of a line with text after the caret.
+3. Press `o` (or `O`).
+4. Observe the content after caret moving/splitting to a new line in affected states.
+
+### Expected Behavior
+- `o`: open a clean empty line below current logical line and enter insert mode.
+- `O`: open a clean empty line above current logical line and enter insert mode.
+- Neither command should split/move trailing text from the original line.
+
+### Actual Behavior
+- In some note editor structures, `o`/`O` still acts like a split at caret position.
+- Upper/lowercase behavior can also become indistinguishable in those states.
+
+### Notes From Previous Attempts
+- Added insert-mode cursor-state sync after `o`/`O` mode switch.
+- Added contenteditable-specific line insertion path and multiple fallbacks.
+- Tried top-level block insertion strategy, but issue is still reproducible.
+
+### Next Investigation Directions
+- Inspect real note editor DOM for the failing case (block structure, selection anchors, editor normalization after mutation).
+- Avoid synthetic fallback paths that trigger caret-position paragraph splits.
+- Prefer editor-native transaction/command API if available instead of raw DOM insertion.
+- Add debug traces around `o`/`O` command path to capture:
+  - selection anchor/focus node + offset
+  - resolved line/root nodes
+  - actual inserted node parent/position
+  - post-mutation normalized DOM
+
 ## ZV-001: `za` / `zo` / `zc` on collections tree is unstable (shelved)
 
 - Status: Shelved (temporarily)

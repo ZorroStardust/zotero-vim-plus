@@ -493,9 +493,19 @@ function _zvReadTable() {
   return result;
 }
 
+function _zvBindingsEqual(a, b) {
+  const keysA = Object.keys(a);
+  const keysB = Object.keys(b);
+  if (keysA.length !== keysB.length) return false;
+  for (const key of keysA) {
+    if (a[key] !== b[key]) return false;
+  }
+  return true;
+}
+
 function _zvSaveBindings() {
   const bindings = _zvReadTable();
-  const isDefault = JSON.stringify(bindings) === JSON.stringify(ZV_DEFAULT_BINDINGS);
+  const isDefault = _zvBindingsEqual(bindings, ZV_DEFAULT_BINDINGS);
   _zvSet("bindings", isDefault ? "" : JSON.stringify(bindings));
 }
 

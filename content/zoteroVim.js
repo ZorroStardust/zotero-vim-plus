@@ -401,7 +401,11 @@ var ZoteroVim = {
   // ── Reader injection ──────────────────────────────────────────────────────
 
   _waitAndInject(reader, attempts = 0) {
-    if (attempts > 100) return;
+    const id = reader?._instanceID;
+    if (attempts > 100) {
+      this._injectedReaders.delete(id);
+      return;
+    }
     let pdfWin;
     try { pdfWin = reader._internalReader?._primaryView?._iframeWindow; } catch (_) {}
     if (!pdfWin) {
@@ -465,8 +469,9 @@ var ZoteroVim = {
     };
     this._readerState.set(instanceID, state);
     state.executeAction = (action, count) => {
-      const activePdfWin = state.activePdfWin || this._activeReaderPdfWin(reader, pdfWin) || pdfWin;
-      this._executeAction(action, reader, state, activePdfWin, count);
+      const currentReader = state.reader;
+      const activePdfWin = state.activePdfWin || this._activeReaderPdfWin(currentReader, pdfWin) || pdfWin;
+      this._executeAction(action, currentReader, state, activePdfWin, count);
     };
     if (reader.itemID) {
       this._readerStateByItemID.set(reader.itemID, state);
@@ -1045,7 +1050,7 @@ var ZoteroVim = {
           if (count > 0) {
             try {
               const readerWin = reader._iframeWindow;
-              reader._internalReader.navigate(Cu.cloneInto({ pageIndex: count - 1 }, readerWin));
+              reader._internalReader?.navigate?.(Cu.cloneInto({ pageIndex: count - 1 }, readerWin));
               Zotero.debug('[ZoteroVim] navigate pageIndex=' + (count - 1));
             } catch (e) {
               Zotero.debug('[ZoteroVim] goToPage: ' + e); }
@@ -1702,7 +1707,7 @@ var ZoteroVim = {
       if (typeof resolvedPageIndex === 'number') {
         const readerWin = reader?._iframeWindow || pdfWin;
         const payload = Components.utils.cloneInto({ pageIndex: resolvedPageIndex }, readerWin);
-        reader?._internalReader?.navigate?.(payload);
+        await reader?._internalReader?.navigate?.(payload);
         return true;
       }
     } catch (e) {
@@ -4677,7 +4682,7 @@ var ZoteroVim = {
     try {
       const readerWin = reader._iframeWindow;
       const filter = Cu.cloneInto({ colors: color ? [color] : [] }, readerWin);
-      reader._internalReader.setFilter(filter);
+      reader._internalReader?.setFilter?.(filter);
       state.filterColor = color || null;
       const colorName = color
         ? (Object.entries(this.COLORS).find(([, v]) => v === color)?.[0] || color)
@@ -4868,17 +4873,18 @@ var ZoteroVim = {
     // Step 1: select the annotation (cloneInto to cross compartment boundary).
     // setSelectedAnnotations scrolls the sidebar to the annotation card,
     // shows the selection box in PDF, and auto-focuses the comment if empty.
+    const readerWin = reader?._iframeWindow;
     try {
-      if (typeof ir?.setSelectedAnnotations === 'function') {
-        ir.setSelectedAnnotations(Cu.cloneInto([key], reader._iframeWindow));
+      if (readerWin && typeof ir?.setSelectedAnnotations === 'function') {
+        ir.setSelectedAnnotations(Cu.cloneInto([key], readerWin));
         Zotero.debug('[ZoteroVim] _editAnnotation: setSelectedAnnotations OK');
       }
     } catch (e) {
       Zotero.debug('[ZoteroVim] _editAnnotation setSelectedAnnotations error: ' + e);
     }
     try {
-      if (typeof ir?.navigate === 'function') {
-        ir.navigate(Cu.cloneInto({ annotationID: key }, reader._iframeWindow));
+      if (readerWin && typeof ir?.navigate === 'function') {
+        ir.navigate(Cu.cloneInto({ annotationID: key }, readerWin));
       }
     } catch (_) {}
 
@@ -6999,8 +7005,9 @@ var ZoteroVim = {
         const atts = item.getAttachments()
           .map(id => Zotero.Items.get(id))
           .filter(a => a && a.isAttachment() && a.attachmentContentType === 'application/pdf');
-        if (!atts.length) { this._mainShowStatus(win, '✗ No PDF attachment'); return; }
-        attID = atts[0].id;
+        const firstPdf = atts[0];
+        if (!firstPdf) { this._mainShowStatus(win, '✗ No PDF attachment'); return; }
+        attID = firstPdf.id;
       }
       win.ZoteroPane.viewAttachment(attID);
       Zotero.debug('[ZoteroVim] _mainOpenPDF: attID=' + attID);

@@ -22,7 +22,7 @@ Vibe coded with Claude Sonnet 4.5.
 - [Modes](#modes)
 - [Default keybindings](#default-keybindings)
   - [Normal mode](#normal-mode)
-   - [Cursor mode](#cursor-mode)
+  - [Cursor mode](#cursor-mode)
   - [Visual mode](#visual-mode)
   - [Insert mode](#insert-mode)
 - [Annotation workflow](#annotation-workflow)
@@ -58,7 +58,7 @@ Vibe coded with Claude Sonnet 4.5.
 
 ## Requirements
 
-- Zotero 7 or 8 (the plugin uses the Zotero 7+ bootstrap API)
+- Zotero 7, 8, or 9 (the plugin uses the Zotero 7+ bootstrap API)
 - macOS, Linux, or Windows
 
 ---
@@ -81,8 +81,8 @@ old version automatically.
 ## Building from source
 
 ```bash
-git clone https://github.com/zotero-vim/zotero-vim.git
-cd zotero-vim
+git clone https://github.com/ZorroStardust/zotero-vim-plus.git
+cd zotero-vim-plus
 ./build.sh
 ```
 
@@ -109,7 +109,7 @@ zotero-vim/
 
 ## Modes
 
-The plugin operates in three modes, displayed in a small overlay in the
+The plugin operates in four modes, displayed in a small overlay in the
 bottom-right corner of the PDF viewer:
 
 | Mode | Indicator | Purpose |
@@ -164,6 +164,32 @@ Cursor ──v──▶ Visual ──v/Escape──▶ Normal
 > The plugin blocks Zotero's reader key forwarding for keys vim consumes, so
 > `l` (next page) never starts Read Aloud. To use Read Aloud, press `r`
 > (unbound in vim by default) or click the Read Aloud toolbar button.
+
+#### Fuzzy picker
+
+| Key | Action |
+|-----|--------|
+| `<space>ff` | Open fuzzy picker over all items in the current library |
+| `<space>fb` | Open fuzzy picker over items in the current collection |
+| `<space>bj` | Open tab picker (see below) |
+
+The picker opens a search box in the middle of the screen. Start typing to
+filter items (sequential fuzzy matching — every character must appear in
+order). Then:
+
+| Key | Action |
+|-----|--------|
+| `↑` / `↓` (or `Ctrl+n` / `Ctrl+p`, `Ctrl+j` / `Ctrl+k`) | Move selection up / down |
+| `Enter` | Select the item in the item list / jump to the selected tab |
+| `y` | Copy the selected item's full citation to the clipboard |
+| `yy` | Copy the selected item's citekey to the clipboard |
+| `Escape` | Close the picker |
+
+The **tab picker** (`<space>bj`) uses the same interface for the currently
+open tabs, plus **hint letters**: each tab shows a letter label, and typing
+its letter(s) selects that tab directly (single- or double-letter hints
+depending on the number of tabs). `y`/`yy` copying is not available in the
+tab picker.
 
 #### Notes layout overlay
 
@@ -259,10 +285,13 @@ Operator+motion combos also support counts (for example `3dw`, `2y$`).
 
 #### Library tree navigation (left pane)
 
-These bindings act on Zotero's native left collection tree when that tree has focus.
+These bindings act on Zotero's native left pane (collection tree and item
+list) when that pane has focus.
 
 | Key | Action |
 |-----|--------|
+| `j` / `k` | Move selection down / up (collections tree and item list) |
+| `gg` / `G` | Jump to the first / last row |
 | `h` | In item list, move focus back to collection tree; in collection tree, collapse selected collection or jump to parent |
 | `l` | In collection tree, expand selected collection; if already expanded or a leaf, move focus into item list |
 | `Enter` | In collection tree, move focus into item list; in item list, open the selected item/PDF |
@@ -272,6 +301,26 @@ These bindings act on Zotero's native left collection tree when that tree has fo
 | `zc` | Collapse the current collection row (if already closed, keep it closed) |
 | `R` | Expand all collections in the current library tree |
 | `M` | Collapse all collections in the current library tree |
+
+#### Main window `<space>` chords
+
+These bindings work in the main Zotero window (not inside the reader), on
+whatever has focus:
+
+| Key | Action |
+|-----|--------|
+| `<space>ff` | Fuzzy picker over all items in the current library |
+| `<space>fb` | Fuzzy picker over items in the current collection |
+| `<space>bj` | Open tab picker |
+| `<space>n` | Toggle notes layout overlay |
+| `<space>e` | Focus the collection tree |
+| `<space>yy` | Copy the selected item's citekey to the clipboard |
+| `<space>o` | Open the selected item's PDF |
+| `<space>q` | Close the active PDF tab |
+| `<space>/` | Focus Zotero's search bar |
+| `<space>wh` | Focus the collection tree (left pane) |
+| `<space>wl` | Focus the detail pane (right pane) |
+| `<space>ww` | Focus the item list (middle pane) |
 
 #### Viewport positioning (like Vim's z commands)
 
@@ -560,6 +609,22 @@ Open **Edit → Preferences** (macOS: **Zotero → Settings**) and navigate to t
 | `cursorToVisual` | Enter Visual mode from current caret |
 | `mainTabPick` | Open tab picker for currently open Zotero tabs |
 | `mainNotesLayout` | Toggle notes layout overlay (left list + right preview) |
+| `mainFuzzyAll` | Open fuzzy picker over all items in the current library |
+| `mainFuzzyCollection` | Open fuzzy picker over items in the current collection |
+| `mainYankCitekey` | Copy the selected item's citekey to the clipboard |
+| `mainOpenPDF` | Open the selected item's PDF |
+| `mainClosePDF` | Close the active PDF tab |
+| `mainPrevTab` | Switch to the previous open tab |
+| `mainNextTab` | Switch to the next open tab |
+| `mainFocusTree` | Focus the collection tree (left pane) |
+| `mainFocusItems` | Focus the item list (middle pane) |
+| `mainFocusLeft` | Focus the collection tree (left pane) |
+| `mainFocusRight` | Focus the detail pane (right pane) |
+| `mainFocusSearch` | Focus Zotero's search bar |
+| `mainNavDown` | Move selection down (collections tree / item list) |
+| `mainNavUp` | Move selection up (collections tree / item list) |
+| `mainNavFirst` | Jump to the first row |
+| `mainNavLast` | Jump to the last row |
 | `toggleReaderSidebarOutline` | Toggle the custom outline explorer overlay |
 | `focusReaderSidebar` | Focus or reopen the custom outline explorer overlay |
 | `toggleReaderSplitHorizontal` | Toggle reader horizontal split view |
@@ -587,6 +652,7 @@ Open **Edit → Preferences** (macOS: **Zotero → Settings**) and navigate to t
 | Enable Visual mode | on | Allow entering Visual mode with `v` |
 | Enable Cursor mode | on | Allow entering Cursor mode with `c` |
 | Enable Insert mode | on | Allow entering Insert mode with `i` |
+| Note editor Vim mode | on | Enable Vim-style editing in note editors (context pane and note tabs) |
 | Scroll step | 60 px | Pixels scrolled per `j`/`k`/`H`/`L` keypress |
 | Smooth scrolling | on | Enable smooth scrolling behavior in the reader |
 | Smooth initial speed | 2000 px/s | Starting speed for hold-based smooth scrolling |

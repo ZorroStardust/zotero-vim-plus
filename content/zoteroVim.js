@@ -525,6 +525,16 @@ var ZoteroVim = {
       const activePdfWin = this._activeReaderPdfWin(reader, pdfWin) || pdfWin;
       this._onKeyDown(e, reader, state, activePdfWin);
     };
+
+    // Note: Zotero's reader React app forwards PDF.js iframe keydown events to
+    // its KeyboardManager (which starts Read Aloud on 'l'/'r' etc.) via a
+    // direct call, `view._onKeyDown(event)` (see reader's pdf-view.js).  That
+    // forwarding cannot be stopped by DOM propagation control at this level —
+    // and native keydown from the PDF.js iframe never reaches reader.html
+    // anyway.  We intercept the forwarding callback instead via
+    // _patchReaderKeyForwarding() so that keys consumed by vim are not also
+    // handled by Zotero (Read Aloud, hand/pointer tools, find, etc.).
+
     if (outerDoc) {
       outerDoc.addEventListener('keydown', outerEscapeHandler, true);
       outerDoc.addEventListener('keydown', outerKeyHandler, true);
@@ -534,6 +544,7 @@ var ZoteroVim = {
       this._stopSmoothHoldScroll(state, pdfWin);
       this._closeReaderOutlineExplorer(state);
       clearInterval(state._pdfViewSyncTimer);
+      this._restoreReaderKeyForwarding(reader, state);
       this._clearReaderPdfViewListeners(state);
       if (outerDoc) outerDoc.removeEventListener('keydown', outerEscapeHandler, true);
       if (outerDoc) outerDoc.removeEventListener('keydown', outerKeyHandler, true);
@@ -607,6 +618,75 @@ var ZoteroVim = {
       } catch (_) {}
 
       state._pdfViewHandlers.set(viewWin, handlers);
+    }
+
+    this._patchReaderKeyForwarding(reader, state);
+  },
+
+  /**
+   * Patch Zotero's reader views (PDF.js PdfView instances) so that keydown
+   * events they forward to the reader app's KeyboardManager are dropped when
+   * vim consumes the key.  Without this, Zotero's built-in shortcuts (Read
+   * Aloud on 'l'/'r', hand tool on 'h', pointer tool on 's', find on Ctrl+F,
+   * …) fire even though vim already handled the key — the forwarding is a
+   * direct JS call (view._onKeyDown) that DOM stopPropagation cannot stop.
+   *
+   * Re-applied periodically by _syncReaderPdfViewListeners() so that it
+   * survives view recreation (file switches, split-view toggles) and readers
+   * restored from a previous session (where Zotero's keydown listener on the
+   * PDF.js window is registered before ours).
+   */
+  _patchReaderKeyForwarding(reader, state) {
+    try {
+      const internal = reader?._internalReader;
+      const views = [internal?._primaryView, internal?._secondaryView];
+      for (let view of views) {
+        if (!view) continue;
+        // Work on the raw content object — assignments through an Xray would
+        // only touch the Xray shadow, not the view Zotero actually calls.
+        try { view = Components.utils.unwrap(view); } catch (_) {}
+        if (typeof view._onKeyDown !== 'function') continue;
+        const patches = state.zvKeyPatches = state.zvKeyPatches || new Map();
+        if (patches.has(view)) continue;
+        const zv = this;
+        const orig = view._onKeyDown;
+        const wrapperFn = function (event) {
+          try {
+            if (zv._readerConsumesKey(state, zv._keyString(event))) return;
+          } catch (_) {}
+          return orig.call(view, event);
+        };
+        let exported;
+        try {
+          // Export the wrapper into the content compartment so the reader
+          // React app can invoke it without a security error.
+          exported = Components.utils.exportFunction(wrapperFn, view);
+        } catch (_) {
+          exported = wrapperFn;
+        }
+        view._onKeyDown = exported;
+        patches.set(view, { orig, exported });
+      }
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] _patchReaderKeyForwarding error: ' + e);
+    }
+  },
+
+  _restoreReaderKeyForwarding(reader, state) {
+    try {
+      const patches = state?.zvKeyPatches;
+      if (!patches) return;
+      for (const [view, patch] of patches) {
+        try {
+          if (view && patch && typeof patch.orig === 'function'
+            && typeof view._onKeyDown === 'function') {
+            view._onKeyDown = patch.orig;
+          }
+        } catch (_) {}
+      }
+      patches.clear();
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] _restoreReaderKeyForwarding error: ' + e);
     }
   },
 
@@ -841,7 +921,7 @@ var ZoteroVim = {
     // Hint mode: user is picking a selection starting point.
     if (state.hintMode) {
       event.preventDefault();
-      event.stopPropagation();
+      event.stopImmediatePropagation();
       const key = event.key;
       if (key === 'Escape') {
         this._clearVisualHints(state, pdfWin);
@@ -857,7 +937,7 @@ var ZoteroVim = {
       const k = this._keyString(event);
       if (k === 'escape') {
         event.preventDefault();
-        event.stopPropagation();
+        event.stopImmediatePropagation();
         this._setMode(state, 'normal');
       }
       return;
@@ -873,7 +953,7 @@ var ZoteroVim = {
     const holdSpec = this._smoothHoldSpecForEvent(event, state);
     if (holdSpec) {
       event.preventDefault();
-      event.stopPropagation();
+      event.stopImmediatePropagation();
       this._startSmoothHoldScroll(state, pdfWin, holdSpec);
       return;
     }
@@ -886,7 +966,7 @@ var ZoteroVim = {
     const directAction = bindings[modePrefix + keyStr];
     if (event.repeat && (directAction === 'mainPrevTab' || directAction === 'mainNextTab')) {
       event.preventDefault();
-      event.stopPropagation();
+      event.stopImmediatePropagation();
       return;
     }
 
@@ -895,7 +975,7 @@ var ZoteroVim = {
         const now = Date.now();
         if (state.cursorLastKey === keyStr && now - state.cursorLastKeyTS < 35) {
           event.preventDefault();
-          event.stopPropagation();
+          event.stopImmediatePropagation();
           return;
         }
         state.cursorLastKey = keyStr;
@@ -908,7 +988,7 @@ var ZoteroVim = {
       if (keyStr !== '0' || state.countBuffer) {
         state.countBuffer = (state.countBuffer || '') + keyStr;
         event.preventDefault();
-        event.stopPropagation();
+        event.stopImmediatePropagation();
         this._updateIndicator(state);
         return;
       }
@@ -927,12 +1007,14 @@ var ZoteroVim = {
       const sp = Object.keys(bindings).filter(k => this._bindingMatchesPrefix(k, modePrefix, keyStr));
       const se = bindings[modePrefix + keyStr];
       if (sp.length === 0 && !se) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
       this._processBuffer(keyStr, se, sp, modePrefix, bindings, state);
       return;
     }
 
     event.preventDefault();
-    event.stopPropagation();
+    event.stopImmediatePropagation();
     this._processBuffer(newBuffer, exact, possible, modePrefix, bindings, state);
   },
 
@@ -985,6 +1067,21 @@ var ZoteroVim = {
     if (event.altKey) parts.push('alt');
     parts.push(key.length === 1 ? key : key.toLowerCase());
     return parts.join('+');
+  },
+
+  /**
+   * Whether vim would consume the given key in the reader's current mode —
+   * i.e. the key is an exact binding or a prefix of one.  Used to decide
+   * whether Zotero's forwarded keydown (KeyboardManager) should be allowed to
+   * handle the key too (Read Aloud, hand/pointer tools, find, …).
+   */
+  _readerConsumesKey(state, keyStr) {
+    if (!keyStr) return false;
+    if (state.mode === 'insert' && keyStr !== 'escape') return false;
+    const modePrefix = state.mode + ':';
+    const bindings = this.getBindings();
+    if (bindings[modePrefix + keyStr]) return true;
+    return Object.keys(bindings).some(k => k.startsWith(modePrefix + keyStr));
   },
 
   _bindingMatchesPrefix(bindingKey, modePrefix, buffer) {
@@ -7083,7 +7180,7 @@ var ZoteroVim = {
         const winState = this._mainWindowState.get(win);
         if (winState) this._syncMainContextNoteListener(win, winState);
       } catch (_) {}
-      void this._focusReaderContent(win);
+      this._recoverMainTabFocusAfterSwitch(win);
     };
 
     // Tab content (especially large readers) may need multiple ticks to become focusable.
@@ -7092,6 +7189,35 @@ var ZoteroVim = {
     setTimeout(run, 180);
     setTimeout(run, 420);
     setTimeout(run, 900);
+  },
+
+  _recoverMainTabFocusAfterSwitch(win) {
+    void this._focusReaderContent(win)
+      .then((focusedReader) => {
+        if (focusedReader) return;
+        if (this._isStandaloneNoteTabSelected(win)) return;
+
+        const doc = win?.document;
+        const active = doc?.activeElement;
+        if (!active) return;
+
+        const isSearchFocus = active.id === 'zotero-tb-search-input'
+          || (typeof active.closest === 'function' && !!active.closest('#zotero-tb-search'))
+          || (String(active.tagName || '').toUpperCase() === 'INPUT'
+            && String(active.type || '').toLowerCase() === 'search')
+          || String(active.localName || '').toLowerCase() === 'search';
+        if (!isSearchFocus) return;
+
+        const winState = this._mainWindowState.get(win);
+        if (!winState) return;
+
+        try { active.blur?.(); } catch (_) {}
+        const panel = this._mainSyncFocusedPanel(win, winState);
+        this._mainFocusPanel(win, winState, panel === 'collections' ? 'collections' : 'items');
+      })
+      .catch((e) => {
+        Zotero.debug('[ZoteroVim] _recoverMainTabFocusAfterSwitch error: ' + e);
+      });
   },
 
   _mainFocusSearch(win) {

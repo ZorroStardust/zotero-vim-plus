@@ -47,6 +47,10 @@ Vibe coded with Claude Sonnet 4.5.
   typing in form fields); also focuses the annotation comment field when an
   annotation is selected
 - **Fully remappable** — every action can be rebound from the Preferences panel
+- **No shortcut collisions** — keys consumed by vim are intercepted before
+  Zotero's reader key handling, so `l` (next page) doesn't trigger the
+  built-in Read Aloud and `h`/`s`/`Ctrl+F` don't toggle the hand tool /
+  pointer tool / find bar
 - **Text post-processing** — all yank operations normalise Unicode ligatures
   (`ﬁ` → `fi`, etc.) and collapse PDF line-break newlines into spaces
 
@@ -155,6 +159,11 @@ Cursor ──v──▶ Visual ──v/Escape──▶ Normal
 | `Shift+K` (`K`) | Switch to next open tab |
 | `<space>bj` | Open tab picker (hint-based jump to open tab) |
 | `<space>n` | Open notes layout overlay (left: note titles list, right: note preview) |
+
+> **Note:** Zotero's built-in Read Aloud also listens for the `l`/`r` keys.
+> The plugin blocks Zotero's reader key forwarding for keys vim consumes, so
+> `l` (next page) never starts Read Aloud. To use Read Aloud, press `r`
+> (unbound in vim by default) or click the Read Aloud toolbar button.
 
 #### Notes layout overlay
 
@@ -627,6 +636,39 @@ Components.utils.cloneInto(value, targetWindow)
 Primitive values (numbers, strings, booleans) cross compartments freely.
 Forgetting `cloneInto` produces `"Permission denied to access property"` errors
 that are easy to miss because they are often caught and silently swallowed.
+
+### Zotero built-in shortcut conflicts (Read Aloud)
+
+Zotero's reader React app starts Read Aloud on the `l`/`r` keys and toggles
+the hand tool / pointer tool on `h`/`s` from its `KeyboardManager`.  Keys
+pressed inside the PDF.js iframe reach it via a **direct JS call** —
+`view._onKeyDown(event)` in the reader's `pdf-view.js` — not via DOM event
+propagation.  That means:
+
+- `preventDefault()` / `stopPropagation()` inside the PDF.js iframe cannot
+  stop it: Zotero's capture listener runs on the *same* window as the plugin's
+  listener, and the forwarding is a plain function call, not an event dispatch.
+- Native keydown events never cross the iframe boundary into reader.html, so
+  document-level interceptors there never see PDF keys.
+
+The plugin therefore patches the forwarding callback itself:
+
+- `_patchReaderKeyForwarding()` replaces `_onKeyDown` on the PdfView instances
+  (`_internalReader._primaryView` / `_secondaryView`) with a wrapper that
+  drops the event when `_readerConsumesKey()` says vim will handle it (exact
+  binding or prefix for the current mode).  Insert mode passes everything
+  through except Escape.
+- The wrapper crosses the chrome/content boundary via `Cu.unwrap` +
+  `Cu.exportFunction` (a bare chrome function would be rejected by the
+  content compartment).
+- `_onKeyDown` additionally uses `stopImmediatePropagation()` (not
+  `stopPropagation()`) wherever vim consumes a key, so Zotero's same-window
+  capture listener is skipped when the plugin's listener registered first.
+
+The patch is re-applied by the 800 ms view-sync timer so it survives view
+recreation, split views, and restored sessions.  If Zotero changes the
+reader's forwarding internals, re-verify `view._onKeyDown` and the
+`KeyboardManager` shortcut table (keyboard-manager.js).
 
 ### Annotation navigation
 

@@ -333,7 +333,18 @@ lector), sobre lo que tenga el foco:
 | Tecla | Acción |
 |-----|--------|
 | `/` | Abrir la barra de búsqueda de PDF |
+| `n` | Saltar al siguiente resultado de búsqueda |
+| `N` | Saltar al resultado de búsqueda anterior |
 | `Escape` | Borrar / cerrar búsqueda |
+
+La búsqueda funciona como en Vim: presiona `/` para abrir la barra de
+búsqueda de Zotero, escribe tu consulta (los resultados se resaltan mientras
+escribes), luego presiona `Enter` — el foco vuelve al PDF automáticamente y
+`n` / `N` recorren los resultados mientras el contador sigue visible.
+Presiona `/` de nuevo para reabrir la barra con tu consulta anterior
+seleccionada. `Escape` cierra la barra de búsqueda y borra los resaltados.
+Presionar `n` / `N` sin una búsqueda activa muestra una pista de buscar
+primero.
 
 #### Filtro lateral por color
 
@@ -526,6 +537,8 @@ Abrir **Editar → Preferencias** (macOS: **Zotero → Ajustes**) y navegar al p
 | `firstPage` | Primera página |
 | `lastPage` | Última página |
 | `openSearch` | Abrir barra de búsqueda |
+| `findNext` | Saltar al siguiente resultado de búsqueda |
+| `findPrevious` | Saltar al resultado de búsqueda anterior |
 | `clearSearch` | Cerrar / borrar barra de búsqueda |
 | `prevAnnotation` | Saltar a anotación anterior |
 | `nextAnnotation` | Saltar a anotación siguiente |

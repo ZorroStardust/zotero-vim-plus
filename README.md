@@ -350,7 +350,17 @@ whatever has focus:
 | Key | Action |
 |-----|--------|
 | `/` | Open the PDF find bar |
+| `n` | Jump to the next search match |
+| `N` | Jump to the previous search match |
 | `Escape` | Clear / close search |
+
+Search works like Vim: press `/` to open Zotero's find bar, type your query
+(results highlight as you type), then press `Enter` — focus returns to the
+PDF automatically and `n` / `N` cycle through the matches while the result
+counter stays visible. Press `/` again to reopen the find bar with your
+previous query selected. `Escape` closes the find bar and clears the
+highlights. Pressing `n` / `N` without an active search shows a hint to
+search first.
 
 #### Sidebar filter by colour
 
@@ -567,6 +577,8 @@ Open **Edit → Preferences** (macOS: **Zotero → Settings**) and navigate to t
 | `firstPage` | First page |
 | `lastPage` | Last page |
 | `openSearch` | Open find bar |
+| `findNext` | Jump to next search match |
+| `findPrevious` | Jump to previous search match |
 | `clearSearch` | Close / clear find bar |
 | `prevAnnotation` | Jump to previous annotation |
 | `nextAnnotation` | Jump to next annotation |

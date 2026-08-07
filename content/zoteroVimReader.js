@@ -3012,15 +3012,42 @@ Object.assign(ZoteroVim, {
     } catch (_) {}
   },
 
-  _clearSearch(pdfWin) {
+  /**
+   * Whether a search is currently active in any reader view.  Mirrors the
+   * guard PdfView.findNext()/findPrevious() use internally (_findState.active).
+   */
+  _isSearchActive(reader) {
     try {
-      const evt = new pdfWin.KeyboardEvent('keydown', {
-        key: 'Escape', code: 'Escape', bubbles: true, cancelable: true,
-      });
-      pdfWin.document.dispatchEvent(evt);
+      const ir = reader?._internalReader;
+      const pv = ir?._primaryView?._findState?.active;
+      const sv = ir?._secondaryView?._findState?.active;
+      return !!(pv || sv);
+    } catch (_) { return false; }
+  },
+
+  _clearSearch(reader, pdfWin) {
+    // Close the find popup via the reader app (deactivates the search and
+    // clears highlights, matching Zotero's own Escape semantics).  Do NOT
+    // re-dispatch an Escape keydown into the PDF.js document — the plugin's
+    // own capture listener would process it again (normal:escape →
+    // clearSearch), causing unbounded recursion.
+    try {
+      const ir = reader?._internalReader;
+      if (typeof ir?.toggleFindPopup === 'function') {
+        ir.toggleFindPopup(Cu.cloneInto({ open: false }, reader._iframeWindow));
+        Zotero.debug('[ZoteroVim] clearSearch: toggleFindPopup(false) OK');
+        return;
+      }
     } catch (e) {
-      Zotero.debug('[ZoteroVim] _clearSearch error: ' + e);
+      Zotero.debug('[ZoteroVim] _clearSearch toggleFindPopup error: ' + e);
     }
+
+    // Fallback: if the popup is not reachable, blur any focused find input.
+    try {
+      const outerDoc = reader?._iframeWindow?.document;
+      const inp = outerDoc?.querySelector('.find-popup input');
+      if (inp && outerDoc.activeElement === inp) inp.blur();
+    } catch (_) {}
   },
 
   // ── Annotation navigation ─────────────────────────────────────────────────

@@ -47,6 +47,8 @@ var ZoteroVim = {
     'normal:ctrl+f':  'fullPageDown',
     'normal:ctrl+b':  'fullPageUp',
     'normal:/':       'openSearch',
+    'normal:n':       'findNext',
+    'normal:N':       'findPrevious',
     'normal:[':       'prevAnnotation',
     'normal:]':       'nextAnnotation',
     'normal:return':  'editAnnotation',
@@ -535,9 +537,29 @@ var ZoteroVim = {
     // _patchReaderKeyForwarding() so that keys consumed by vim are not also
     // handled by Zotero (Read Aloud, hand/pointer tools, find, etc.).
 
+    // Vim-style search flow: Zotero's find popup keeps focus in its input, so
+    // pressing n/N after searching would type into the box.  When Enter or
+    // Shift+Enter is pressed inside the find popup, wait for Zotero to process
+    // the key, then blur the input and return focus to the PDF — back in
+    // Normal mode, where `n`/`N` now cycle the matches.
+    const findBarReturnBridge = (e) => {
+      if (e.key !== 'Enter') return;
+      const active = outerDoc?.activeElement;
+      if (!active || active.tagName !== 'INPUT') return;
+      if (typeof active.closest !== 'function' || !active.closest('.find-popup')) return;
+      setTimeout(() => {
+        try {
+          active.blur();
+          const targetWin = this._activeReaderPdfWin(reader, pdfWin) || pdfWin;
+          targetWin.focus();
+        } catch (_) {}
+      }, 150);
+    };
+
     if (outerDoc) {
       outerDoc.addEventListener('keydown', outerEscapeHandler, true);
       outerDoc.addEventListener('keydown', outerKeyHandler, true);
+      outerDoc.addEventListener('keydown', findBarReturnBridge, true);
     }
 
     state.cleanup = () => {
@@ -548,6 +570,7 @@ var ZoteroVim = {
       this._clearReaderPdfViewListeners(state);
       if (outerDoc) outerDoc.removeEventListener('keydown', outerEscapeHandler, true);
       if (outerDoc) outerDoc.removeEventListener('keydown', outerKeyHandler, true);
+      if (outerDoc) outerDoc.removeEventListener('keydown', findBarReturnBridge, true);
       state.indicatorEl?.remove();
       try { for (const el of pdfWin.document.querySelectorAll('[data-zv-cursor]')) el.remove(); } catch (_) {}
       clearTimeout(state.keyTimeout);
@@ -1201,7 +1224,23 @@ var ZoteroVim = {
         case 'yankAnnotation':        this._yankAnnotation(state, reader);          break;
         case 'yankAnnotationComment': this._yankAnnotationComment(state, reader);  break;
         case 'yankParagraph':         this._yankParagraph(state, pdfWin);           break;
-        case 'clearSearch':       this._clearSearch(pdfWin);                  break;
+        case 'clearSearch':       this._clearSearch(reader, pdfWin);         break;
+        case 'findNext':
+          if (!this._isSearchActive(reader)) {
+            this._showStatus(state, 'No active search — press / to search', 1500);
+            break;
+          }
+          try { reader._internalReader?.findNext?.(); } catch (e) {
+            Zotero.debug('[ZoteroVim] findNext: ' + e); }
+          break;
+        case 'findPrevious':
+          if (!this._isSearchActive(reader)) {
+            this._showStatus(state, 'No active search — press / to search', 1500);
+            break;
+          }
+          try { reader._internalReader?.findPrevious?.(); } catch (e) {
+            Zotero.debug('[ZoteroVim] findPrevious: ' + e); }
+          break;
 
         case 'enterVisual':
           if (this.isModeEnabled('visual')) this._enterVisualMode(state, pdfWin);

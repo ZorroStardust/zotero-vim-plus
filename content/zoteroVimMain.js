@@ -42,6 +42,8 @@ Object.assign(ZoteroVim, {
       _pickerSelected: 0,
       _pickerWin: win,
       _pickerCleanup: null,
+      _pickerPrevFocus: null,      // element focused before the picker opened
+      _pickerPrevFocusWin: null,   // innermost focused window (e.g. PDF iframe)
       notesLayoutOpen: false,
       _notesOverlay: null,
       _notesStatusEl: null,
@@ -2258,6 +2260,19 @@ Object.assign(ZoteroVim, {
     winState.pickerOpen  = true;
     winState._pickerWin  = win;
 
+    // Remember where focus was before the picker steals it, so closing can
+    // restore it.  Zotero only refocuses the reader on Escape when it actually
+    // sees the key (our picker handler stops propagation), so without this
+    // the reader stays unfocused and all vim bindings are dead until a second
+    // Escape triggers Zotero's own fallback.
+    try {
+      winState._pickerPrevFocus = win.document.activeElement || null;
+      winState._pickerPrevFocusWin = Services.focus?.focusedWindow || null;
+    } catch (_) {
+      winState._pickerPrevFocus = null;
+      winState._pickerPrevFocusWin = null;
+    }
+
     const doc  = win.document;
     const root = doc.body || doc.documentElement;
     // XUL document — must use HTML namespace so CSS (position:fixed, flex) works.
@@ -2713,6 +2728,19 @@ Object.assign(ZoteroVim, {
     winState._pickerCleanup  = null;
     winState._pickerLastKey  = null;
     winState._pickerScope    = null;
+
+    // Restore focus to wherever it was before the picker opened.  The overlay
+    // removal leaves focus on <body>: if the selected tab is a reader, the
+    // main-window bindings are skipped (reader-tab guard) and the reader's own
+    // listeners are inactive until something refocuses the PDF iframe.
+    const prevEl  = winState._pickerPrevFocus;
+    const prevWin = winState._pickerPrevFocusWin;
+    winState._pickerPrevFocus = null;
+    winState._pickerPrevFocusWin = null;
+    try {
+      if (prevEl && prevEl.isConnected) prevEl.focus();
+      else if (prevWin) prevWin.focus();
+    } catch (_) {}
   },
 
   _toggleMainNotesLayout(win, winState) {

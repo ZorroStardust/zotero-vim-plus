@@ -140,6 +140,7 @@ see README "Architecture Notes → Zotero built-in shortcut conflicts (Read Alou
 | `tools/check-sync.js` | Verifies `prefs.js` binding tables match `zoteroVim.js` (run by `build.sh`) |
 | `manifest.json` | Extension manifest |
 | `build.sh` | Builds the `.xpi` (runs syntax + binding-sync checks when `node` is available) |
+| `FUTURE_FEATURES.md` | Triaged ideas for new features (Tier 1–3 by effort) |
 | `PENDING_ISSUES.md` | Shelved issues with investigation notes |
 
 ## Important Constraints

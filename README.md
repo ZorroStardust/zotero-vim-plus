@@ -1,5 +1,7 @@
 # Zotero Vim Plus
 
+> **Languages:** [English](README.md) · [Español](README.es-ES.md)
+
 > Original repository: https://codeberg.org/finktank/zotero-vim
 >
 > This repository is forked from the original Zotero Vim project.

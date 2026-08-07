@@ -12,7 +12,7 @@ the README / CHANGELOG once implemented, and mark them done below.
 | 3 | `+` / `-` (and `=`) zoom | Call `reader._internalReader.zoomIn() / zoomOut()` — zoom currently needs `Ctrl+=` / `Ctrl+-` |
 | 4 | `V` toggle reader sidebar | `_readerSetSidebarOpen` / `_readerIsSidebarOpen` already exist (used by the outline explorer) |
 | 5 | Page number / progress in the mode indicator | Read `pdfWin.PDFViewerApplication.pdfViewer.currentPageNumber` and `pdfDocument.numPages`; display like `12/34 · 35%` |
-| 6 | Fuzzy picker: `o` opens the PDF directly | `Enter` currently only selects the item (`_pickerSelectItem`); add `o` = select + `mainOpenPDF` |
+| 6 | ~~Fuzzy picker: `o` opens the PDF directly~~ | **Done (commit 3408191+)** — `o` in the items picker selects the item and opens its PDF (`_pickerSelectItem` + `_mainOpenPDF`); in the tab picker `o` stays a hint letter |
 | 7 | `gv` re-select the last Visual selection | Store `state.lastVisualRange` on exit; restore it on re-entering Visual mode |
 | 8 | `*` / `#` search the word under the caret | Reuse the `_searchSelection` pattern (open find popup, inject `input` value + dispatch `input` event). Cursor mode: word at caret; Normal mode: word at viewport centre |
 | 9 | Import / export keybindings as JSON + search box in the Preferences panel | Preferences UX only, no runtime risk |

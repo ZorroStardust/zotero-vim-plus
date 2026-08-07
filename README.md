@@ -196,6 +196,7 @@ order). Then:
 |-----|--------|
 | `↑` / `↓` (or `Ctrl+n` / `Ctrl+p`, `Ctrl+j` / `Ctrl+k`) | Move selection up / down |
 | `Enter` | Select the item in the item list / jump to the selected tab |
+| `o` | Open the selected item's PDF (items picker only) |
 | `y` | Copy the selected item's full citation to the clipboard |
 | `yy` | Copy the selected item's citekey to the clipboard |
 | `Escape` | Close the picker |

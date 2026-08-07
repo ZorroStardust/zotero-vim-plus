@@ -2288,7 +2288,7 @@ Object.assign(ZoteroVim, {
       'padding:4px 12px;font-size:11px;color:#6c7086;border-top:1px solid #313244;flex-shrink:0;';
     hintBar.textContent = scope === 'tabs'
       ? 'Type hint letter (empty query) or search title  ·  Ctrl+j/k navigate  ·  Enter select  ·  Esc close'
-      : 'Ctrl+j/k navigate  ·  Enter select  ·  y yank citation  ·  yy yank citekey  ·  Esc close';
+      : 'Ctrl+j/k navigate  ·  Enter select  ·  o open PDF  ·  y yank citation  ·  yy yank citekey  ·  Esc close';
 
     inputWrap.appendChild(input);
     modal.appendChild(inputWrap);
@@ -2407,6 +2407,17 @@ Object.assign(ZoteroVim, {
       clearTimeout(winState._pickerYTimer);
       winState._pickerLastKey = null;
       this._pickerSelectItem(win, winState);
+      return;
+    }
+    // o = open the PDF of the selected item (items scope only — in the tab
+    // picker 'o' stays a hint letter).  _pickerSelectItem selects the item
+    // and closes the picker; _mainOpenPDF then opens its PDF attachment.
+    if (k === 'o' && winState._pickerScope !== 'tabs') {
+      e.preventDefault(); e.stopPropagation();
+      clearTimeout(winState._pickerYTimer);
+      winState._pickerLastKey = null;
+      this._pickerSelectItem(win, winState);
+      this._mainOpenPDF(win, winState);
       return;
     }
     const isCtrlDown = e.ctrlKey && (keyLower === 'n' || keyLower === 'j' || code === 'KeyN' || code === 'KeyJ');

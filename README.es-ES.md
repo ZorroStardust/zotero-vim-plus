@@ -186,6 +186,7 @@ carácter debe aparecer en orden). Luego:
 |-----|--------|
 | `↑` / `↓` (o `Ctrl+n` / `Ctrl+p`, `Ctrl+j` / `Ctrl+k`) | Mover la selección hacia arriba / abajo |
 | `Enter` | Seleccionar el elemento en la lista de elementos / saltar a la pestaña seleccionada |
+| `o` | Abrir el PDF del elemento seleccionado (solo selector de elementos) |
 | `y` | Copiar la cita completa del elemento seleccionado al portapapeles |
 | `yy` | Copiar la citekey del elemento seleccionado al portapapeles |
 | `Escape` | Cerrar el selector |

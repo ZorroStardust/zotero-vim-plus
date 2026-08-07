@@ -3,6 +3,16 @@
     "zotero-vim-plus@zotero-vim": {
       "updates": [
         {
+          "version": "1.4.2",
+          "update_link": "https://github.com/ZorroStardust/zotero-vim-plus/releases/download/v1.4.2/zoetero-vim-plus.xpi",
+          "applications": {
+            "zotero": {
+              "strict_min_version": "7.999",
+              "strict_max_version": "9.*"
+            }
+          }
+        },
+        {
           "version": "1.4.1",
           "update_link": "https://github.com/ZorroStardust/zotero-vim-plus/releases/download/v1.4.1/zoetero-vim-plus.xpi",
           "applications": {

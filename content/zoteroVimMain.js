@@ -86,8 +86,20 @@ Object.assign(ZoteroVim, {
     const keyHandler = (e) => this._onMainKeyDown(e, win, mainWinState);
     win.document.addEventListener('keydown', keyHandler, true);
 
+    // Window-level capture listener while the picker is open: window capture
+    // runs before ANY document listener, so picker keys (Ctrl+j/k, arrows,
+    // Ctrl+o, y/yy, Enter, Escape) are handled even if something at the
+    // document level would otherwise swallow them (e.g. browser-style
+    // shortcuts such as Ctrl+j).  _onPickerKeyDown guards re-entrancy with
+    // the _zvPickerHandled flag.
+    const pickerWindowKeyHandler = (e) => {
+      if (mainWinState.pickerOpen) this._onPickerKeyDown(e, win, mainWinState);
+    };
+    win.addEventListener('keydown', pickerWindowKeyHandler, true);
+
     mainWinState.cleanup = () => {
       win.clearInterval(readerScanTimer);
+      win.removeEventListener('keydown', pickerWindowKeyHandler, true);
       win.document.removeEventListener('keydown', keyHandler, true);
       this._closeFuzzyPicker(win, mainWinState);
       this._closeMainNotesLayout(win, mainWinState);
@@ -2288,7 +2300,7 @@ Object.assign(ZoteroVim, {
       'padding:4px 12px;font-size:11px;color:#6c7086;border-top:1px solid #313244;flex-shrink:0;';
     hintBar.textContent = scope === 'tabs'
       ? 'Type hint letter (empty query) or search title  ·  Ctrl+j/k navigate  ·  Enter select  ·  Esc close'
-      : 'Ctrl+j/k navigate  ·  Enter select  ·  o open PDF  ·  y yank citation  ·  yy yank citekey  ·  Esc close';
+      : 'Ctrl+j/k navigate  ·  Enter select  ·  Ctrl+o open PDF  ·  y yank citation  ·  yy yank citekey  ·  Esc close';
 
     inputWrap.appendChild(input);
     modal.appendChild(inputWrap);
@@ -2390,6 +2402,12 @@ Object.assign(ZoteroVim, {
   },
 
   _onPickerKeyDown(e, win, winState) {
+    // The picker is also routed through a window-level capture listener
+    // (registered in _injectIntoMainWindow) so that keys like Ctrl+j/k are
+    // seen before any document-level handler could swallow them.  Guard
+    // against the same event being processed twice.
+    if (e._zvPickerHandled) return;
+    try { e._zvPickerHandled = true; } catch (_) {}
     const k = e.key;
     const keyLower = String(k || '').toLowerCase();
     const code = String(e.code || '');
@@ -2409,10 +2427,12 @@ Object.assign(ZoteroVim, {
       this._pickerSelectItem(win, winState);
       return;
     }
-    // o = open the PDF of the selected item (items scope only — in the tab
-    // picker 'o' stays a hint letter).  _pickerSelectItem selects the item
-    // and closes the picker; _mainOpenPDF then opens its PDF attachment.
-    if (k === 'o' && winState._pickerScope !== 'tabs') {
+    // Ctrl+o = open the PDF of the selected item (items scope only — in the
+    // tab picker 'o' stays a hint letter).  A bare 'o' always types into the
+    // search box so queries containing 'o' are unaffected.  _pickerSelectItem
+    // selects the item and closes the picker; _mainOpenPDF then opens its PDF
+    // attachment.
+    if (e.ctrlKey && !e.altKey && !e.shiftKey && keyLower === 'o' && winState._pickerScope !== 'tabs') {
       e.preventDefault(); e.stopPropagation();
       clearTimeout(winState._pickerYTimer);
       winState._pickerLastKey = null;

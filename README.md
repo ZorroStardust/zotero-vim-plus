@@ -91,16 +91,23 @@ package managers are required — only `zip` (available by default on macOS and
 most Linux distributions).
 
 ```
-zotero-vim/
+zotero-vim-plus/
 ├── manifest.json          Plugin manifest (ID, version, Zotero version range)
 ├── bootstrap.js           Lifecycle hooks (startup/shutdown/window events)
-├── build.sh               Builds zoetero-vim-plus.xpi
+├── build.sh               Builds zoetero-vim-plus.xpi (plus sanity checks)
 ├── content/
-│   ├── zoteroVim.js       Main plugin object — all keybinding logic
+│   ├── zoteroVim.js       Core: modes, key handling, action dispatcher
+│   ├── zoteroVimReader.js Reader-side methods (outline, visual/cursor, annotations)
+│   ├── zoteroVimMain.js   Main-window methods (note editor, pickers, notes layout)
 │   ├── preferences.xhtml  Preferences panel UI (XUL/HTML hybrid)
 │   └── prefs.js           Preferences panel JS (reads/writes Firefox prefs)
+├── tools/
+│   └── check-sync.js      Verifies the keybinding tables stay in sync
 └── icons/
-    ├── vim.svg
+    ├── icon-64x64.png     Plugin icon (preferences pane, manifest)
+    ├── icon-128x128.png   Plugin icon (manifest)
+    ├── zotero vim plus.svg  Vector source of the logo
+    ├── vim.svg            Legacy icon (kept for compatibility)
     ├── vim-48.png
     └── vim-96.png
 ```
@@ -147,6 +154,9 @@ Cursor ──v──▶ Visual ──v/Escape──▶ Normal
 | `Ctrl+f` | Full-page down |
 | `Ctrl+b` | Full-page up |
 
+Count prefixes multiply the step — `3j` scrolls three steps, `2ctrl+f` two full
+pages, and so on.
+
 #### Page navigation
 
 | Key | Action |
@@ -159,6 +169,9 @@ Cursor ──v──▶ Visual ──v/Escape──▶ Normal
 | `Shift+K` (`K`) | Switch to next open tab |
 | `<space>bj` | Open tab picker (hint-based jump to open tab) |
 | `<space>n` | Open notes layout overlay (left: note titles list, right: note preview) |
+
+Count prefixes repeat the page turn (`3l` = three pages forward) and `gg`/`G`
+with a count jump to that page number (`5G` / `5gg` = page 5).
 
 > **Note:** Zotero's built-in Read Aloud also listens for the `l`/`r` keys.
 > The plugin blocks Zotero's reader key forwarding for keys vim consumes, so

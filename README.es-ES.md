@@ -40,13 +40,14 @@ Programado con emoción por Claude Sonnet 4.5.
 - **Modo visual**: construir selecciones de texto por línea, carácter, palabra, oración o párrafo; crear resaltados o notas de color; copiar la selección o todo el párrafo al portapapeles.
 - **Modo inserción**: pasar temporalmente todas las teclas a Zotero (útil al escribir en campos de formulario); también enfoca el campo de comentario de anotación cuando se selecciona una anotación.
 - **Totalmente remapable**: cada acción puede ser reasignada desde el panel de preferencias.
+- **Sin colisiones de atajos**: las teclas consumidas por vim se interceptan antes del manejo de teclado del lector de Zotero, así `l` (página siguiente) no dispara la lectura en voz alta incorporada y `h`/`s`/`Ctrl+F` no alternan la herramienta de mano / herramienta de puntero / barra de búsqueda.
 - **Postprocesamiento de texto**: todas las operaciones de yank normalizan las ligaduras Unicode (`ﬁ` → `fi`, etc.) y colapsan los saltos de línea de separación de PDF en espacios.
 
 ---
 
 ## Requisitos
 
-- Zotero 7 o 8 (el plugin utiliza la API de arranque de Zotero 7+).
+- Zotero 7, 8 o 9 (el plugin utiliza la API de arranque de Zotero 7+).
 - macOS, Linux o Windows.
 
 ---
@@ -67,26 +68,35 @@ Para actualizar, repite los mismos pasos con el nuevo `.xpi`. Zotero reemplazar�
 ## Compilación desde el código fuente
 
 ```bash
-git clone https://github.com/zotero-vim/zotero-vim.git
-cd zotero-vim
+git clone https://github.com/ZorroStardust/zotero-vim-plus.git
+cd zotero-vim-plus
 ./build.sh
 ```
 
-`build.sh` comprime el código fuente del plugin en `zotero-vim-plus.xpi`. No se necesitan
-herramientas de compilación ni gestores de paquetes — solo `zip` (disponible por defecto en
-macOS y la mayoría de distribuciones Linux).
+`build.sh` comprime el código fuente del plugin en `zoetero-vim-plus.xpi`. No se
+necesitan herramientas de compilación ni gestores de paquetes — solo `zip`
+(disponible por defecto en macOS y la mayoría de distribuciones Linux). Si
+`node` está disponible, el script también verifica la sintaxis de los archivos
+JS y que las tablas de atajos (zoteroVim.js vs prefs.js) estén sincronizadas.
 
 ```
-zotero-vim/
+zotero-vim-plus/
 ├── manifest.json          Manifest del plugin (ID, versión, rango de versión de Zotero)
 ├── bootstrap.js           Controles de ciclo de vida (inicio/apagado/eventos de ventana)
-├── build.sh               Compila zotero-vim-plus.xpi
+├── build.sh               Compila zoetero-vim-plus.xpi (más comprobaciones de cordura)
 ├── content/
-│   ├── zoteroVim.js       Objeto principal del plugin — toda la lógica de atajos de teclado
+│   ├── zoteroVim.js       Núcleo: modos, manejo de teclas, despachador de acciones
+│   ├── zoteroVimReader.js Métodos del lector (esquema, visual/cursor, anotaciones)
+│   ├── zoteroVimMain.js   Métodos de ventana principal (editor de notas, selectores, diseño de notas)
 │   ├── preferences.xhtml  Interfaz de usuario del panel de preferencias (híbrido XUL/HTML)
 │   └── prefs.js           JS del panel de preferencias (lee/escribe preferencias de Firefox)
+├── tools/
+│   └── check-sync.js      Verifica que las tablas de atajos sigan sincronizadas
 └── icons/
-    ├── vim.svg
+    ├── icon-64x64.png     Icono del plugin (panel de preferencias, manifest)
+    ├── icon-128x128.png   Icono del plugin (manifest)
+    ├── zotero vim plus.svg  Fuente vectorial del logotipo
+    ├── vim.svg            Icono heredado (conservado por compatibilidad)
     ├── vim-48.png
     └── vim-96.png
 ```
@@ -95,7 +105,7 @@ zotero-vim/
 
 ## Modos
 
-El plugin opera en tres modos, mostrados en una pequeña superposición en la esquina inferior derecha del visor de PDF:
+El plugin opera en cuatro modos, mostrados en una pequeña superposición en la esquina inferior derecha del visor de PDF:
 
 | Modo | Indicador | Propósito |
 |------|-----------|---------|
@@ -132,6 +142,9 @@ Cursor ──v──▶ Visual ──v/Escape──▶ Normal
 | `Ctrl+f` | Desplazar página completa hacia abajo |
 | `Ctrl+b` | Desplazar página completa hacia arriba |
 
+Los prefijos de conteo multiplican el paso — `3j` desplaza tres pasos,
+`2ctrl+f` dos páginas completas, y así sucesivamente.
+
 #### Navegación por páginas
 
 | Tecla | Acción |
@@ -144,6 +157,42 @@ Cursor ──v──▶ Visual ──v/Escape──▶ Normal
 | `Shift+K` (`K`) | Cambiar a la siguiente pestaña abierta |
 | `<space>bj` | Abrir el selector de pestañas (salto basado en pistas a una pestaña abierta) |
 | `<space>n` | Abrir la superposición de diseño de notas (izquierda: lista de títulos de notas, derecha: vista previa de nota) |
+
+Los prefijos de conteo repiten el cambio de página (`3l` = tres páginas
+adelante) y `gg`/`G` con conteo saltan a ese número de página (`5G` / `5gg` =
+página 5).
+
+> **Nota:** la lectura en voz alta incorporada de Zotero también escucha las
+> teclas `l`/`r`. El plugin bloquea el reenvío de teclado del lector de Zotero
+> para las teclas que vim consume, así que `l` (página siguiente) nunca inicia
+> la lectura en voz alta. Para usarla, presiona `r` (sin enlazar por defecto)
+> o haz clic en el botón de la barra de herramientas.
+
+#### Selector difuso
+
+| Tecla | Acción |
+|-----|--------|
+| `<space>ff` | Abrir selector difuso sobre todos los elementos de la biblioteca actual |
+| `<space>fb` | Abrir selector difuso sobre los elementos de la colección actual |
+| `<space>bj` | Abrir selector de pestañas (ver abajo) |
+
+El selector abre una caja de búsqueda en el centro de la pantalla. Empieza a
+escribir para filtrar elementos (coincidencia difusa secuencial — cada
+carácter debe aparecer en orden). Luego:
+
+| Tecla | Acción |
+|-----|--------|
+| `↑` / `↓` (o `Ctrl+n` / `Ctrl+p`, `Ctrl+j` / `Ctrl+k`) | Mover la selección hacia arriba / abajo |
+| `Enter` | Seleccionar el elemento en la lista de elementos / saltar a la pestaña seleccionada |
+| `y` | Copiar la cita completa del elemento seleccionado al portapapeles |
+| `yy` | Copiar la citekey del elemento seleccionado al portapapeles |
+| `Escape` | Cerrar el selector |
+
+El **selector de pestañas** (`<space>bj`) usa la misma interfaz para las
+pestañas abiertas actualmente, más **letras de pista**: cada pestaña muestra
+una etiqueta de letra, y escribir su(s) letra(s) selecciona esa pestaña
+directamente (pistas de una o dos letras según el número de pestañas). La
+copia `y`/`yy` no está disponible en el selector de pestañas.
 
 #### Superposición de diseño de notas
 
@@ -232,10 +281,13 @@ Los combos de operador+movimiento también admiten conteos (por ejemplo `3dw`, `
 
 #### Navegación por árbol de biblioteca (panel izquierdo)
 
-Estos atajos actúan sobre el árbol de colecciones nativo de Zotero cuando ese árbol tiene el foco.
+Estos atajos actúan sobre el panel izquierdo nativo de Zotero (árbol de
+colecciones y lista de elementos) cuando ese panel tiene el foco.
 
 | Tecla | Acción |
 |-----|--------|
+| `j` / `k` | Mover la selección hacia abajo / arriba (árbol de colecciones y lista de elementos) |
+| `gg` / `G` | Saltar a la primera / última fila |
 | `h` | En la lista de elementos, mover el foco de vuelta al árbol de colecciones; en el árbol de colecciones, colapsar colección seleccionada o saltar a padre |
 | `l` | En el árbol de colecciones, expandir colección seleccionada; si ya expandida o hoja, mover el foco al interior de la lista de elementos |
 | `Enter` | En el árbol de colecciones, mover el foco al interior de la lista de elementos; en la lista de elementos, abrir el elemento/PDF seleccionado |
@@ -245,6 +297,26 @@ Estos atajos actúan sobre el árbol de colecciones nativo de Zotero cuando ese 
 | `zc` | Colapsar fila de colección actual (si ya cerrada, mantener cerrada) |
 | `R` | Expandir todas las colecciones en el árbol de biblioteca actual |
 | `M` | Colapsar todas las colecciones en el árbol de biblioteca actual |
+
+#### Acordes `<space>` de ventana principal
+
+Estos atajos funcionan en la ventana principal de Zotero (no dentro del
+lector), sobre lo que tenga el foco:
+
+| Tecla | Acción |
+|-----|--------|
+| `<space>ff` | Selector difuso sobre todos los elementos de la biblioteca actual |
+| `<space>fb` | Selector difuso sobre los elementos de la colección actual |
+| `<space>bj` | Abrir selector de pestañas |
+| `<space>n` | Alternar superposición de diseño de notas |
+| `<space>e` | Enfocar el árbol de colecciones |
+| `<space>yy` | Copiar la citekey del elemento seleccionado al portapapeles |
+| `<space>o` | Abrir el PDF del elemento seleccionado |
+| `<space>q` | Cerrar la pestaña de PDF activa |
+| `<space>/` | Enfocar la barra de búsqueda de Zotero |
+| `<space>wh` | Enfocar el árbol de colecciones (panel izquierdo) |
+| `<space>wl` | Enfocar el panel de detalles (panel derecho) |
+| `<space>ww` | Enfocar la lista de elementos (panel central) |
 
 #### Posicionamiento de vista (como los comandos z de Vim)
 
@@ -509,6 +581,22 @@ Abrir **Editar → Preferencias** (macOS: **Zotero → Ajustes**) y navegar al p
 | `cursorToVisual` | Entrar en modo Visual desde cursor actual |
 | `mainTabPick` | Abrir selector de pestañas para pestañas Zotero abiertas actualmente |
 | `mainNotesLayout` | Alternar superposición de diseño de notas (lista izquierda + vista previa derecha) |
+| `mainFuzzyAll` | Abrir selector difuso sobre todos los elementos de la biblioteca actual |
+| `mainFuzzyCollection` | Abrir selector difuso sobre los elementos de la colección actual |
+| `mainYankCitekey` | Copiar la citekey del elemento seleccionado al portapapeles |
+| `mainOpenPDF` | Abrir el PDF del elemento seleccionado |
+| `mainClosePDF` | Cerrar la pestaña de PDF activa |
+| `mainPrevTab` | Cambiar a la pestaña abierta anterior |
+| `mainNextTab` | Cambiar a la siguiente pestaña abierta |
+| `mainFocusTree` | Enfocar el árbol de colecciones (panel izquierdo) |
+| `mainFocusItems` | Enfocar la lista de elementos (panel central) |
+| `mainFocusLeft` | Enfocar el árbol de colecciones (panel izquierdo) |
+| `mainFocusRight` | Enfocar el panel de detalles (panel derecho) |
+| `mainFocusSearch` | Enfocar la barra de búsqueda de Zotero |
+| `mainNavDown` | Mover la selección hacia abajo (árbol de colecciones / lista de elementos) |
+| `mainNavUp` | Mover la selección hacia arriba (árbol de colecciones / lista de elementos) |
+| `mainNavFirst` | Saltar a la primera fila |
+| `mainNavLast` | Saltar a la última fila |
 | `toggleReaderSidebarOutline` | Alternar la superposición personalizada de explorador de esquema |
 | `focusReaderSidebar` | Enfocar o reabrir la superposición personalizada de explorador de esquema |
 | `toggleReaderSplitHorizontal` | Alternar vista dividida horizontal del lector |
@@ -536,6 +624,7 @@ Abrir **Editar → Preferencias** (macOS: **Zotero → Ajustes**) y navegar al p
 | Habilitar modo Visual | activado | Permitir entrar en modo Visual con `v` |
 | Habilitar modo Cursor | activado | Permitir entrar en modo Cursor con `c` |
 | Habilitar modo Insertar | activado | Permitir entrar en modo Insertar con `i` |
+| Modo Vim de editor de notas | activado | Habilitar edición estilo Vim en editores de notas (panel de contexto y pestañas de notas) |
 | Paso de desplazar | 60 px | Píxeles desplazados por pulsación de `j`/`k`/`H`/`L` |
 | Desplazamiento suave | activado | Habilitar comportamiento de desplazamiento suave en lector |
 | Velocidad inicial suave | 2000 px/s | Velocidad inicial para desplazamiento basado en mantenimiento de tecla |
@@ -581,6 +670,42 @@ Components.utils.cloneInto(value, targetWindow)
 Valores primitivos (números, cadenas, booleanos) cruzan compartimentos libremente.
 Olvidar `cloneInto` produce errores `"Permission denied to access property"` que
 son fáciles de ignorar porque son a menudo capturados y silenciosamente swalloweados.
+
+### Conflictos de atajos incorporados de Zotero (lectura en voz alta)
+
+La aplicación React del lector de Zotero inicia la lectura en voz alta con las
+teclas `l`/`r` y alterna la herramienta de mano / puntero con `h`/`s` desde su
+`KeyboardManager`. Las teclas presionadas dentro del iframe de PDF.js llegan a
+él mediante una **llamada JS directa** — `view._onKeyDown(event)` en el
+`pdf-view.js` del lector — no mediante propagación de eventos DOM. Eso
+significa:
+
+- `preventDefault()` / `stopPropagation()` dentro del iframe de PDF.js no
+  pueden detenerla: el listener de captura de Zotero corre en la *misma*
+  ventana que el del plugin, y el reenvío es una llamada de función, no un
+  despacho de evento.
+- Los eventos keydown nativos nunca cruzan la frontera del iframe hacia
+  reader.html, así que los interceptores a nivel de documento allí nunca ven
+  las teclas del PDF.
+
+El plugin por lo tanto parchea el propio callback de reenvío:
+
+- `_patchReaderKeyForwarding()` reemplaza `_onKeyDown` en las instancias de
+  PdfView (`_internalReader._primaryView` / `_secondaryView`) con un envoltorio
+  que descarta el evento cuando `_readerConsumesKey()` dice que vim lo manejará
+  (enlace exacto o prefijo para el modo actual). El modo Insertar lo pasa todo
+  excepto Escape.
+- El envoltorio cruza la frontera chrome/contenido mediante `Cu.unwrap` +
+  `Cu.exportFunction` (una función chrome pura sería rechazada por el
+  compartimento de contenido).
+- `_onKeyDown` además usa `stopImmediatePropagation()` (no `stopPropagation()`)
+  donde vim consume una tecla, así el listener de captura de la misma ventana
+  de Zotero se omite cuando el listener del plugin se registró primero.
+
+El parche se reaplica por el temporizador de sincronización de vista de 800 ms
+(sobrevive a recreación de vista, vistas divididas y sesiones restauradas). Si
+Zotero cambia los internos de reenvío del lector, verifica de nuevo
+`view._onKeyDown` y la tabla de atajos de `KeyboardManager`.
 
 ### Navegación de anotaciones
 

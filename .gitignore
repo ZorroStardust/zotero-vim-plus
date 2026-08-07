@@ -1,5 +1,9 @@
-# Built plugin artifact
+# Built plugin artifact (built by build.sh; attach to GitHub releases only)
 zotero-vim.xpi
+zoetero-vim-plus.xpi
+
+# AI session scratch data
+.sisyphus/
 
 # macOS
 .DS_Store

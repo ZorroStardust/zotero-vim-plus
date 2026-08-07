@@ -131,12 +131,15 @@ see README "Architecture Notes → Zotero built-in shortcut conflicts (Read Alou
 
 | File | Purpose |
 |------|---------|
-| `bootstrap.js` | Zotero lifecycle hooks (install, uninstall, start, shutdown) |
-| `content/zoteroVim.js` | All plugin logic: modes, keybindings, actions, UI |
-| `content/prefs.js` | Preferences service wrapper |
+| `bootstrap.js` | Zotero lifecycle hooks (install, uninstall, start, shutdown); loads the three content scripts |
+| `content/zoteroVim.js` | Core plugin object: modes, keybindings, key handling, action dispatcher |
+| `content/zoteroVimReader.js` | Reader-side methods (outline explorer, visual/cursor mode, annotations) |
+| `content/zoteroVimMain.js` | Main-window methods (note editor, split views, pickers, notes layout) |
+| `content/prefs.js` | Preferences panel JS + the hand-maintained default-binding tables |
 | `content/preferences.xhtml` | Preferences panel UI (XUL/HTML hybrid) |
+| `tools/check-sync.js` | Verifies `prefs.js` binding tables match `zoteroVim.js` (run by `build.sh`) |
 | `manifest.json` | Extension manifest |
-| `build.sh` | Builds the `.xpi` zip |
+| `build.sh` | Builds the `.xpi` (runs syntax + binding-sync checks when `node` is available) |
 | `PENDING_ISSUES.md` | Shelved issues with investigation notes |
 
 ## Important Constraints

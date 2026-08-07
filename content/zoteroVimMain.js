@@ -2069,7 +2069,13 @@ Object.assign(ZoteroVim, {
     }
   },
 
-  _mainOpenPDF(win, winState) {
+  async _mainOpenPDF(win, winState) {
+    // Mirrors Zotero's native Enter/double-click behaviour (zoteroPane.js
+    // viewItems): attachments open via viewAttachment, regular items open
+    // their best attachment (Zotero's getBestAttachment order — PDF matching
+    // the item URL first, then other PDFs, then snapshots/EPUB/…), and items
+    // without any attachment fall back to the URL field / DOI in an external
+    // browser.  Notes open as notes.
     try {
       let items = win.ZoteroPane.getSelectedItems();
       if (!items.length) {
@@ -2078,19 +2084,42 @@ Object.assign(ZoteroVim, {
       }
       if (!items.length) { this._mainShowStatus(win, '✗ No item selected'); return; }
       const item = items[0];
-      let attID;
+
       if (item.isAttachment()) {
-        attID = item.id;
-      } else {
+        win.ZoteroPane.viewAttachment(item.id);
+        return;
+      }
+      if (item.isNote()) {
+        win.ZoteroPane.openNote(item.id);
+        return;
+      }
+
+      let att = null;
+      if (typeof item.getBestAttachment === 'function') {
+        try { att = await item.getBestAttachment(); } catch (_) {}
+      }
+      if (!att) {
         const atts = item.getAttachments()
           .map(id => Zotero.Items.get(id))
-          .filter(a => a && a.isAttachment() && a.attachmentContentType === 'application/pdf');
-        const firstPdf = atts[0];
-        if (!firstPdf) { this._mainShowStatus(win, '✗ No PDF attachment'); return; }
-        attID = firstPdf.id;
+          .filter(a => a && a.isAttachment());
+        att = atts.find(a => a.attachmentContentType === 'application/pdf') || atts[0] || null;
       }
-      win.ZoteroPane.viewAttachment(attID);
-      Zotero.debug('[ZoteroVim] _mainOpenPDF: attID=' + attID);
+      if (att) {
+        win.ZoteroPane.viewAttachment(att.id);
+        Zotero.debug('[ZoteroVim] _mainOpenPDF: attID=' + att.id);
+        return;
+      }
+
+      let uri = item.getField('url');
+      if (!uri) {
+        const doi = item.getField('DOI');
+        if (doi) uri = 'https://doi.org/' + (Zotero.Utilities.cleanDOI?.(doi) || doi);
+      }
+      if (uri) {
+        win.ZoteroPane.loadURI(uri);
+        return;
+      }
+      this._mainShowStatus(win, '✗ No attachment');
     } catch (e) {
       Zotero.debug('[ZoteroVim] _mainOpenPDF error: ' + e);
       this._mainShowStatus(win, '✗ ' + String(e).slice(0, 40));

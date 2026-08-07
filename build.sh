@@ -6,6 +6,20 @@ set -euo pipefail
 PLUGIN_ID="zotero-vim-plus@zotero-vim"
 OUTPUT="zoetero-vim-plus.xpi"
 
+# Optional sanity checks. Only `zip` is required to build; if `node` is
+# available, verify JS syntax and that the two hand-maintained keybinding
+# tables (zoteroVim.js vs prefs.js) have not drifted.
+if command -v node >/dev/null 2>&1; then
+  echo "Checking JS syntax and binding-table sync ..."
+  node --check content/zoteroVim.js
+  node --check content/zoteroVimReader.js
+  node --check content/zoteroVimMain.js
+  node --check content/prefs.js
+  node tools/check-sync.js
+else
+  echo "Warning: node not found — skipping syntax and sync checks."
+fi
+
 echo "Building $OUTPUT ..."
 
 # Remove previous build.

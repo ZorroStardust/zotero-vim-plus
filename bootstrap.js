@@ -11,6 +11,8 @@ async function startup({ id, version, rootURI }) {
   log('Starting up v' + version);
 
   Services.scriptloader.loadSubScript(rootURI + 'content/zoteroVim.js');
+  Services.scriptloader.loadSubScript(rootURI + 'content/zoteroVimReader.js');
+  Services.scriptloader.loadSubScript(rootURI + 'content/zoteroVimMain.js');
 
   await Zotero.initializationPromise;
 

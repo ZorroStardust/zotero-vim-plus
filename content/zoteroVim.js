@@ -1159,6 +1159,10 @@ var ZoteroVim = {
 
         case 'prevPage':
           clearAnnotation();
+          if (!this._viewHasPageNav(reader)) {
+            this._showStatus(state, '✗ Page navigation not supported here', 1500);
+            break;
+          }
           for (let i = 0; i < n; i++) {
             try { reader._internalReader.navigateToPreviousPage(); } catch (e) {
               Zotero.debug('[ZoteroVim] prevPage: ' + e); break; }
@@ -1166,6 +1170,10 @@ var ZoteroVim = {
           break;
         case 'nextPage':
           clearAnnotation();
+          if (!this._viewHasPageNav(reader)) {
+            this._showStatus(state, '✗ Page navigation not supported here', 1500);
+            break;
+          }
           for (let i = 0; i < n; i++) {
             try { reader._internalReader.navigateToNextPage(); } catch (e) {
               Zotero.debug('[ZoteroVim] nextPage: ' + e); break; }
@@ -1173,6 +1181,12 @@ var ZoteroVim = {
           break;
         case 'firstPage':
           clearAnnotation();
+          if (!this._viewHasPageNav(reader)) {
+            // Snapshot-like views have no pages: gg scrolls to the top.
+            const c = getContainer();
+            if (c) this._scrollContainerTo(c, 0);
+            break;
+          }
           if (count > 0) {
             try {
               const readerWin = reader._iframeWindow;
@@ -1186,6 +1200,12 @@ var ZoteroVim = {
           break;
         case 'lastPage':
           clearAnnotation();
+          if (!this._viewHasPageNav(reader)) {
+            // Snapshot-like views have no pages: G scrolls to the bottom.
+            const c = getContainer();
+            if (c) this._scrollContainerTo(c, Math.max(0, (c.scrollHeight || 0) - (c.clientHeight || 0)));
+            break;
+          }
           if (count > 0) {
             try {
               const readerWin = reader._iframeWindow;

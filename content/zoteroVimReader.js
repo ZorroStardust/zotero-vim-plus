@@ -2378,7 +2378,19 @@ Object.assign(ZoteroVim, {
       const container =
         pdfWin.PDFViewerApplication?.pdfViewer?.container ||
         pdfWin.document.getElementById('viewerContainer');
-      if (!container) return;
+      if (!container) {
+        // Non-PDF views (snapshot/EPUB): no page elements — scroll the
+        // document itself to top / centre / bottom.
+        const c = this._getScrollContainer(pdfWin);
+        if (!c) return;
+        const h  = c.scrollHeight || 0;
+        const vh = c.clientHeight || 0;
+        let top = 0;
+        if (position === 'bottom')  top = Math.max(0, h - vh);
+        else if (position === 'center') top = Math.max(0, (h - vh) / 2);
+        this._scrollContainerTo(c, top);
+        return;
+      }
 
       const pageNum = pdfWin.PDFViewerApplication?.pdfViewer?.currentPageNumber || 1;
       const pageEl  = pdfWin.document.querySelector(`.page[data-page-number="${pageNum}"]`);
@@ -2400,8 +2412,12 @@ Object.assign(ZoteroVim, {
   },
 
   _getScrollContainer(pdfWin) {
+    // PDF views scroll a dedicated #viewerContainer div; snapshot and EPUB
+    // views scroll their iframe document itself (document.scrollingElement).
     return pdfWin.PDFViewerApplication?.pdfViewer?.container ||
-           pdfWin.document.getElementById('viewerContainer');
+           pdfWin.document.getElementById('viewerContainer') ||
+           pdfWin.document.scrollingElement ||
+           pdfWin.document.documentElement;
   },
 
   _scrollContainerBy(container, dx, dy, opts = null) {
@@ -3014,15 +3030,32 @@ Object.assign(ZoteroVim, {
 
   /**
    * Whether a search is currently active in any reader view.  Mirrors the
-   * guard PdfView.findNext()/findPrevious() use internally (_findState.active).
+   * guard PdfView.findNext()/findPrevious() use internally (_findState.active);
+   * for non-PDF views (snapshot/EPUB) falls back to the reader app's
+   * view-agnostic find state.
    */
   _isSearchActive(reader) {
     try {
       const ir = reader?._internalReader;
       const pv = ir?._primaryView?._findState?.active;
       const sv = ir?._secondaryView?._findState?.active;
-      return !!(pv || sv);
+      if (pv || sv) return true;
+      const st = ir?._state;
+      return !!(st?.primaryViewFindState?.active || st?.secondaryViewFindState?.active);
     } catch (_) { return false; }
+  },
+
+  /**
+   * Whether the current reader view supports page navigation.  PDF and EPUB
+   * views expose navigateToNextPage()/… on the view; snapshot views are a
+   * single scrolling document and do not.
+   */
+  _viewHasPageNav(reader) {
+    try {
+      const ir = reader?._internalReader;
+      const view = ir?._lastView || ir?._primaryView;
+      return typeof view?.navigateToNextPage === 'function';
+    } catch (_) { return true; }
   },
 
   _clearSearch(reader, pdfWin) {

@@ -55,6 +55,10 @@ Vibe coded with Claude Sonnet 4.5.
   pointer tool / find bar
 - **Text post-processing** — all yank operations normalise Unicode ligatures
   (`ﬁ` → `fi`, etc.) and collapse PDF line-break newlines into spaces
+- **Snapshot & EPUB support** — scrolling, search (`/` + `n`/`N`), `gg`/`G`
+  (top/bottom) and `zt`/`zz`/`zb` work in web snapshots and EPUBs too
+  (snapshots have no pages, so `h`/`l` show a hint). Visual mode, cursor mode
+  and annotation commands remain PDF-specific
 
 ---
 

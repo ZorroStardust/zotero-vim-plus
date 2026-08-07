@@ -36,8 +36,11 @@ the README / CHANGELOG once implemented, and mark them done below.
 
 ## Tier 3 — Large projects (stretch)
 
-- **EPUB / snapshot support** — the plugin is PDF-specific today (targets
-  `_internalReader._primaryView` PDF.js); EPUB is a different DOM stack.
+- **EPUB / snapshot support** — **partially done**: scrolling, search, `gg`/`G`
+  and `zt`/`zz`/`zb` now work in snapshots and EPUBs (scroll container
+  fallback + view-agnostic search state). Remaining: visual mode, cursor mode
+  and annotation commands are still PDF-specific (they depend on the PDF.js
+  `.textLayer` DOM and annotation APIs).
 - **Deeper native sidebar integration** (README TODO) — the outline explorer
   already drives the native sidebar (`_readerSetSidebarOpen`,
   `_readerActivateOutlineTab`, `_readerOutlineSendKey`, …); extend it to a

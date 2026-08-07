@@ -2,7 +2,7 @@
 /* eslint-disable no-unused-vars */
 
 /**
- * Zotero Vim — main plugin object.
+ * Zotero Vim Plus — main plugin object.
  *
  * Architecture:
  *   Zotero's PDF reader is a 3-level iframe stack:
@@ -242,8 +242,8 @@ var ZoteroVim = {
       pluginID: this.id,
       src:      this.rootURI + 'content/preferences.xhtml',
       scripts:  [this.rootURI + 'content/prefs.js'],
-      label:    'Zotero Vim',
-      image:    this.rootURI + 'icons/vim.svg',
+      label:    'Zotero Vim Plus',
+      image:    this.rootURI + 'icons/icon-64x64.png',
     });
   },
 

@@ -145,7 +145,7 @@ see README "Architecture Notes → Zotero built-in shortcut conflicts (Read Alou
 
 ## Important Constraints
 
-- **Zotero 7/8 only.** The plugin targets the Firefox Gecko runtime. Do not assume Node.js
+- **Zotero 7/8/9 only.** The plugin targets the Firefox Gecko runtime. Do not assume Node.js
   or browser APIs not available in Gecko.
 - **No external dependencies.** Do not add npm packages, CDN scripts, or external libraries.
 - **No TypeScript.** The codebase is plain JavaScript.

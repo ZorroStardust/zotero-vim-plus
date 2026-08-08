@@ -1,8 +1,8 @@
 {
   "manifest_version": 2,
   "name": "Zotero Vim Plus",
-  "version": "1.4.4",
-  "description": "Vim-like keybindings for the Zotero PDF reader. Navigate, scroll, anannotate and note with keyboard shortcuts inspired by Vimium/Vim/LazyVim.",
+  "version": "1.5.0",
+  "description": "Vim-like keybindings for the Zotero PDF reader. Navigate, scroll, annotate and note with keyboard shortcuts inspired by Vimium/Vim/LazyVim.",
   "author": "ZorroStardust, Alex Fink(original author)",
   "homepage_url": "https://github.com/ZorroStardust/zotero-vim-plus",
   "icons": {
@@ -19,7 +19,7 @@
     "zotero": {
       "id": "zotero-vim-plus@zotero-vim",
       "update_url": "https://raw.githubusercontent.com/ZorroStardust/zotero-vim-plus/main/updates.json",
-      "strict_min_version": "7.999",
+      "strict_min_version": "7.0",
       "strict_max_version": "9.*"
     }
   }

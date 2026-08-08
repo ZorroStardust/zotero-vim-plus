@@ -32,6 +32,7 @@ Vibe coded with Claude Sonnet 4.5.
 - [Customising keybindings](#customising-keybindings)
 - [Settings](#settings)
 - [Architecture notes](#architecture-notes)
+- [License](#license)
 
 ---
 
@@ -809,3 +810,9 @@ The annotation comment is a `contenteditable` div with
 `[data-sidebar-annotation-id="${key}"]`.  It is focused with `.focus()` only —
 calling `.click()` from the chrome context creates a privileged `MouseEvent`
 that content code cannot read, causing a security wrapper error.
+
+---
+
+## License
+
+[GNU Affero General Public License v3.0](LICENSE) (AGPL-3.0).

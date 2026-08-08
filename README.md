@@ -1,6 +1,6 @@
 # Zotero Vim Plus
 
-> **Languages:** [English](README.md) · [Español](README.es-ES.md)
+> **Languages:** [English](README.md) · [Español](README.es-ES.md) · [中文](README.zh-CN.md)
 
 > Original repository: https://codeberg.org/finktank/zotero-vim
 >

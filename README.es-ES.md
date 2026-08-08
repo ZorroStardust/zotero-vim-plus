@@ -1,6 +1,6 @@
 # Zotero Vim Plus
 
-> **Idiomas:** [English](README.md) · [Español](README.es-ES.md)
+> **Idiomas:** [English](README.md) · [Español](README.es-ES.md) · [中文](README.zh-CN.md)
 
 > Repositorio original: https://codeberg.org/finktank/zotero-vim
 >
@@ -764,3 +764,9 @@ El campo de comentario de la anotación es un div `contenteditable` con
 `[data-sidebar-annotation-id="${key}"]`. Es enfocado con `.focus()` solo —
 llamar `.click()` desde el contexto chrome crea un `MouseEvent` privilegiado
 que el código de contenido no puede leer, causando un error de wrapper de seguridad.
+
+---
+
+## Licencia
+
+[GNU Affero General Public License v3.0](LICENSE) (AGPL-3.0).

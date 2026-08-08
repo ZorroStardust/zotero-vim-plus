@@ -243,7 +243,7 @@ var ZoteroVim = {
     Zotero.PreferencePanes.register({
       pluginID: this.id,
       src:      this.rootURI + 'content/preferences.xhtml',
-      scripts:  [this.rootURI + 'content/prefs.js'],
+      scripts:  [this.rootURI + 'content/i18n.js', this.rootURI + 'content/prefs.js'],
       label:    'Zotero Vim Plus',
       image:    this.rootURI + 'icons/icon-64x64.png',
     });

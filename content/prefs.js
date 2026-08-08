@@ -319,6 +319,22 @@ function _zvInit() {
   if (scrollInput._zvInited) return;
   scrollInput._zvInited = true;
 
+  // ── Language ────────────────────────────────────────────────────────────────
+  const langSelect = document.getElementById("zv-language");
+  const lang = ZV_I18N_CURRENT_LANG();
+  if (langSelect) {
+    langSelect.value = lang;
+    langSelect.addEventListener("change", () => {
+      const next = langSelect.value === "zh-CN" ? "zh-CN" : "en";
+      _zvSet("language", next);
+      ZV_I18N_APPLY(document, next);
+      // Re-render action dropdowns with labels in the new language,
+      // preserving any unsaved edits in the table.
+      _zvRenderTable(_zvReadTable());
+    });
+  }
+  ZV_I18N_APPLY(document, lang);
+
   // ── Modes ──────────────────────────────────────────────────────────────────
   const visualCb = document.getElementById("zv-visual-enabled");
   const insertCb = document.getElementById("zv-insert-enabled");
@@ -390,7 +406,7 @@ function _zvInit() {
       _zvSet("smoothScroll.deceleration", deceleration);
       _zvSet("smoothScroll.stopOnRelease", !!stopOnReleaseCb?.checked);
 
-      _zvFlashStatus(scrollStatus, "Applied!", "#5FB236");
+      _zvFlashStatus(scrollStatus, ZV_I18N_STR("zv.status.applied", ZV_I18N_CURRENT_LANG()), "#5FB236");
     });
   }
 
@@ -431,11 +447,11 @@ function _zvInit() {
   const saveBtn    = document.getElementById("zv-save");
   const saveStatus = document.getElementById("zv-save-status");
   if (saveBtn) {
-    saveBtn.textContent = "Apply bindings";
+    saveBtn.textContent = ZV_I18N_STR("zv.bindings.apply", lang);
     saveBtn.addEventListener("click", () => {
       _zvSaveBindings();
       if (saveStatus) {
-        _zvFlashStatus(saveStatus, "Saved!", "#5FB236");
+        _zvFlashStatus(saveStatus, ZV_I18N_STR("zv.status.saved", ZV_I18N_CURRENT_LANG()), "#5FB236");
       }
     });
   }
@@ -466,6 +482,7 @@ function _zvKeyFromDisplay(display) {
 }
 
 function _zvMakeRow(mode, key, action, isNew) {
+  const lang = ZV_I18N_CURRENT_LANG();
   const tr = document.createElement("tr");
   tr.style.borderBottom = "1px solid #eee";
   tr.dataset.mode = mode || "normal";   // CSS [data-mode=...] handles colouring
@@ -510,7 +527,7 @@ function _zvMakeRow(mode, key, action, isNew) {
   actSel.style.cssText = "width:100%;padding:2px 4px;";
   for (const a of ZV_ALL_ACTIONS) {
     const o = document.createElement("option");
-    o.value = a; o.textContent = ZV_ACTION_LABELS[a] || a;
+    o.value = a; o.textContent = ZV_I18N_ACTION(a, lang) || a;
     if (a === action) o.selected = true;
     actSel.appendChild(o);
   }

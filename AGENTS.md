@@ -12,6 +12,7 @@ no framework, no npm, no build pipeline beyond a simple zip script.
 ```bash
 ./build.sh
 ```
+On Windows (no bash needed): `powershell -ExecutionPolicy Bypass -File tools\build.ps1`
 Creates `zotero-vim.xpi` — a zip of `manifest.json`, `bootstrap.js`, `content/`, and `icons/`.
 
 ### Installing

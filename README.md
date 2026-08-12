@@ -101,6 +101,15 @@ cd zotero-vim-plus
 package managers are required — only `zip` (available by default on macOS and
 most Linux distributions).
 
+On Windows, use the equivalent PowerShell script instead (no bash needed):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\build.ps1
+```
+
+Both scripts run JS syntax and keybinding-table sync checks when `node` is
+available.
+
 ```
 zotero-vim-plus/
 ├── manifest.json          Plugin manifest (ID, version, Zotero version range)
@@ -540,13 +549,23 @@ useful when you need to type into Zotero's own UI elements without the vim
 bindings intercepting your keystrokes.
 
 When `i` is pressed in Normal mode while an annotation is selected (via `[`/`]`),
-the plugin automatically enters Insert mode **and** focuses the annotation's
-comment field so you can start typing immediately.  Press `Escape` to save and
-return to Normal mode.
+the plugin enters Insert mode and opens **its own comment overlay** over the
+PDF — a floating input box rendered inside the PDF view (the only place that
+receives the OS keyboard focus, so typing and IME composition work natively).
+The annotation's existing comment is pre-filled; the quoted text is shown as
+context.  Zotero's own popup is not used at all.
 
 | Key | Action |
 |-----|--------|
-| `Escape` | Exit Insert mode → Normal mode |
+| `Enter` | New line in the comment |
+| `Escape` | Save as the official annotation comment and close the overlay → Normal mode |
+
+The comment is also autosaved 2 seconds after the last keystroke, and `visual i`
+(add note) opens the same overlay for the newly created annotation.
+
+> **Note:** if pressing `i` shows a red `✗` status instead, the plugin writes
+> detailed diagnostics to `zv-startup.log` in your Zotero profile directory
+> (`%APPDATA%\Zotero\Zotero\Profiles\...` on Windows).
 
 ---
 
@@ -568,8 +587,11 @@ return to Normal mode.
 1. Press `]` / `[` to move to the next / previous annotation.  The annotation
    is highlighted in the PDF viewer and the sidebar scrolls to its card.
 2. Press `y` to copy the highlighted text, `yy` to copy the comment.
-3. Press `i` (or `Enter`) to open the comment field and type a note.  Press
-   `Escape` to return to Normal mode.
+3. Press `i` (or `Enter`) to open the comment overlay and type a note.
+   The plugin's own floating input box appears over the PDF with the comment
+   pre-filled and the highlighted text quoted as context (Zotero's popup is
+   not used).  Press `Enter` for a new line, `Escape` to save and return to
+   Normal mode.
 4. Press `dd` to delete the annotation.
 
 ---
@@ -816,6 +838,21 @@ The patch is re-applied by the 800 ms view-sync timer so it survives view
 recreation, split views, and restored sessions.  If Zotero changes the
 reader's forwarding internals, re-verify `view._onKeyDown` and the
 `KeyboardManager` shortcut table (keyboard-manager.js).
+
+**Enter opening the annotation popup (Zotero 9).**  The popup is opened by
+`PdfView._handleKeyDown()` — a bound capture listener on the PDF iframe
+window registered before the plugin's listeners — which handles plain
+`Enter` on a selected annotation *before* calling `view._onKeyDown`
+(`Shift+Enter` does not match, which is why it inserts a newline normally).
+Wrapping `_onKeyDown` can therefore never intercept it.  Instead,
+`_patchReaderTextAnnotationFocus()` wraps `view._textAnnotationFocused()`
+(a dynamic method call that `_handleKeyDown()` uses as its early-return
+guard) to report the plugin's comment-overlay textarea as a focused text
+annotation.  Zotero then skips all its key/pointer handling while the
+overlay is being edited: Enter becomes a native newline, no popup opens,
+and no keys reach the KeyboardManager.  The insert-mode popup guard
+(`_armAnnotationPopupGuard`) closes a stray `.annotation-popup` with a
+synthetic Escape as a backstop.
 
 ### Annotation navigation
 

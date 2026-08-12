@@ -592,8 +592,7 @@ var ZoteroVim = {
           active.tagName === 'INPUT') {
         e.preventDefault();
         e.stopPropagation();
-        active.blur();
-        this._setMode(state, 'normal');
+        this._exitAnnotationInsert(state, reader);
         setTimeout(() => {
           try {
             const targetWin = this._activeReaderPdfWin(reader, pdfWin) || pdfWin;
@@ -652,6 +651,105 @@ var ZoteroVim = {
       outerDoc.addEventListener('keydown', findBarReturnBridge, true);
     }
 
+    // ── TEMP DIAGNOSTIC (remove after debugging): trace insert-mode events ──
+    // Logs every keydown/blur/pointerdown in the reader document while insert
+    // mode is active and an editable is focused, plus the OS-focused window.
+    // Output goes to <profile>/zv-startup.log with the "[ZoteroVim] trace:"
+    // prefix so failures are diagnosable without the Error Console.
+    // Stored on the reader state so _enterAnnotationInsertMode can reset the
+    // budget for each insert session.
+    const zvTrace = state._zvTrace = { n: 0, max: 600 };
+    const zvT = (msg) => {
+      if (zvTrace.n >= zvTrace.max) return;
+      zvTrace.n++;
+      try { zvLogFile('[ZoteroVim] trace: ' + msg); } catch (_) {}
+    };
+    const zvIsEd = (el) => !!(el && (el.isContentEditable || el.tagName === 'TEXTAREA' || el.tagName === 'INPUT'));
+    const zvEl = (el) => {
+      if (!el) return 'null';
+      return el.tagName + '.' + String(el.className || '').split(' ')[0] + (el.id ? '#' + el.id : '');
+    };
+    const zvWin = () => {
+      try {
+        const fw = Services.focus.focusedWindow;
+        if (fw === outerDoc?.defaultView) return 'readerWin';
+        if (fw === pdfWin) return 'pdfWin';
+        return (fw?.location?.href || '?');
+      } catch (_) { return '?'; }
+    };
+    const zvRect = (el) => {
+      try {
+        const r = el.getBoundingClientRect();
+        return Math.round(r.width) + 'x' + Math.round(r.height) + '@' + Math.round(r.left) + ',' + Math.round(r.top);
+      } catch (_) { return '?'; }
+    };
+    const zvKeyTrace = (e) => {
+      // Log any keydown aimed at an editable (even after mode flipped) —
+      // missing keydowns while an editor is focused means keystrokes never
+      // reach the reader document at all.
+      if (!zvIsEd(e.target)) return;
+      const act = outerDoc?.activeElement;
+      zvT('keydown key=' + e.key + ' code=' + e.code + ' target=' + zvEl(e.target)
+        + ' active=' + zvEl(act) + ' mode=' + state.mode + ' rect=' + zvRect(e.target)
+        + ' win=' + zvWin() + ' hasFocus=' + !!outerDoc?.hasFocus?.());
+      setTimeout(() => {
+        if (zvTrace.n < zvTrace.max) {
+          zvTrace.n++;
+          try { zvLogFile('[ZoteroVim] trace:   after keydown: defaultPrevented=' + e.defaultPrevented
+            + ' activeSame=' + (outerDoc?.activeElement === act) + ' connected=' + e.target.isConnected); } catch (_) {}
+        }
+      }, 0);
+    };
+    const zvBlurTrace = (e) => {
+      if (state.mode !== 'insert') return;
+      if (!zvIsEd(e.target)) return;
+      const t = e.target;
+      zvT('focusout from=' + zvEl(t) + ' to=' + zvEl(e.relatedTarget) + ' win=' + zvWin()
+        + ' connected=' + t.isConnected
+        + ' popup=' + !!outerDoc?.querySelector('.annotation-popup')
+        + ' activeAfter=' + zvEl(outerDoc?.activeElement)
+        + ' mode=' + state.mode);
+    };
+    const zvPointerTrace = (e) => {
+      if (state.mode !== 'insert') return;
+      zvT('pointerdown target=' + zvEl(e.target) + ' active=' + zvEl(outerDoc?.activeElement)
+        + ' win=' + zvWin());
+      setTimeout(() => {
+        if (zvTrace.n < zvTrace.max) {
+          zvTrace.n++;
+          try { zvLogFile('[ZoteroVim] trace:   after pointerdown: active=' + zvEl(outerDoc?.activeElement)
+            + ' popup=' + !!outerDoc?.querySelector('.annotation-popup')); } catch (_) {}
+        }
+      }, 0);
+    };
+    // Detect removal of the annotation popup / comment editor from the DOM —
+    // a removed focused element blurs to body with relatedTarget null.
+    const zvMutationTrace = (muts) => {
+      if (state.mode !== 'insert') return;
+      for (const m of muts) {
+        for (const node of m.removedNodes) {
+          if (!node || node.nodeType !== 1) continue;
+          if (node.classList?.contains('annotation-popup') || node.querySelector?.('.annotation-popup')
+              || (node.classList?.contains('content') && zvIsEd(node))) {
+            zvT('removed from DOM: ' + zvEl(node));
+          }
+        }
+      }
+    };
+    let zvObserver = null;
+    try {
+      if (typeof outerDoc?.body?.addEventListener === 'function'
+          && typeof outerDoc.defaultView?.MutationObserver === 'function') {
+        zvObserver = new outerDoc.defaultView.MutationObserver(zvMutationTrace);
+        zvObserver.observe(outerDoc.body, { childList: true, subtree: true });
+      }
+    } catch (_) {}
+    if (outerDoc) {
+      outerDoc.addEventListener('keydown', zvKeyTrace, true);
+      outerDoc.addEventListener('focusout', zvBlurTrace, true);
+      outerDoc.addEventListener('pointerdown', zvPointerTrace, true);
+    }
+
     state.cleanup = () => {
       this._stopSmoothHoldScroll(state, pdfWin);
       this._closeReaderOutlineExplorer(state);
@@ -661,9 +759,19 @@ var ZoteroVim = {
       if (outerDoc) outerDoc.removeEventListener('keydown', outerEscapeHandler, true);
       if (outerDoc) outerDoc.removeEventListener('keydown', outerKeyHandler, true);
       if (outerDoc) outerDoc.removeEventListener('keydown', findBarReturnBridge, true);
+      if (outerDoc) {
+        outerDoc.removeEventListener('keydown', zvKeyTrace, true);
+        outerDoc.removeEventListener('focusout', zvBlurTrace, true);
+        outerDoc.removeEventListener('pointerdown', zvPointerTrace, true);
+      }
+      try { zvObserver?.disconnect(); } catch (_) {}
       state.indicatorEl?.remove();
       try { for (const el of pdfWin.document.querySelectorAll('[data-zv-cursor]')) el.remove(); } catch (_) {}
       clearTimeout(state.keyTimeout);
+      clearTimeout(state.insertWatchdog);
+      clearTimeout(state._commentAutosaveTimer);
+      // Best-effort save if the reader goes away while the overlay is open.
+      try { this._saveAndCloseAnnotationCommentOverlay(state); } catch (_) {}
       if (reader.itemID) this._readerStateByItemID.delete(reader.itemID);
       if (reader._instanceID) this._injectedReaders.delete(reader._instanceID);
     };
@@ -744,7 +852,23 @@ var ZoteroVim = {
 
       this._injectSelectionCSS(viewWin);
       const handlers = {
-        keyDown: (e) => this._onKeyDown(e, reader, state, viewWin),
+        keyDown: (e) => {
+          // Trace IME-related keydowns (Process / composing) in the PDF
+          // window — this is where OS focus sits, so composition events
+          // start here.  Throttled to ~2 lines/second.
+          if (state.mode === 'insert' && (e.key === 'Process' || e.isComposing)) {
+            const now = Date.now();
+            if (now - (state._lastProcessTraceTS || 0) > 500) {
+              state._lastProcessTraceTS = now;
+              try {
+                zvLogFile('[ZoteroVim] trace: keydown pdf key=' + e.key
+                  + ' code=' + e.code + ' isComposing=' + e.isComposing
+                  + ' target=' + (e.target?.tagName || '?'));
+              } catch (_) {}
+            }
+          }
+          this._onKeyDown(e, reader, state, viewWin);
+        },
         keyUp: (e) => this._onKeyUp(e, state, viewWin),
         blur: () => this._stopSmoothHoldScroll(state, viewWin),
         selection: () => {
@@ -775,6 +899,7 @@ var ZoteroVim = {
     }
 
     this._patchReaderKeyForwarding(reader, state);
+    this._patchReaderTextAnnotationFocus(reader, state);
   },
 
   /**
@@ -799,14 +924,40 @@ var ZoteroVim = {
         // Work on the raw content object — assignments through an Xray would
         // only touch the Xray shadow, not the view Zotero actually calls.
         try { view = Components.utils.unwrap(view); } catch (_) {}
-        if (typeof view._onKeyDown !== 'function') continue;
         const patches = state.zvKeyPatches = state.zvKeyPatches || new Map();
-        if (patches.has(view)) continue;
+        if (patches.has(view)) {
+          // Zotero may replace _onKeyDown when recreating reader internals —
+          // if the stored wrapper is no longer installed, re-patch.
+          const patch = patches.get(view);
+          try {
+            if (view._onKeyDown === patch.exported) continue;
+            try {
+              zvLogFile('[ZoteroVim] trace: _onKeyDown replaced by Zotero — re-patching');
+            } catch (_) {}
+            patches.delete(view);
+          } catch (_) {}
+        }
+        if (typeof view._onKeyDown !== 'function') {
+          const logged = state._patchMissingLogged = state._patchMissingLogged || new Set();
+          if (!logged.has(view)) {
+            logged.add(view);
+            try { zvLogFile('[ZoteroVim] trace: no _onKeyDown on view — key forwarding patch skipped'); } catch (_) {}
+          }
+          continue;
+        }
         const zv = this;
         const orig = view._onKeyDown;
         const wrapperFn = function (event) {
           try {
-            if (zv._readerConsumesKey(state, zv._keyString(event))) return;
+            const keyStr = zv._keyString(event);
+            if (zv._readerConsumesKey(state, keyStr)) {
+              const n = state._dropTraceN = (state._dropTraceN || 0) + 1;
+              if (n <= 40) {
+                try { zvLogFile('[ZoteroVim] trace: dropForward key=' + keyStr
+                  + ' mode=' + state.mode); } catch (_) {}
+              }
+              return;
+            }
           } catch (_) {}
           return orig.call(view, event);
         };
@@ -826,19 +977,93 @@ var ZoteroVim = {
     }
   },
 
+  /**
+   * Make Zotero treat the plugin's comment-overlay textarea as its own
+   * focused text annotation while it has focus.
+   *
+   * Zotero 9's PdfView._handleKeyDown() is a bound capture listener on the
+   * PDF iframe window that runs before anything we can register, and it
+   * opens the annotation popup on plain Enter BEFORE calling view._onKeyDown
+   * (which our _patchReaderKeyForwarding wraps) — so that wrapper can never
+   * see Enter.  _handleKeyDown() early-returns on
+   * `this._textAnnotationFocused()`, which is a dynamic method call we CAN
+   * intercept: while our textarea is focused the wrapper returns true and
+   * Zotero skips all its key/pointer handling — no popup, and its
+   * preventDefault() no longer eats the native Enter newline.
+   *
+   * Re-applied periodically by _syncReaderPdfViewListeners() (view
+   * recreation, restored sessions); views without the method (EPUB/snapshot)
+   * are skipped.
+   */
+  _patchReaderTextAnnotationFocus(reader, state) {
+    try {
+      const internal = reader?._internalReader;
+      const views = [internal?._primaryView, internal?._secondaryView];
+      for (let view of views) {
+        if (!view) continue;
+        try { view = Components.utils.unwrap(view); } catch (_) {}
+        const patches = state.zvTextFocusPatches = state.zvTextFocusPatches || new Map();
+        if (patches.has(view)) {
+          const patch = patches.get(view);
+          try {
+            if (view._textAnnotationFocused === patch.exported) continue;
+            try {
+              zvLogFile('[ZoteroVim] trace: _textAnnotationFocused replaced — re-patching');
+            } catch (_) {}
+            patches.delete(view);
+          } catch (_) {}
+        }
+        if (typeof view._textAnnotationFocused !== 'function') continue;
+        const orig = view._textAnnotationFocused;
+        const wrapperFn = function () {
+          try {
+            const input = state._commentOverlayInput;
+            if (input?.isConnected
+                && view._iframeWindow?.document?.activeElement === input) {
+              return true;
+            }
+          } catch (_) {}
+          return orig.call(view);
+        };
+        let exported;
+        try {
+          exported = Components.utils.exportFunction(wrapperFn, view);
+        } catch (_) {
+          exported = wrapperFn;
+        }
+        view._textAnnotationFocused = exported;
+        patches.set(view, { orig, exported });
+      }
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] _patchReaderTextAnnotationFocus error: ' + e);
+    }
+  },
+
   _restoreReaderKeyForwarding(reader, state) {
     try {
       const patches = state?.zvKeyPatches;
-      if (!patches) return;
-      for (const [view, patch] of patches) {
-        try {
-          if (view && patch && typeof patch.orig === 'function'
-            && typeof view._onKeyDown === 'function') {
-            view._onKeyDown = patch.orig;
-          }
-        } catch (_) {}
+      if (patches) {
+        for (const [view, patch] of patches) {
+          try {
+            if (view && patch && typeof patch.orig === 'function'
+              && typeof view._onKeyDown === 'function') {
+              view._onKeyDown = patch.orig;
+            }
+          } catch (_) {}
+        }
+        patches.clear();
       }
-      patches.clear();
+      const textFocusPatches = state?.zvTextFocusPatches;
+      if (textFocusPatches) {
+        for (const [view, patch] of textFocusPatches) {
+          try {
+            if (view && patch && typeof patch.orig === 'function') {
+              view._textAnnotationFocused = patch.orig;
+            }
+          } catch (_) {}
+        }
+        textFocusPatches.clear();
+      }
     } catch (e) {
       Zotero.debug('[ZoteroVim] _restoreReaderKeyForwarding error: ' + e);
     }
@@ -921,6 +1146,11 @@ var ZoteroVim = {
   _setMode(state, mode) {
     if (mode !== 'normal') this._stopSmoothHoldScroll(state, state.pdfWin);
     state.mode = mode;
+    // Stop the insert-mode focus watchdog when leaving insert mode.
+    if (mode !== 'insert') {
+      clearTimeout(state.insertWatchdog);
+      state.insertWatchdog = null;
+    }
     state.keyBuffer = '';
     clearTimeout(state.keyTimeout);
     state.keyTimeout = null;
@@ -1124,9 +1354,21 @@ var ZoteroVim = {
     if (state.mode === 'insert') {
       const k = this._keyString(event);
       if (k === 'escape') {
+        // Escape while editing an annotation comment: save and close the
+        // plugin's comment overlay.
         event.preventDefault();
         event.stopImmediatePropagation();
-        this._setMode(state, 'normal');
+        this._exitAnnotationInsert(state, reader);
+        return;
+      }
+      // While the plugin's own comment overlay is focused, keep Zotero's
+      // same-window capture listener from also acting on the key (Enter
+      // opens the annotation popup, Backspace deletes the annotation).
+      // stopImmediatePropagation without preventDefault: the textarea still
+      // receives the native keystroke.
+      const t = event.target;
+      if (state._commentOverlayInput && t === state._commentOverlayInput) {
+        event.stopImmediatePropagation();
       }
       return;
     }
@@ -1263,6 +1505,29 @@ var ZoteroVim = {
   },
 
   /**
+   * Escape pressed while editing an annotation comment: save the overlay's
+   * text as the official annotation comment (saveTx), close the overlay,
+   * return to normal mode and hand focus back to the PDF view.
+   */
+  async _exitAnnotationInsert(state, reader) {
+    state._composing = false;
+    state._composingSince = 0;
+    const hadOverlay = !!(state._commentOverlay || state._commentOverlayInput);
+    let saved = true;
+    if (hadOverlay) {
+      try { saved = await this._saveAndCloseAnnotationCommentOverlay(state); } catch (_) {}
+    }
+    this._setMode(state, 'normal');
+    try {
+      const targetWin = this._activeReaderPdfWin?.(reader) || state.activePdfWin || state.pdfWin;
+      targetWin?.focus();
+    } catch (_) {}
+    if (hadOverlay) {
+      this._showStatus(state, saved ? '✓ saved' : '✗ save failed', saved ? 1200 : 2500);
+    }
+  },
+
+  /**
    * Arm the pending-key timeout for mark chords ("m", "`", "dm").
    * Clears a stale prefix so a later key never mis-fires a mark command.
    */
@@ -1343,7 +1608,22 @@ var ZoteroVim = {
    */
   _readerConsumesKey(state, keyStr) {
     if (!keyStr) return false;
-    if (state.mode === 'insert' && keyStr !== 'escape') return false;
+    if (state.mode === 'insert') {
+      // Escape always exits insert mode.
+      if (keyStr === 'escape') return true;
+      // While editing an annotation comment the plugin traps printable
+      // characters, Backspace/Delete and Enter itself (Zotero's focus
+      // machinery prevents the editor from receiving real keydowns) — keep
+      // Zotero's KeyboardManager from also acting on them (toggling the
+      // pointer tool on 's', deleting annotations on Backspace/Delete, …).
+      // This also stays active during IME composition (the composition is
+      // browser-managed; consuming the forwarded copies only suppresses
+      // Zotero's shortcuts) and during stuck sessions.
+      if (state.lastAnnotationKey
+          && (keyStr.length === 1 || keyStr === 'backspace'
+              || keyStr === 'delete' || keyStr === 'enter')) return true;
+      return false;
+    }
     // The marks explorer overlay consumes every key.
     if (state.marksExplorerOpen) return true;
     // A pending mark prefix ("m", "`", "dm") means the next alphanumeric key
@@ -1485,7 +1765,7 @@ var ZoteroVim = {
         case 'openSearch':      this._openSearch(reader, pdfWin);           break;
         case 'prevAnnotation':  this._navigateAnnotation(state, reader, -1); break;
         case 'nextAnnotation':  this._navigateAnnotation(state, reader, +1); break;
-        case 'editAnnotation':    this._editAnnotation(state, reader);         break;
+        case 'editAnnotation':    this._enterAnnotationInsertMode(state, reader); break;
         case 'deleteAnnotation':  this._deleteAnnotation(state, reader);                        break;
         case 'recolorYellow':   this._recolorAnnotation(state, reader, this.COLORS.yellow); break;
         case 'recolorRed':      this._recolorAnnotation(state, reader, this.COLORS.red);    break;
@@ -1534,9 +1814,11 @@ var ZoteroVim = {
         case 'enterInsert':
           if (this.isModeEnabled('insert')) {
             this._setMode(state, 'insert');
-            // If an annotation is currently selected, focus its comment field.
-            if (state.lastAnnotationKey) {
-              this._focusAnnotationComment(state, reader);
+            // If an annotation is currently selected, focus its comment field
+            // (in-page popup flow).  The key survives scrolls via Zotero's
+            // own selection state (lastAnnotationKey is cleared by scrolling).
+            if (this._selectedAnnotationKey(state, reader)) {
+              this._enterAnnotationInsertMode(state, reader);
             }
           }
           break;

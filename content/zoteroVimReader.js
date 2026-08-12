@@ -3884,217 +3884,359 @@ Object.assign(ZoteroVim, {
   /**
    * Focus the comment field of the currently-selected annotation.
    * Called when `i` is pressed in normal mode with an annotation selected.
-   *
-   * The comment field is a contentEditable div with aria-label "Annotation comment"
-   * inside the sidebar annotation card [data-sidebar-annotation-id="${key}"].
+   * Opens the plugin's own comment overlay (see _enterAnnotationInsertMode).
    */
   _focusAnnotationComment(state, reader, opts = null) {
-    const key = state.lastAnnotationKey;
-    const outerDoc = reader._iframeWindow?.document;
-    if (!outerDoc || !key) return;
-    const maxAttempts = Math.max(1, Number(opts?.maxAttempts || 8));
-    const retryDelayMs = Math.max(50, Number(opts?.retryDelayMs || 200));
-    const initialDelayMs = Math.max(0, Number(opts?.initialDelayMs || 100));
-
-    const tryFocus = (attempt) => {
-      const commentEl = this._findCommentEditorElement(outerDoc, key);
-      if (commentEl) {
-        this._focusCommentEditorElement(state, outerDoc, commentEl);
-        this._showStatus(state, '-- INSERT --  Esc to exit', 2000);
-        Zotero.debug('[ZoteroVim] _focusAnnotationComment: focused key=' + key);
-        return;
-      }
-
-      if (attempt < maxAttempts) {
-        setTimeout(() => tryFocus(attempt + 1), retryDelayMs);
-      }
-      // Silently stop if not found — user is still in insert mode.
-    };
-
-    setTimeout(() => tryFocus(0), initialDelayMs);
+    this._enterAnnotationInsertMode(state, reader, opts);
   },
 
+  /**
+   * Resolve the annotation key to edit: plugin bookkeeping first, then
+   * Zotero's own selection.  The plugin's lastAnnotationKey is cleared by
+   * scroll actions; Zotero's selection is not.
+   */
+  _selectedAnnotationKey(state, reader) {
+    if (state.lastAnnotationKey) return state.lastAnnotationKey;
+    try {
+      const ids = reader?._internalReader?._state?.selectedAnnotationIDs;
+      return (ids && ids.length) ? ids[0] : null;
+    } catch (_) {}
+    return null;
+  },
+
+  // ?? Annotation comment overlay (keyboard-only editing) ????????????????????
+
+  /**
+   * Create the plugin's own annotation-comment input overlay inside the PDF
+   * iframe document ? the only document that receives the OS keyboard focus,
+   * so a visible textarea there takes keystrokes and IME composition natively
+   * (no focus wars, no forwarding).  Zotero's popup is not used at all.
+   */
+  _createAnnotationCommentOverlay(state, pdfWin, key, commentText, quotedText) {
+    const doc = pdfWin?.document;
+    if (!doc?.body) return null;
+    const H = 'http://www.w3.org/1999/xhtml';
+    const h = (tag) => doc.createElementNS(H, tag);
+
+    const overlay = h('div');
+    overlay.id = 'zv-annotation-comment';
+    overlay.style.cssText =
+      'position:fixed;left:50%;bottom:14px;transform:translateX(-50%);' +
+      'width:min(560px,92%);z-index:99998;background:rgba(24,24,37,0.97);' +
+      'color:#cdd6f4;border:1px solid #313244;border-radius:8px;' +
+      'box-shadow:0 8px 32px rgba(0,0,0,0.45);display:flex;flex-direction:column;' +
+      'font:13px/1.4 sans-serif;';
+
+    if (quotedText) {
+      const quote = h('div');
+      quote.style.cssText =
+        'padding:8px 12px;color:#6c7086;font-size:12px;white-space:nowrap;' +
+        'overflow:hidden;text-overflow:ellipsis;';
+      quote.textContent = quotedText;
+      overlay.appendChild(quote);
+    }
+
+    const ta = h('textarea');
+    ta.id = 'zv-annotation-comment-input';
+    ta.value = commentText || '';
+    ta.style.cssText =
+      'width:100%;box-sizing:border-box;min-height:72px;max-height:220px;' +
+      'padding:10px 12px;background:transparent;color:#cdd6f4;border:0;' +
+      'outline:none;resize:none;font:13px/1.5 sans-serif;';
+    ta.setAttribute('spellcheck', 'false');
+    overlay.appendChild(ta);
+
+    const hint = h('div');
+    hint.style.cssText =
+      'padding:5px 12px;border-top:1px solid #313244;color:#6c7086;font-size:11px;';
+    hint.textContent = 'Enter 换行 · Esc 保存并关闭';
+    overlay.appendChild(hint);
+
+    doc.body.appendChild(overlay);
+
+    // Track IME composition state so the watchdog never interrupts it.
+    ta.addEventListener('compositionstart', () => {
+      state._composing = true;
+      state._composingSince = Date.now();
+    });
+    ta.addEventListener('compositionend', () => {
+      state._composing = false;
+      state._composingSince = 0;
+    });
+    // Debounced autosave after every keystroke (2 s).
+    ta.addEventListener('input', () => this._scheduleAnnotationCommentAutosave(state));
+
+    state._commentOverlay = overlay;
+    state._commentOverlayInput = ta;
+    return overlay;
+  },
+
+  /**
+   * Resolve the annotation item for a key via the attachment's child-item
+   * list.  Zotero.Items.get() only accepts numeric IDs — a bare key returns
+   * false — so the previous direct lookup silently broke comment prefill and
+   * saving.  Loads the 'annotation' data type on demand so annotationComment
+   * and annotationText are readable.
+   */
+  async _resolveAnnotationItem(reader, key) {
+    try {
+      const attachment = Zotero.Items.get(reader.itemID);
+      if (!attachment) return null;
+      let item = null;
+      try { item = attachment.getAnnotations().find(a => a.key === key) || null; } catch (_) {}
+      if (!item) {
+        // Fallback: a freshly created annotation may not be in the
+        // attachment's child list yet, but is registered by library+key.
+        try { item = Zotero.Items.getByLibraryAndKey(attachment.libraryID, key) || null; } catch (_) {}
+      }
+      if (item && item.loadDataType) {
+        try { await item.loadDataType('annotation'); } catch (_) {}
+      }
+      return item;
+    } catch (_) {}
+    return null;
+  },
+
+  /**
+   * Resolve the annotation item for saving, using the numeric item ID stashed
+   * at insert-session start (works with the synchronous cache); falls back to
+   * an async library+key lookup for robustness.
+   */
+  async _getAnnotationItemForSave(state) {
+    let item = null;
+    try {
+      if (state._commentItemID) item = Zotero.Items.get(state._commentItemID) || null;
+      if (!item && state._commentLibraryID && state.lastAnnotationKey) {
+        try {
+          item = Zotero.Items.getByLibraryAndKey(state._commentLibraryID, state.lastAnnotationKey);
+        } catch (_) {}
+      }
+      if (!item && state._commentLibraryID && state.lastAnnotationKey
+          && Zotero.Items.getByLibraryAndKeyAsync) {
+        try {
+          item = await Zotero.Items.getByLibraryAndKeyAsync(
+            state._commentLibraryID, state.lastAnnotationKey);
+        } catch (_) {}
+      }
+      if (item && item.loadDataType) {
+        try { await item.loadDataType('annotation'); } catch (_) {}
+      }
+    } catch (_) {}
+    return item;
+  },
+
+  /**
+   * Persist the overlay's text as the official annotation comment and remove
+   * the overlay.  The overlay is removed first for a snappy response; the
+   * saveTx completes in the background.  Resolves true when the text is
+   * safely stored (or already up to date), false when no annotation item
+   * could be resolved or the save failed.
+   */
+  async _saveAndCloseAnnotationCommentOverlay(state) {
+    const ta = state._commentOverlayInput;
+    const key = state.lastAnnotationKey;
+    let text = null;
+    try { text = ta ? ta.value : null; } catch (_) {}
+    try {
+      const overlay = state._commentOverlay;
+      if (overlay?.parentNode) overlay.parentNode.removeChild(overlay);
+    } catch (_) {}
+    state._commentOverlay = null;
+    state._commentOverlayInput = null;
+    clearTimeout(state._commentAutosaveTimer);
+    state._commentAutosaveTimer = null;
+    this._disarmAnnotationPopupGuard(state);
+    try {
+      if (key && text !== null) {
+        const item = await this._getAnnotationItemForSave(state);
+        if (!item) {
+          try { zvLogFile('[ZoteroVim] comment save FAILED: annotation not resolved key=' + key); } catch (_) {}
+          return false;
+        }
+        if (!item.deleted && (item.annotationComment || '') !== text) {
+          item.annotationComment = text;
+          await item.saveTx();
+          try { zvLogFile('[ZoteroVim] comment saved key=' + key + ' len=' + text.length); } catch (_) {}
+        }
+      }
+      return true;
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] save annotation comment error: ' + e);
+      try { zvLogFile('[ZoteroVim] comment save error: ' + e); } catch (_) {}
+      return false;
+    }
+  },
+
+  /**
+   * Debounced autosave (2 s after the last keystroke) so an unexpected
+   * window switch never loses the typed comment.
+   */
+  _scheduleAnnotationCommentAutosave(state) {
+    clearTimeout(state._commentAutosaveTimer);
+    state._commentAutosaveTimer = setTimeout(async () => {
+      try {
+        const ta = state._commentOverlayInput;
+        const key = state.lastAnnotationKey;
+        if (!ta || !key) return;
+        const item = await this._getAnnotationItemForSave(state);
+        if (!item || item.deleted) return;
+        if ((item.annotationComment || '') !== ta.value) {
+          item.annotationComment = ta.value;
+          item.saveTx();
+          try { zvLogFile('[ZoteroVim] autosave key=' + key); } catch (_) {}
+        }
+      } catch (_) {}
+    }, 2000);
+  },
+
+  /**
+   * Watch for Zotero's own annotation popup appearing while the plugin's
+   * comment overlay is open (e.g. an Enter forwarded to the KeyboardManager
+   * opens the popup) and close it by dispatching Escape at its editor, so it
+   * never steals focus or sits next to the overlay.
+   */
+  _armAnnotationPopupGuard(state, reader) {
+    this._disarmAnnotationPopupGuard(state);
+    const outerWin = reader?._iframeWindow;
+    const outerDoc = outerWin?.document;
+    if (!outerDoc?.body || typeof outerWin?.MutationObserver !== 'function') return;
+    const guard = new outerWin.MutationObserver((muts) => {
+      try {
+        for (const m of muts) {
+          for (const node of m.addedNodes) {
+            if (!node || node.nodeType !== 1) continue;
+            const popup = node.classList?.contains('annotation-popup')
+              ? node : node.querySelector?.('.annotation-popup');
+            if (!popup) continue;
+            try { zvLogFile('[ZoteroVim] insert: stray annotation popup appeared — closing'); } catch (_) {}
+            const ed = popup.querySelector?.('[contenteditable="true"], textarea, input');
+            if (ed) {
+              ed.dispatchEvent(new outerWin.KeyboardEvent('keydown', {
+                key: 'Escape', code: 'Escape', bubbles: true, cancelable: true,
+              }));
+            }
+          }
+        }
+      } catch (_) {}
+    });
+    try { guard.observe(outerDoc.body, { childList: true, subtree: true }); } catch (_) {}
+    state._annotationPopupGuard = guard;
+  },
+
+  _disarmAnnotationPopupGuard(state) {
+    try { state._annotationPopupGuard?.disconnect(); } catch (_) {}
+    state._annotationPopupGuard = null;
+  },
+
+  /**
+   * Keyboard-only annotation comment editing via the plugin's own overlay
+   * input rendered inside the PDF iframe document.
+   *
+   * Flow:
+   *   1. Resolve the annotation key (plugin bookkeeping ? Zotero selection).
+   *   2. Navigate to the annotation (selection box, no Zotero popup).
+   *   3. Show the overlay with the existing comment (plus the annotation's
+   *      quoted text) and focus its textarea ? the textarea receives
+   *      keystrokes and IME composition natively.
+   *   4. A gentle watchdog keeps the textarea focused (never while an IME
+   *      composition is active).  Escape saves via saveTx, closes the
+   *      overlay and returns to normal mode; a 2 s autosave is a safety net.
+   */
+  async _enterAnnotationInsertMode(state, reader, opts = null) {
+    const ir = reader._internalReader;
+    const readerWin = reader._iframeWindow;
+    const Cu = Components.utils;
+
+    const key = this._selectedAnnotationKey(state, reader);
+    if (!key) {
+      this._showStatus(state, '✗ navigate first with [ / ]', 2000);
+      return;
+    }
+    state.lastAnnotationKey = key;
+
+    // Resolve the annotation item via the attachment's child list — a bare
+    // key passed to Zotero.Items.get() returns false (IDs only), which left
+    // the overlay permanently empty.
+    const item = await this._resolveAnnotationItem(reader, key);
+    state._commentItemID = item?.id || null;
+    state._commentLibraryID = item?.libraryID || null;
+    if (!item) {
+      try { zvLogFile('[ZoteroVim] insert: annotation item not resolved key=' + key); } catch (_) {}
+    }
+    let commentText = '';
+    let quotedText = '';
+    if (item) {
+      try {
+        commentText = item.annotationComment || '';
+        quotedText = (item.annotationText || '')
+          .normalize('NFKC').replace(/\s+/g, ' ').trim().slice(0, 200);
+      } catch (_) {}
+    }
+
+    // Navigate: selects the annotation (selection box) and does NOT open
+    // Zotero's popup.
+    try {
+      if (typeof ir?.navigate === 'function' && readerWin) {
+        ir.navigate(Cu.cloneInto({ annotationID: key }, readerWin));
+      }
+    } catch (_) {}
+
+    // Guard against Zotero's Backspace-deletes-annotation behavior while
+    // forwarded keys still reach its KeyboardManager.
+    try { ir._enableAnnotationDeletionFromComment = false; } catch (_) {}
+
+    const pdfWin = this._activeReaderPdfWin?.(reader) || state.activePdfWin || state.pdfWin;
+    this._createAnnotationCommentOverlay(state, pdfWin, key, commentText, quotedText);
+    const ta = state._commentOverlayInput;
+    this._armAnnotationPopupGuard(state, reader);
+
+    const initialDelayMs = Math.max(0, Number(opts?.initialDelayMs || 60));
+    const holdMs = Math.max(100, Number(opts?.holdMs || 500));
+    const mySession = (state._insertSessionID = (state._insertSessionID || 0) + 1);
+
+    const tryKeep = (attempt) => {
+      if (state.mode !== 'insert' || state._insertSessionID !== mySession) {
+        state.insertWatchdog = null;
+        return;
+      }
+      // Gentle keepalive: refocus the textarea only when it lost focus and
+      // no IME composition is in progress.  Never touch style or value.
+      const doc = pdfWin?.document;
+      const input = state._commentOverlayInput;
+      if (input?.isConnected && !state._composing && doc?.activeElement !== input) {
+        try { input.focus(); } catch (_) {}
+      }
+      if (attempt % 10 === 0) {
+        try {
+          zvLogFile('[ZoteroVim] insert: watch ' + attempt + ' key=' + key
+            + ' overlay=' + !!state._commentOverlay
+            + ' focused=' + (doc?.activeElement === input));
+        } catch (_) {}
+      }
+      state.insertWatchdog = setTimeout(() => tryKeep(attempt + 1), holdMs);
+    };
+
+    state.insertWatchdog = null;
+    setTimeout(() => {
+      try { ta?.focus(); } catch (_) {}
+      try {
+        const len = ta?.value?.length || 0;
+        if (ta) { ta.selectionStart = len; ta.selectionEnd = len; }
+      } catch (_) {}
+      if (state.mode !== 'insert') this._setMode(state, 'insert');
+      this._showStatus(state, '-- INSERT --  Esc 保存', 2000);
+      tryKeep(0);
+    }, initialDelayMs);
+  },
   _enterInsertForAnnotation(state, reader, annotationKey) {
     try {
       state.lastAnnotationKey = annotationKey;
-      this._setMode(state, 'normal');
-
-      const readerWin = reader?._iframeWindow;
-      const ir = reader?._internalReader;
-      if (typeof ir?.setSelectedAnnotations === 'function' && readerWin) {
-        ir.setSelectedAnnotations(Components.utils.cloneInto([annotationKey], readerWin));
-      }
-      if (typeof ir?.navigate === 'function' && readerWin) {
-        ir.navigate(Components.utils.cloneInto({ annotationID: annotationKey }, readerWin));
-      }
-
-      // Reuse robust edit flow so newly created annotations can reliably enter
-      // an editable comment state across Zotero UI variants.
-      this._editAnnotation(state, reader);
-
-      // Some Zotero builds only materialize the input after Enter on a selected
-      // annotation. Trigger it programmatically so za/i does not require manual Enter.
-      setTimeout(() => this._triggerAnnotationEditEnter(reader), 140);
-      setTimeout(() => this._triggerAnnotationEditEnter(reader), 420);
-
-      // Keep a fallback focus pass in case the edit flow race-misses render.
-      this._focusAnnotationComment(state, reader, {
-        maxAttempts: 18,
-        retryDelayMs: 220,
-        initialDelayMs: 450,
-      });
+      if (state.mode !== 'insert') this._setMode(state, 'insert');
+      this._enterAnnotationInsertMode(state, reader, { initialDelayMs: 150 });
     } catch (e) {
       Zotero.debug('[ZoteroVim] _enterInsertForAnnotation error: ' + e);
     }
   },
-
-  _findCommentEditorElement(outerDoc, key) {
-    const keySelector = key ? `[data-sidebar-annotation-id="${key}"], [data-annotation-id="${key}"]` : null;
-    const selectors = [
-      `[data-sidebar-annotation-id="${key}"] [aria-label="Annotation comment"]`,
-      `[data-annotation-id="${key}"] [aria-label="Annotation comment"]`,
-      `[data-sidebar-annotation-id="${key}"] textarea`,
-      `[data-sidebar-annotation-id="${key}"] [contenteditable="true"]`,
-      '[aria-label="Annotation comment"]',
-      'textarea[aria-label="Annotation comment"]',
-      'div[aria-label="Annotation comment"]',
-      'textarea',
-      '[contenteditable="true"]',
-      '[role="textbox"]',
-    ];
-
-    const pool = [];
-    const seen = new Set();
-    const pushUnique = (el) => {
-      if (!el || seen.has(el)) return;
-      seen.add(el);
-      pool.push(el);
-    };
-
-    for (const sel of selectors) {
-      const direct = outerDoc.querySelector(sel);
-      pushUnique(direct);
-      for (const deepEl of this._queryDeepElements(outerDoc, sel)) {
-        pushUnique(deepEl);
-      }
-    }
-
-    const scored = [];
-    for (const el of pool) {
-      if (!this._isFocusableCommentEditor(el)) continue;
-      let score = 0;
-      const label = (el.getAttribute?.('aria-label') || '').toLowerCase();
-      const id = (el.id || '').toLowerCase();
-      const cls = (el.className || '').toString().toLowerCase();
-      const role = (el.getAttribute?.('role') || '').toLowerCase();
-
-      if (label.includes('annotation comment') || label.includes('comment')) score += 8;
-      if (role === 'textbox') score += 3;
-      if (id.includes('comment') || cls.includes('comment') || cls.includes('annotation')) score += 2;
-
-      if (keySelector && el.closest?.(keySelector)) score += 10;
-      scored.push({ el, score });
-    }
-
-    if (scored.length === 0) return null;
-    scored.sort((a, b) => b.score - a.score);
-    return scored[0].el;
-  },
-
-  _triggerAnnotationEditEnter(reader) {
-    try {
-      const outerWin = reader?._iframeWindow;
-      const outerDoc = outerWin?.document;
-      const pdfWin = reader?._internalReader?._primaryView?._iframeWindow;
-      if (!outerWin || !outerDoc) return;
-
-      const dispatchEnter = (target, winObj) => {
-        if (!target || typeof target.dispatchEvent !== 'function') return;
-        const evt = new winObj.KeyboardEvent('keydown', {
-          key: 'Enter',
-          code: 'Enter',
-          bubbles: true,
-          cancelable: true,
-        });
-        target.dispatchEvent(evt);
-      };
-
-      dispatchEnter(outerDoc.activeElement, outerWin);
-      dispatchEnter(outerDoc, outerWin);
-
-      if (pdfWin) {
-        dispatchEnter(pdfWin.document?.activeElement, pdfWin);
-        dispatchEnter(pdfWin.document, pdfWin);
-        dispatchEnter(pdfWin, pdfWin);
-      }
-    } catch (e) {
-      Zotero.debug('[ZoteroVim] _triggerAnnotationEditEnter error: ' + e);
-    }
-  },
-
-  _queryDeepElements(root, selector) {
-    const results = [];
-    const queue = [root];
-    const seen = new Set();
-
-    while (queue.length) {
-      const node = queue.shift();
-      if (!node || seen.has(node)) continue;
-      seen.add(node);
-
-      try {
-        if (typeof node.querySelectorAll === 'function') {
-          for (const el of node.querySelectorAll(selector)) results.push(el);
-        }
-      } catch (_) {}
-
-      let descendants = [];
-      try {
-        if (typeof node.querySelectorAll === 'function') {
-          descendants = node.querySelectorAll('*');
-        }
-      } catch (_) {}
-      for (const el of descendants) {
-        if (el.shadowRoot) queue.push(el.shadowRoot);
-      }
-    }
-
-    return results;
-  },
-
-  _isFocusableCommentEditor(el) {
-    if (!el) return false;
-    const tag = el.tagName;
-    const role = (el.getAttribute?.('role') || '').toLowerCase();
-    const isEditable = el.isContentEditable || tag === 'TEXTAREA' || tag === 'INPUT' || role === 'textbox';
-    if (!isEditable || el.readOnly || el.disabled) return false;
-    const r = el.getBoundingClientRect?.();
-    return !!(r && r.width > 0 && r.height > 0);
-  },
-
-  _focusCommentEditorElement(state, outerDoc, el) {
-    try { el.focus(); } catch (_) {}
-    // Enter insert mode only once we have an actual focusable editor.
-    if (state?.mode !== 'insert') this._setMode(state, 'insert');
-    try {
-      if (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT') {
-        const len = el.value?.length || 0;
-        el.selectionStart = len;
-        el.selectionEnd = len;
-        return;
-      }
-
-      const sel = outerDoc.defaultView?.getSelection?.();
-      if (sel) {
-        const range = outerDoc.createRange();
-        range.selectNodeContents(el);
-        range.collapse(false);
-        sel.removeAllRanges();
-        sel.addRange(range);
-      }
-    } catch (_) {}
-  },
-
   /**
    * Find an annotation's DOM element in the PDF layer.
    * Zotero may render annotations in a shadow root (_annotationRenderRootEl).
@@ -4341,117 +4483,4 @@ Object.assign(ZoteroVim, {
     }
   },
 
-  /**
-   * After [/] navigation, pressing Enter in normal mode opens the annotation's
-   * comment field for editing.
-   *
-   * Strategy:
-   *   1. Click the annotation element in the PDF layer — identical to a manual
-   *      click, which shows Zotero's selection box + annotation popup.
-   *   2. Detect newly-appeared contenteditable elements (the comment input
-   *      that appears in the popup) and focus the best candidate.
-   *   3. Fall back to known sidebar selectors.
-   */
-  _editAnnotation(state, reader) {
-    const key = state.lastAnnotationKey;
-    if (!key) { this._showStatus(state, '✗ navigate first with [ / ]', 2000); return; }
-
-    const ir = reader._internalReader;
-    const outerDoc = reader._iframeWindow?.document;
-    const pdfWin = ir?._primaryView?._iframeWindow;
-    if (!outerDoc) { this._showStatus(state, '✗ no outer doc', 2000); return; }
-
-    Zotero.debug('[ZoteroVim] _editAnnotation: key=' + key);
-
-    const Cu = Components.utils;
-
-    // Helper: place cursor at end of a contenteditable element.
-    const moveCursorToEnd = (el) => {
-      try {
-        const range = outerDoc.createRange();
-        range.selectNodeContents(el);
-        range.collapse(false);
-        const sel = outerDoc.getSelection?.();
-        if (sel) { sel.removeAllRanges(); sel.addRange(range); }
-      } catch (_) {}
-    };
-
-    // Helper: is this element a usable editable field?
-    const isUsable = (el) => {
-      if (!el.isContentEditable && el.tagName !== 'TEXTAREA') return false;
-      const r = el.getBoundingClientRect();
-      return r.width > 0 && r.height > 0 && !el.readOnly && !el.disabled;
-    };
-
-    // Step 1: select the annotation (cloneInto to cross compartment boundary).
-    // setSelectedAnnotations scrolls the sidebar to the annotation card,
-    // shows the selection box in PDF, and auto-focuses the comment if empty.
-    const readerWin = reader?._iframeWindow;
-    try {
-      if (readerWin && typeof ir?.setSelectedAnnotations === 'function') {
-        ir.setSelectedAnnotations(Cu.cloneInto([key], readerWin));
-        Zotero.debug('[ZoteroVim] _editAnnotation: setSelectedAnnotations OK');
-      }
-    } catch (e) {
-      Zotero.debug('[ZoteroVim] _editAnnotation setSelectedAnnotations error: ' + e);
-    }
-    try {
-      if (readerWin && typeof ir?.navigate === 'function') {
-        ir.navigate(Cu.cloneInto({ annotationID: key }, readerWin));
-      }
-    } catch (_) {}
-
-    // Step 2: wait for React to re-render the sidebar card, then focus comment.
-    const tryFocus = (attempt) => {
-      // Primary: Zotero's comment contenteditable has aria-label="Annotation comment".
-      // Try key-specific ancestor first, then any visible one.
-      const commentEl =
-        outerDoc.querySelector(`[data-sidebar-annotation-id="${key}"] div[aria-label="Annotation comment"]`) ||
-        outerDoc.querySelector(`[data-annotation-id="${key}"] div[aria-label="Annotation comment"]`)         ||
-        outerDoc.querySelector(`div[aria-label="Annotation comment"]`);
-
-      if (commentEl && isUsable(commentEl)) {
-        commentEl.focus();
-        moveCursorToEnd(commentEl);
-        this._showStatus(state, '✓ editing comment', 1500);
-        Zotero.debug('[ZoteroVim] _editAnnotation: focused via aria-label selector');
-        return;
-      }
-
-      // Fallback: any visible contenteditable or textarea in the sidebar card.
-      const fallback =
-        outerDoc.querySelector(`[data-sidebar-annotation-id="${key}"] [contenteditable]`) ||
-        outerDoc.querySelector(`[data-sidebar-annotation-id="${key}"] textarea`);
-      if (fallback && isUsable(fallback)) {
-        fallback.focus();
-        if (fallback.tagName === 'TEXTAREA') {
-          fallback.selectionStart = fallback.selectionEnd = fallback.value.length;
-        } else {
-          moveCursorToEnd(fallback);
-        }
-        this._showStatus(state, '✓ editing comment', 1500);
-        return;
-      }
-
-      if (attempt < 10) {
-        setTimeout(() => tryFocus(attempt + 1), 200);
-        return;
-      }
-
-      // Debug on failure.
-      try {
-        const cards = outerDoc.querySelectorAll('[data-sidebar-annotation-id]');
-        Zotero.debug('[ZoteroVim] _editAnnotation: gave up. key=' + key +
-                     '  sidebar cards=' + cards.length);
-        for (const c of Array.from(cards).slice(0, 3)) {
-          Zotero.debug('  card id="' + c.getAttribute('data-sidebar-annotation-id') + '"');
-        }
-        const commentEls = outerDoc.querySelectorAll('div[aria-label="Annotation comment"]');
-        Zotero.debug('  div[aria-label="Annotation comment"] count=' + commentEls.length);
-      } catch (_) {}
-      this._showStatus(state, '✗ comment field not found', 3000);
-    };
-
-    setTimeout(() => tryFocus(0), 350);
-  },
 });

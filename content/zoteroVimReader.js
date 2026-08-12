@@ -3466,9 +3466,11 @@ Object.assign(ZoteroVim, {
 
   /**
    * Persist all marks, cascading through storage backends:
-   *   1) child note under the attachment (syncs via Zotero sync)
-   *   2) a "zv-marks: {json}" line in the attachment's extra field (syncs)
-   *   3) local pref marks.data.<itemID> (device-local only)
+   *   1) a "zv-marks-<attachmentKey>: {json}" line in the parent item's
+   *      Extra field (syncs via Zotero sync).  Zotero 9 attachments have no
+   *      Extra field and forbid child notes under attachments, so the
+   *      storage item is the attachment's parent (a regular item).
+   *   2) local pref marks.data.<itemID> (device-local only)
    * Returns the backend name that succeeded, or '' if all failed (a status
    * bar message with the first backend's error is shown in that case).
    * An empty mark set removes marks from all backends.
@@ -3487,48 +3489,18 @@ Object.assign(ZoteroVim, {
     const hasMarks = Object.keys(payload.marks).length > 0;
     const errors = [];
 
-    // 1) Child note (synced).  Mirrors the proven note-creation pattern
-    //    used by the main window (_createMainCurrentChildNote).
+    // 1) Extra field of the parent item (synced).
     try {
-      const existing = this._findMarksNote(attachment);
+      const storeItem = this._marksStoreItem(reader);
+      if (!storeItem) throw new Error('no storage item');
+      const attKey = attachment.key;
       if (hasMarks) {
-        if (!existing) {
-          const note = new Zotero.Item('note');
-          note.libraryID = attachment.libraryID ||
-            (Zotero.Libraries ? Zotero.Libraries.userLibraryID : 1);
-          note.parentID = attachment.id;
-          if (note.parentID !== attachment.id) throw new Error('parentID setter no-op');
-          if (typeof note.setNote === 'function') note.setNote(this._marksNoteBody(payload));
-          else note.note = this._marksNoteBody(payload);
-          await note.saveTx();
-        } else if (existing.note !== this._marksNoteBody(payload)) {
-          if (typeof existing.setNote === 'function') existing.setNote(this._marksNoteBody(payload));
-          else existing.note = this._marksNoteBody(payload);
-          await existing.saveTx();
-        }
-      } else if (existing) {
-        await existing.eraseTx();
-      }
-      this._clearMarksExtra(attachment);
-      this._clearMarksPref(reader);
-      return 'note';
-    } catch (e) {
-      errors.push(String(e.message || e).slice(0, 80));
-      Zotero.debug('[ZoteroVim] _saveMarks note backend failed: ' + e);
-    }
-
-    // 2) Extra field (synced).  Best-effort remove any stale marks note so
-    //    it cannot shadow the extra data on load.
-    try {
-      if (hasMarks) {
-        await this._writeMarksExtra(attachment, payload);
+        await this._writeMarksExtra(storeItem, attKey, payload);
         Zotero.debug('[ZoteroVim] extra after saveTx: '
-          + String(attachment.extra || '').slice(0, 120));
+          + String(this._getItemExtra(storeItem)).slice(0, 120));
       } else {
-        await this._clearMarksExtra(attachment);
+        await this._clearMarksExtra(storeItem, attKey);
       }
-      const stale = this._findMarksNote(attachment);
-      if (stale) { try { await stale.eraseTx(); } catch (_) {} }
       this._clearMarksPref(reader);
       return 'extra';
     } catch (e) {
@@ -3536,7 +3508,7 @@ Object.assign(ZoteroVim, {
       Zotero.debug('[ZoteroVim] _saveMarks extra backend failed: ' + e);
     }
 
-    // 3) Local pref fallback (no sync).
+    // 2) Local pref fallback (no sync).
     try {
       if (hasMarks) this._saveMarksPref(reader, payload);
       else this._clearMarksPref(reader);
@@ -3552,51 +3524,87 @@ Object.assign(ZoteroVim, {
     return '';
   },
 
-  /** Build the marks-note HTML body for a payload. */
-  _marksNoteBody(payload) {
-    return '<h1>zv-marks</h1><pre>' + JSON.stringify(payload) + '</pre>';
-  },
-
-  /** Find the child note under the attachment that stores the marks JSON. */
-  _findMarksNote(attachment) {
+  /**
+   * Resolve the item whose Extra field stores the marks: the attachment's
+   * parent when it exists (Zotero 9 attachments have no Extra field), else
+   * the attachment itself (older Zotero builds).
+   */
+  _marksStoreItem(reader) {
     try {
-      for (const note of (attachment.getNotes() || [])) {
-        if ((note.note || '').includes('<h1>zv-marks</h1>')) return note;
-      }
-    } catch (_) {}
-    return null;
-  },
-
-  /** Read a payload from the attachment's "zv-marks: " extra line. */
-  _readMarksExtra(attachment) {
-    try {
-      const line = (attachment.extra || '').split('\n')
-        .find(l => l.startsWith('zv-marks: '));
-      if (!line) return null;
-      return JSON.parse(line.slice('zv-marks: '.length));
+      const attachment = Zotero.Items.get(reader.itemID);
+      if (!attachment) return null;
+      if (attachment.parentItemID) return Zotero.Items.get(attachment.parentItemID);
+      return attachment;
     } catch (_) {
       return null;
     }
   },
 
-  /** Replace the "zv-marks: " extra line with the payload. */
-  async _writeMarksExtra(attachment, payload) {
-    const line = 'zv-marks: ' + JSON.stringify(payload);
-    const lines = (attachment.extra || '').split('\n')
-      .filter(l => l.trim() && !l.startsWith('zv-marks: '));
-    lines.push(line);
-    attachment.extra = lines.join('\n');
-    await attachment.saveTx();
+  /**
+   * Read the item's Extra field via the Item API.  Zotero 9 has no
+   * `.extra` property on Zotero.Item (fields go through getField/setField),
+   * so a plain `.extra = …` assignment would never reach the database —
+   * use getField/setField with a `.extra` property fallback for older
+   * Zotero builds.
+   */
+  _getItemExtra(attachment) {
+    try {
+      if (typeof attachment.getField === 'function') {
+        return attachment.getField('extra') || '';
+      }
+    } catch (_) {}
+    return attachment.extra || '';
   },
 
-  /** Remove the "zv-marks: " line from the attachment's extra field. */
-  async _clearMarksExtra(attachment) {
+  _setItemExtra(attachment, value) {
     try {
-      const joined = (attachment.extra || '').split('\n')
-        .filter(l => l.trim() && !l.startsWith('zv-marks: ')).join('\n');
-      if (joined !== (attachment.extra || '')) {
-        attachment.extra = joined;
-        await attachment.saveTx();
+      if (typeof attachment.setField === 'function') {
+        attachment.setField('extra', value);
+        return;
+      }
+    } catch (_) {}
+    attachment.extra = value;
+  },
+
+  /** The Extra-field line prefix for a given attachment key. */
+  _marksExtraPrefix(attKey) {
+    return 'zv-marks-' + attKey + ': ';
+  },
+
+  /** Read a payload from the "zv-marks-<key>: " extra line. */
+  _readMarksExtra(item, attKey) {
+    try {
+      const prefix = this._marksExtraPrefix(attKey);
+      const line = this._getItemExtra(item).split('\n')
+        .find(l => l.startsWith(prefix));
+      if (!line) return null;
+      return JSON.parse(line.slice(prefix.length));
+    } catch (_) {
+      return null;
+    }
+  },
+
+  /** Replace the "zv-marks-<key>: " extra line with the payload. */
+  async _writeMarksExtra(item, attKey, payload) {
+    const prefix = this._marksExtraPrefix(attKey);
+    const line = prefix + JSON.stringify(payload);
+    const lines = this._getItemExtra(item).split('\n')
+      .filter(l => l.trim() && !l.startsWith(prefix));
+    lines.push(line);
+    this._setItemExtra(item, lines.join('\n'));
+    await item.saveTx();
+  },
+
+  /** Remove the "zv-marks-<key>: " line from the item's extra field. */
+  async _clearMarksExtra(item, attKey) {
+    try {
+      const prefix = this._marksExtraPrefix(attKey);
+      const current = this._getItemExtra(item);
+      const joined = current.split('\n')
+        .filter(l => l.trim() && !l.startsWith(prefix)).join('\n');
+      if (joined !== current) {
+        this._setItemExtra(item, joined);
+        await item.saveTx();
       }
     } catch (_) {}
   },
@@ -3620,7 +3628,7 @@ Object.assign(ZoteroVim, {
   },
 
   /**
-   * Rebuild persisted marks from the storage cascade: child note → extra
+   * Rebuild persisted marks from the storage cascade: parent item's Extra
    * field → local pref.  Also performs a one-time migration from the old
    * annotation-tag scheme ("zv-mark:<char>"), merging any found tags in.
    * Called when a reader opens so marks survive restarts and sync.
@@ -3643,22 +3651,13 @@ Object.assign(ZoteroVim, {
       let payload = null;
       let source = '';
 
-      // 1) Child note.
-      const note = this._findMarksNote(attachment);
-      if (note) {
-        const m = /<h1>zv-marks<\/h1>\s*<pre>([\s\S]*?)<\/pre>/.exec(note.note || '');
-        if (m) {
-          try { payload = JSON.parse(m[1]); } catch (_) {}
-        }
-      }
-      // 2) Extra field.
-      if (!payload || !payload.marks) {
-        payload = this._readMarksExtra(attachment);
+      // 1) Parent item's Extra field.
+      const storeItem = this._marksStoreItem(reader);
+      if (storeItem) {
+        payload = this._readMarksExtra(storeItem, attachment.key);
         if (payload?.marks) source = 'extra';
-      } else {
-        source = 'note';
       }
-      // 3) Local pref fallback.
+      // 2) Local pref fallback.
       if (!payload || !payload.marks) {
         payload = this._readMarksPref(reader);
         if (payload?.marks) source = 'pref';

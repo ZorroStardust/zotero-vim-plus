@@ -46,9 +46,9 @@ startup issue.
   `<browser>` / reader.html body) and whether the forwarding/auto-focus paths
   actually fire then.
 
-## ZV-003: Marks persistence — child-note backend fails, extra-field fallback used (shelved)
+## ZV-003: Marks persistence — Zotero 9 storage limitations (RESOLVED via parent-item Extra field)
 
-- Status: Shelved — extra-field backend works and syncs; note backend still fails
+- Status: Resolved in working tree (v1.6.2-dev) — marks now persist across restarts
 - Reported on: 2026-08-12
 - Area: Reader marks persistence (`content/zoteroVimReader.js` `_saveMarks`)
 
@@ -64,53 +64,46 @@ Vim-style marks added in v1.6.0 (issue: number-key tags from sioyek):
 - Marks store the viewport-centre position (`pageIndex` + in-page ratio), so a
   jump reproduces the exact view that was marked (instant page flip via
   `pdfViewer.currentPageNumber`, forced-instant scroll).
-- Persistence cascades: child note → attachment Extra field → local pref.
-  Both note and extra sync via Zotero sync. Status bar shows the backend used
-  (`· saved (note|extra|local)`), or `(session)` when persistence is off.
 
-### Problem
+### Problem and root cause (finally pinned down with Zotero 9 source + DB inspection)
 
-With "Persist marks" enabled, the child-note backend always throws; the cascade
-falls back to the attachment's Extra field (`zv-marks: {json}` line), which
-works and syncs. Status bar shows `· saved (extra)`.
+Persistence silently failed on Zotero 9: `saved (extra)` appeared, intra-session
+reload worked, but marks vanished after restart. Three version-specific traps
+in Zotero 9 (`C:\Program Files\Zotero\app\omni.ja` source, item.js/itemFields.js/
+zoteroTypeSchemaData.js):
 
-### Reproduction
+1. **No `.extra` property on `Zotero.Item`** — fields go through
+   `getField('extra')` / `setField('extra', ...)`. A plain `item.extra = …`
+   assignment creates an own property that `saveTx()` never persists
+   (silently — it just writes nothing).
+2. **The `extra` field (ID 22) is NOT valid for the `attachment` item type**
+   (type 14's field list is `[110, 27, 1]`) — `setField('extra', …)` on an
+   attachment throws `'extra' is not a valid field for type 'attachment'`.
+3. **Child notes cannot be parented to attachments** — `saveTx()` throws
+   `Parent item … must be a regular item` (Zotero 9's own note code uses
+   `item.parentID = attachment.parentID`).
+
+The original note→attachment-extra→pref cascade therefore failed on both
+synced backends on Zotero 9 (the extra fallback's try/catch silently degraded
+to the dead `.extra` assignment).
+
+### Fix (working tree)
+
+Storage moved to the **parent item's Extra field**, namespaced per attachment:
+`zv-marks-<attachmentKey>: {json}` lines (multiple PDFs under one item get
+separate lines; `setField` marks the change so `saveTx` persists). Cascade is
+now: parent-item Extra (synced) → local pref. Note backend removed.
+
+### Reproduction (original)
 
 1. Preferences → Marks → enable "Persist marks", click Apply configuration.
-2. Open a PDF, press `ma`.
-3. Status shows `✓ mark a set · p.X · saved (extra)` instead of `· saved (note)`.
+2. Open a PDF, press `ma` — status shows `· saved (extra)`.
+3. Restart Zotero — marks are gone (DB never received the write).
 
-### Notes From Previous Attempts
+### Verification
 
-- Note backend mirrors the proven main-window pattern (`new Zotero.Item('note')`
-  + `libraryID` + `parentID` + `setNote` + `saveTx`); the same pattern creates
-  annotations successfully in the reader context.
-- Extra-field `saveTx()` on the existing attachment works, so item saving in
-  the reader context is not the problem.
-- Suspects: `note.parentID` setter is a no-op on this Zotero build (the guard
-  throws `parentID setter no-op` and falls through), or note-specific saveTx
-  validation rejects the `<h1>`/`<pre>` note body.
-- Diagnostic log line: `[ZoteroVim] _saveMarks note backend failed: ...`
-  (Error Console → Help → Developer → Developer Options).
-
-### Historical issues fixed during this feature (for reference)
-
-- `.xpi` built with PowerShell `Compress-Archive` stored backslash entry paths
-  (`content\zoteroVim.js`), breaking jar:// script loading (no icon, no prefs
-  pane, no functionality). `tools/build.ps1` (ZipArchive with POSIX paths) added.
-- `_markPosition` ratio had a sign error (`pageTop - scrollTop` instead of
-  `scrollTop - pageTop`), making jumps land half a viewport off; fixed so jumps
-  reproduce the exact marked view.
-- Note creation initially missed `libraryID` and used `note.note =` instead of
-  `note.setNote()`; aligned with the main-window pattern.
-
-### Next Investigation Directions
-
-- Read the exact `[ZoteroVim] _saveMarks note backend failed:` message.
-- If `parentID setter no-op`: use `new Zotero.Item('note', { parentID, libraryID })`
-  constructor options or the version's native parent setter.
-- If setNote/saveTx rejects the `<h1>`/`<pre>` body: move the JSON into a
-  `<p>`-based payload or a comment-style block.
+- DB inspection (zotero.sqlite itemData/itemDataValues) confirmed the extra
+  field was empty for the test attachments before the fix; re-verify after.
 
 ## ZV-002: Note editor `o` / `O` still splits text after caret (shelved)
 

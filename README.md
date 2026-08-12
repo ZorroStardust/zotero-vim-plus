@@ -297,12 +297,12 @@ Notes:
   follow-up commands (`[`/`]`, `zy`, `y`, …) work after a jump. `[`/`]`
   annotation navigation is unaffected.
 - With **Persist marks** enabled (Preferences → Marks) the whole mark set is
-  saved through a storage cascade — a child note under the PDF item (heading
-  `zv-marks`), falling back to a `zv-marks:` line in the attachment's **Extra**
-  field (both sync via Zotero sync), and finally to a device-local pref. The
-  status bar shows which backend was used (`· saved (note)` / `· saved (extra)`
-  / `· saved (local)`). Marks from the previous annotation-tag scheme are
-  migrated automatically.
+  saved as a `zv-marks-<attachmentKey>:` line in the **parent item's Extra
+  field** (syncs via Zotero sync — Zotero 9 attachments have no Extra field,
+  so the parent item is used; multiple PDFs under one item get separate
+  lines), falling back to a device-local pref. The status bar shows which
+  backend was used (`· saved (extra)` / `· saved (local)`). Marks from the
+  previous annotation-tag scheme are migrated automatically.
 - Marks set with persistence disabled live for the current reader session only.
 
 #### Note editor (context pane and standalone note tab)

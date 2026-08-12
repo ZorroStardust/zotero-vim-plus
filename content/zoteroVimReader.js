@@ -3522,6 +3522,8 @@ Object.assign(ZoteroVim, {
     try {
       if (hasMarks) {
         await this._writeMarksExtra(attachment, payload);
+        Zotero.debug('[ZoteroVim] extra after saveTx: '
+          + String(attachment.extra || '').slice(0, 120));
       } else {
         await this._clearMarksExtra(attachment);
       }
@@ -3622,13 +3624,24 @@ Object.assign(ZoteroVim, {
    * field → local pref.  Also performs a one-time migration from the old
    * annotation-tag scheme ("zv-mark:<char>"), merging any found tags in.
    * Called when a reader opens so marks survive restarts and sync.
+   * Retries briefly when the reader's item is not available yet (restored
+   * readers can be injected before itemID resolves).
    */
-  async _loadPersistedMarks(state, reader) {
+  async _loadPersistedMarks(state, reader, retry = 0) {
     try {
       if (!this.getPref('marks.persist', false)) return;
-      const attachment = Zotero.Items.get(reader.itemID);
-      if (!attachment) return;
+      let attachment = null;
+      try { attachment = reader.itemID ? Zotero.Items.get(reader.itemID) : null; } catch (_) {}
+      if (!attachment) {
+        // Restored readers can be injected before the item database is ready
+        // (two-phase startup) — retry instead of giving up.
+        if (retry < 20) {
+          setTimeout(() => this._loadPersistedMarks(state, reader, retry + 1), 500);
+        }
+        return;
+      }
       let payload = null;
+      let source = '';
 
       // 1) Child note.
       const note = this._findMarksNote(attachment);
@@ -3639,9 +3652,17 @@ Object.assign(ZoteroVim, {
         }
       }
       // 2) Extra field.
-      if (!payload || !payload.marks) payload = this._readMarksExtra(attachment);
+      if (!payload || !payload.marks) {
+        payload = this._readMarksExtra(attachment);
+        if (payload?.marks) source = 'extra';
+      } else {
+        source = 'note';
+      }
       // 3) Local pref fallback.
-      if (!payload || !payload.marks) payload = this._readMarksPref(reader);
+      if (!payload || !payload.marks) {
+        payload = this._readMarksPref(reader);
+        if (payload?.marks) source = 'pref';
+      }
 
       if (payload && payload.v === 1 && payload.marks) {
         for (const [c, mm] of Object.entries(payload.marks)) {
@@ -3666,8 +3687,12 @@ Object.assign(ZoteroVim, {
         }
       }
       if (migrated) await this._saveMarks(state, reader, state.marks);
-      if (Object.keys(state.marks).length) {
-        Zotero.debug('[ZoteroVim] loaded persisted marks: ' + Object.keys(state.marks).join(','));
+      const chars = Object.keys(state.marks);
+      if (chars.length) {
+        Zotero.debug('[ZoteroVim] loaded persisted marks from ' + (source || '?') +
+                     ': ' + chars.join(','));
+      } else {
+        Zotero.debug('[ZoteroVim] no persisted marks found (reader ' + reader.itemID + ')');
       }
     } catch (e) {
       Zotero.debug('[ZoteroVim] _loadPersistedMarks error: ' + e);

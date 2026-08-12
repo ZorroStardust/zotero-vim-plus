@@ -84,6 +84,11 @@ Object.assign(ZoteroVim, {
     };
     readerScanHandler();
     const readerScanTimer = win.setInterval(readerScanHandler, 1000);
+    // Startup burst: catch readers restored during Zotero initialization as
+    // soon as their tabs exist, before the 1 s interval ticks.
+    for (let i = 1; i <= 4; i++) {
+      win.setTimeout(readerScanHandler, i * 250);
+    }
 
     const keyHandler = (e) => this._onMainKeyDown(e, win, mainWinState);
     win.document.addEventListener('keydown', keyHandler, true);
@@ -192,13 +197,22 @@ Object.assign(ZoteroVim, {
       return;
     }
 
-    // Skip when focus is inside an embedded browser element (PDF reader)
-    if (active && active.localName === 'browser') return;
+    // Focus is on an embedded browser element (PDF reader tab content).
+    // Restored readers keep focus here after a restart, so route the key
+    // into the reader instead of dropping it.
+    if (active && active.localName === 'browser') {
+      this._forwardReaderKey(e, win);
+      return;
+    }
 
-    // Skip when the selected tab is a reader tab, not the main library pane
+    // Selected tab is a reader tab — forward the key to the reader rather
+    // than dropping it (main-window bindings are for the library pane).
     try {
       const tabID = win.Zotero_Tabs?.selectedID;
-      if (tabID && Zotero.Reader.getByTabID?.(tabID)) return;
+      if (tabID && Zotero.Reader.getByTabID?.(tabID)) {
+        this._forwardReaderKey(e, win);
+        return;
+      }
     } catch (_) {}
 
     // Count prefix digits

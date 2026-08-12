@@ -240,7 +240,9 @@ var ZoteroVim = {
   // ── Preferences ──────────────────────────────────────────────────────────
 
   _registerPrefsPane() {
+    if (this._prefsPaneRegistered) return;
     if (!Zotero.PreferencePanes) return;
+    this._prefsPaneRegistered = true;
     Zotero.PreferencePanes.register({
       pluginID: this.id,
       src:      this.rootURI + 'content/preferences.xhtml',
@@ -311,20 +313,31 @@ var ZoteroVim = {
   // ── Reader event listeners ────────────────────────────────────────────────
 
   _registerReaderListeners() {
-    this._readerListenerIDs.push(
-      Zotero.Reader.registerEventListener(
-        'renderToolbar',
-        (event) => this._onRenderToolbar(event),
-        this.id
-      )
-    );
-    this._readerListenerIDs.push(
-      Zotero.Reader.registerEventListener(
-        'renderTextSelectionPopup',
-        (event) => this._onTextSelectionPopup(event),
-        this.id
-      )
-    );
+    if (this._readerListenersRegistered) return;
+    try {
+      this._readerListenerIDs.push(
+        Zotero.Reader.registerEventListener(
+          'renderToolbar',
+          (event) => this._onRenderToolbar(event),
+          this.id
+        )
+      );
+      this._readerListenerIDs.push(
+        Zotero.Reader.registerEventListener(
+          'renderTextSelectionPopup',
+          (event) => this._onTextSelectionPopup(event),
+          this.id
+        )
+      );
+      // Flag only after successful registration, so a pre-init failure (e.g.
+      // Zotero.Reader not ready yet) can be retried by the post-init init().
+      this._readerListenersRegistered = true;
+      Zotero.debug('[ZoteroVim] reader listeners registered');
+      try { zvLogFile('reader listeners registered'); } catch (_) {}
+    } catch (e) {
+      this._readerListenerIDs = [];
+      Zotero.debug('[ZoteroVim] _registerReaderListeners failed: ' + e);
+    }
   },
 
   _ensureReaderInjected(reader) {
@@ -338,18 +351,64 @@ var ZoteroVim = {
 
   _onRenderToolbar(event) {
     const { reader } = event;
+    try {
+      zvLogFile('renderToolbar reader ' + (reader?._instanceID || '?'));
+    } catch (_) {}
     this._ensureReaderInjected(reader);
   },
 
+  /**
+   * Periodically ensure every open reader is injected.  Enumerates readers
+   * from Zotero.Reader._readers (an array of ReaderTab/ReaderWindow in
+   * Zotero 9; a Map in some 7/8 builds), falling back to tab enumeration.
+   * Restored readers never fire renderToolbar after the plugin's listeners
+   * are registered, so without this sweep they stay dead (no key handling,
+   * no persisted marks) until the user switches items.
+   */
   _rescanSelectedReader(win) {
     try {
-      const tabID = win?.Zotero_Tabs?.selectedID;
-      if (!tabID) return;
-      const reader = Zotero.Reader.getByTabID?.(tabID);
-      if (reader) this._ensureReaderInjected(reader);
+      const readers = [];
+      const all = Zotero.Reader._readers;
+      if (Array.isArray(all)) {
+        for (const r of all) readers.push(r);
+      } else if (all && typeof all.values === 'function') {
+        for (const r of all.values()) readers.push(r);
+      }
+      // Tab-based fallback (Zotero 7/8 style; Zotero 9's Zotero_Tabs has no
+      // public .tabs property — only _tabs).
+      if (readers.length === 0) {
+        const tabs = win?.Zotero_Tabs?._tabs || win?.Zotero_Tabs?.tabs;
+        if (Array.isArray(tabs)) {
+          for (const tab of tabs) {
+            if (!tab?.id) continue;
+            try {
+              const reader = Zotero.Reader.getByTabID?.(tab.id);
+              if (reader) readers.push(reader);
+            } catch (_) {}
+          }
+        }
+      }
+      let injected = 0;
+      for (const reader of readers) {
+        if (this._ensureReaderInjected(reader)) injected++;
+      }
+      if (readers.length > 0) {
+        this._logRescan('readers=' + readers.length + ' newlyInjected=' + injected);
+        try {
+          zvLogFile('rescan readers=' + readers.length + ' newlyInjected=' + injected);
+        } catch (_) {}
+      }
     } catch (e) {
       Zotero.debug('[ZoteroVim] _rescanSelectedReader error: ' + e);
     }
+  },
+
+  /** Rate-limited scan logging (at most one line per 5 s). */
+  _logRescan(msg) {
+    const now = Date.now();
+    if (this._lastScanLogTS && now - this._lastScanLogTS < 5000) return;
+    this._lastScanLogTS = now;
+    Zotero.debug('[ZoteroVim] rescan: ' + msg);
   },
 
   /**
@@ -405,7 +464,7 @@ var ZoteroVim = {
 
   _waitAndInject(reader, attempts = 0) {
     const id = reader?._instanceID;
-    if (attempts > 100) {
+    if (attempts > 300) {
       this._injectedReaders.delete(id);
       return;
     }
@@ -421,6 +480,7 @@ var ZoteroVim = {
   _injectIntoReader(reader, pdfWin) {
     const instanceID = reader._instanceID;
     Zotero.debug('[ZoteroVim] Injecting into reader ' + instanceID);
+    try { zvLogFile('inject reader ' + instanceID + ' itemID=' + (reader.itemID || '?')); } catch (_) {}
 
     const state = {
       mode: 'normal',
@@ -497,7 +557,7 @@ var ZoteroVim = {
     this._syncReaderPdfViewListeners(reader, state);
     state._pdfViewSyncTimer = setInterval(() => {
       this._syncReaderPdfViewListeners(reader, state);
-    }, 800);
+    }, 250);
 
     // ── Outer reader.html: Escape returns from annotation comment editing ──
     // When the user focuses a comment textarea (in the outer reader.html doc),
@@ -529,9 +589,10 @@ var ZoteroVim = {
       }
       const keyStr = this._keyString(e);
       if (!keyStr) return;
-      const shouldHandle = state.sidebarNavActive || state.outlineExplorerOpen
-        || !!state.keyBuffer || keyStr === ' ' || keyStr === 'escape';
-      if (!shouldHandle) return;
+      // Forward every key that lands on the reader's outer document.  After a
+      // Zotero restart the restored reader may have focus here (not in the PDF
+      // iframe), so a whitelist would drop hjkl etc.  Unbound keys pass
+      // through untouched (no preventDefault in _onKeyDown).
       const activePdfWin = this._activeReaderPdfWin(reader, pdfWin) || pdfWin;
       this._onKeyDown(e, reader, state, activePdfWin);
     };
@@ -594,6 +655,46 @@ var ZoteroVim = {
     if (focusedWin === secondaryWin) return secondaryWin;
     if (focusedWin === primaryWin) return primaryWin;
     return primaryWin || secondaryWin || fallback;
+  },
+
+  /**
+   * Route a main-window keydown into the selected reader.  After a Zotero
+   * restart, restored reader tabs keep focus on the main window's <browser>
+   * element — the PDF iframe never receives focus, so its own keydown
+   * handler is never invoked and only J/K (special-cased in the main window
+   * handler) work.  This forwards every other key (hjkl, `x, <space>…)
+   * to the reader's _onKeyDown and then focuses the PDF iframe, so the
+   * first keypress acts as the "click" and every later key flows straight
+   * into the iframe.  Unbound keys pass through untouched (no preventDefault).
+   */
+  _forwardReaderKey(e, win) {
+    try {
+      const tabID = win?.Zotero_Tabs?.selectedID;
+      if (!tabID) {
+        Zotero.debug('[ZoteroVim] _forwardReaderKey: no selected tab');
+        return;
+      }
+      const reader = Zotero.Reader.getByTabID?.(tabID);
+      if (!reader) {
+        Zotero.debug('[ZoteroVim] _forwardReaderKey: no reader for tab ' + tabID);
+        return;
+      }
+      this._ensureReaderInjected(reader);
+      const state = this._readerState.get(reader._instanceID);
+      if (!state) {
+        Zotero.debug('[ZoteroVim] _forwardReaderKey: no state for ' + reader._instanceID);
+        return;
+      }
+      const pdfWin = state.activePdfWin || this._activeReaderPdfWin(reader) || state.pdfWin;
+      if (!pdfWin) {
+        Zotero.debug('[ZoteroVim] _forwardReaderKey: no pdfWin for ' + reader._instanceID);
+        return;
+      }
+      try { pdfWin.focus(); } catch (_) {}
+      this._onKeyDown(e, reader, state, pdfWin);
+    } catch (err) {
+      Zotero.debug('[ZoteroVim] _forwardReaderKey error: ' + err);
+    }
   },
 
   _syncReaderPdfViewListeners(reader, state) {
@@ -941,6 +1042,25 @@ var ZoteroVim = {
     }
   },
 
+  /**
+   * Show a "PDF loading…" status when a scroll action runs while the PDF
+   * document has not finished loading (rate-limited to once per 2 s).
+   * Only page-based (PDF) views are gated on pdfDocument — EPUB/snapshot
+   * scroll containers are not.  Called from both the smooth-hold path and
+   * the classic scroll path in _executeAction.
+   */
+  _maybePdfLoadingStatus(state, pdfWin, reader) {
+    try {
+      if (!this._viewHasPageNav(reader)) return;
+      if (pdfWin.PDFViewerApplication?.pdfDocument) return;
+      const now = Date.now();
+      if (state._scrollDuringLoadTS && now - state._scrollDuringLoadTS < 2000) return;
+      state._scrollDuringLoadTS = now;
+      this._showStatus(state, 'PDF loading…', 1500);
+      try { zvLogFile('scroll during pdf load (no pdfDocument)'); } catch (_) {}
+    } catch (_) {}
+  },
+
   _onKeyDown(event, reader, state, pdfWin) {
     state.activePdfWin = pdfWin || state.activePdfWin;
 
@@ -993,6 +1113,7 @@ var ZoteroVim = {
       event.preventDefault();
       event.stopImmediatePropagation();
       this._startSmoothHoldScroll(state, pdfWin, holdSpec);
+      this._maybePdfLoadingStatus(state, pdfWin, reader);
       return;
     }
 
@@ -1244,6 +1365,17 @@ var ZoteroVim = {
       // Scrolling / page navigation clears any active annotation selection so that
       // zb (recolorBlue) correctly falls through to the scroll-to-bottom path.
       const clearAnnotation = () => { state.lastAnnotationKey = null; };
+
+      // While the PDF document is still loading there is nothing rendered to
+      // scroll — give feedback so the plugin's aliveness is visible (the
+      // injection itself completes in milliseconds; the wait is PDF.js).
+      if ([
+        'scrollDown', 'scrollUp', 'scrollLeft', 'scrollRight',
+        'halfPageDown', 'halfPageUp', 'fullPageDown', 'fullPageUp',
+        'scrollTop', 'scrollCenter', 'scrollBottom',
+      ].includes(action)) {
+        this._maybePdfLoadingStatus(state, pdfWin, reader);
+      }
 
       switch (action) {
         case 'scrollDown':    clearAnnotation(); scrollBy(step * n);                      break;

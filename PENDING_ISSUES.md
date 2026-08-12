@@ -1,5 +1,51 @@
 # Pending Issues
 
+## ZV-004: hjkl unresponsive for several seconds after Zotero restart on restored readers (shelved)
+
+- Status: Shelved (pre-existing, not a regression — v1.5.0 also affected on re-test)
+- Reported on: 2026-08-12
+- Area: Reader startup / injection (`bootstrap.js`, `content/zoteroVim.js`)
+
+### Summary
+After restarting Zotero, restored PDF reader tabs ignore hjkl for several
+seconds (roughly until the PDF document finishes loading). Switching items /
+opening a new reader works immediately. Initial report suggested this was new
+in v1.6.0, but re-testing v1.5.0 showed the same wait — it is a long-standing
+startup issue.
+
+### Investigation so far
+- Environment: Zotero 9.0.6 (user machine). Zotero 9 differs from 7/8:
+  `Zotero.Reader._readers` is an array (not a Map) and `Zotero_Tabs` has no
+  public `tabs` property (only `_tabs`) — the original full-tab sweep
+  (`win.Zotero_Tabs?.tabs`) was silently dead on Zotero 9.
+- FIXED: `_rescanSelectedReader` now enumerates `Zotero.Reader._readers`
+  (array or Map, with a `_tabs`/`tabs` fallback). File-log evidence
+  (`zv-startup.log` in the profile dir) shows restored readers are now
+  injected ~11 ms after startup.
+- Remaining delay is AFTER injection: keys still do nothing until the PDF
+  document finishes loading. Leading theory: PDF.js document load — scroll
+  actions on the unrendered container have no visible effect. The "PDF
+  loading…" status hint (`_maybePdfLoadingStatus`, covers both the
+  smooth-hold path and the classic scroll path) was added to prove keys are
+  captured during load but was not yet confirmed by the reporter.
+- Other changes made while chasing this (keep): two-phase startup in
+  bootstrap.js (listeners/window injection before
+  `Zotero.initializationPromise`, idempotent), main-window key forwarding to
+  the selected reader (`_forwardReaderKey` + auto-focus), outer-document
+  always-forward in `outerKeyHandler`, pdf-view listener re-sync tightened
+  800 ms → 250 ms, marks loading retry when the item DB is not ready.
+
+### Next investigation directions
+- Confirm via `zv-startup.log` whether `scroll during pdf load (no pdfDocument)`
+  lines appear during the wait (keys captured?) or not (capture chain broken).
+- Inspect Zotero 9's `_createView` iframe lifecycle — whether the PDF view's
+  `_iframeWindow` at early injection is a placeholder that gets replaced when
+  the document loads (listeners would then attach to a dead window until the
+  250 ms re-sync catches up).
+- Check whether focus during the wait sits outside the PDF iframe (main window
+  `<browser>` / reader.html body) and whether the forwarding/auto-focus paths
+  actually fire then.
+
 ## ZV-003: Marks persistence — child-note backend fails, extra-field fallback used (shelved)
 
 - Status: Shelved — extra-field backend works and syncs; note backend still fails

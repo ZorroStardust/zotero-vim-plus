@@ -92,9 +92,23 @@
     <label data-i18n="zv.scroll" value="Scroll" style="font-weight: bold;" />
     <html:p style="margin: 4px 0 10px; font-size: 0.9em; color: #666;"
       data-i18n="zv.scroll.help">
-      Tune both classic step scrolling and hold-based smooth scrolling behavior.
+      Pick one scrolling mode for j/k/H/L — only its parameters are shown.
     </html:p>
     <hbox align="center">
+      <html:label for="zv-scroll-mode"
+        data-i18n="zv.scroll.mode"
+        style="min-width: 180px; font-weight: 600;">Scrolling mode</html:label>
+      <menulist id="zv-scroll-mode">
+        <menupopup>
+          <menuitem value="step" data-i18n="zv.scroll.mode.step" label="Step scrolling" />
+          <menuitem value="follow" data-i18n="zv.scroll.mode.follow" label="Constant-speed scrolling" />
+          <menuitem value="trapezoid" data-i18n="zv.scroll.mode.trapezoid" label="Accelerating (trapezoid curve)" />
+        </menupopup>
+      </menulist>
+    </hbox>
+
+    <!-- Step mode: scroll step only -->
+    <hbox align="center" id="zv-scroll-step-row" style="margin-top: 8px;">
       <html:label for="zv-scroll-step"
         data-i18n="zv.scroll.step"
         style="min-width: 180px; font-weight: 600;">Scroll step (pixels)</html:label>
@@ -102,33 +116,42 @@
         min="10" max="500" step="10"
         style="width: 80px; padding: 3px 6px;" />
     </hbox>
-    <hbox align="center" style="margin-top: 8px;">
-      <checkbox id="zv-smooth-scroll-enabled"
-        data-i18n="zv.scroll.smooth"
-        label="Enable smooth scrolling for reader navigation (default)" />
+
+    <!-- Constant-speed mode: single speed -->
+    <hbox align="center" id="zv-scroll-follow-row" style="margin-top: 8px;" hidden="true">
+      <html:label for="zv-smooth-follow-speed"
+        data-i18n="zv.scroll.followSpeed"
+        style="min-width: 180px; font-weight: 600;">Scroll speed (px/s)</html:label>
+      <html:input type="number" id="zv-smooth-follow-speed"
+        min="100" max="6000" step="50" style="width: 90px; padding: 3px 6px;" />
     </hbox>
-    <html:div style="margin-top: 10px; padding-top: 10px; border-top: 1px solid #ddd; display: grid; grid-template-columns: 180px 90px; gap: 8px 12px; align-items: center;">
-      <html:label for="zv-smooth-initial-speed"
-        data-i18n="zv.scroll.initialSpeed" style="font-weight: 600;">Initial speed (px/s)</html:label>
-      <html:input type="number" id="zv-smooth-initial-speed" min="50" max="2000" step="10" style="width: 90px; padding: 3px 6px;" />
 
-      <html:label for="zv-smooth-max-speed"
-        data-i18n="zv.scroll.maxSpeed" style="font-weight: 600;">Max speed (px/s)</html:label>
-      <html:input type="number" id="zv-smooth-max-speed" min="100" max="6000" step="50" style="width: 90px; padding: 3px 6px;" />
+    <!-- Accelerating mode: trapezoid curve -->
+    <html:div id="zv-scroll-trapezoid-block" style="margin-top: 10px;" hidden="true">
+      <html:div style="padding-top: 10px; border-top: 1px solid #ddd; display: grid; grid-template-columns: 180px 90px; gap: 8px 12px; align-items: center;">
+        <html:label for="zv-smooth-initial-speed"
+          data-i18n="zv.scroll.initialSpeed" style="font-weight: 600;">Initial speed (px/s)</html:label>
+        <html:input type="number" id="zv-smooth-initial-speed" min="50" max="2000" step="10" style="width: 90px; padding: 3px 6px;" />
 
-      <html:label for="zv-smooth-accel"
-        data-i18n="zv.scroll.accel" style="font-weight: 600;">Acceleration (px/s²)</html:label>
-      <html:input type="number" id="zv-smooth-accel" min="100" max="10000" step="100" style="width: 90px; padding: 3px 6px;" />
+        <html:label for="zv-smooth-max-speed"
+          data-i18n="zv.scroll.maxSpeed" style="font-weight: 600;">Max speed (px/s)</html:label>
+        <html:input type="number" id="zv-smooth-max-speed" min="100" max="6000" step="50" style="width: 90px; padding: 3px 6px;" />
 
-      <html:label for="zv-smooth-decel"
-        data-i18n="zv.scroll.decel" style="font-weight: 600;">Deceleration (px/s²)</html:label>
-      <html:input type="number" id="zv-smooth-decel" min="100" max="12000" step="100" style="width: 90px; padding: 3px 6px;" />
+        <html:label for="zv-smooth-accel"
+          data-i18n="zv.scroll.accel" style="font-weight: 600;">Acceleration (px/s²)</html:label>
+        <html:input type="number" id="zv-smooth-accel" min="100" max="10000" step="100" style="width: 90px; padding: 3px 6px;" />
+
+        <html:label for="zv-smooth-decel"
+          data-i18n="zv.scroll.decel" style="font-weight: 600;">Deceleration (px/s²)</html:label>
+        <html:input type="number" id="zv-smooth-decel" min="100" max="12000" step="100" style="width: 90px; padding: 3px 6px;" />
+      </html:div>
+      <hbox align="center" style="margin-top: 8px;">
+        <checkbox id="zv-smooth-stop-on-release"
+          data-i18n="zv.scroll.stopOnRelease"
+          label="Stop immediately on key release instead of decelerating" />
+      </hbox>
     </html:div>
-    <hbox align="center" style="margin-top: 8px;">
-      <checkbox id="zv-smooth-stop-on-release"
-        data-i18n="zv.scroll.stopOnRelease"
-        label="Stop immediately on key release instead of decelerating" />
-    </hbox>
+
     <hbox style="margin-top: 10px; justify-content: flex-end; align-items: center;">
       <html:p style="font-size: 0.85em; color: #888; margin: 0 12px 0 0;"
         data-i18n="zv.scroll.autosave">

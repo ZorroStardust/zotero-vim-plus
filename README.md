@@ -728,22 +728,27 @@ failures are reported to `zv-startup.log` in the profile directory with
 | Enable Cursor mode | on | Allow entering Cursor mode with `c` |
 | Enable Insert mode | on | Allow entering Insert mode with `i` |
 | Note editor Vim mode | on | Enable Vim-style editing in note editors (context pane and note tabs) |
-| Scroll step | 60 px | Pixels scrolled per `j`/`k`/`H`/`L` keypress |
-| Smooth scrolling | on | Enable smooth scrolling behavior in the reader |
-| Smooth initial speed | 2000 px/s | Starting speed for hold-based smooth scrolling |
-| Smooth max speed | 2000 px/s | Maximum hold-scroll speed |
-| Smooth acceleration | 2600 px/s² | Speed increase while holding a scroll key |
-| Smooth deceleration | 4200 px/s² | Speed decrease after key release |
-| Stop on release | off | If enabled, stop immediately when key is released |
+| Scroll mode | Constant-speed scrolling | Step / Constant-speed / Accelerating — only the active mode's parameters are shown |
+| Scroll step | 60 px | Pixels scrolled per `j`/`k`/`H`/`L` keypress (step mode; count prefixes like `3j` always use this) |
+| Scroll speed | 2000 px/s | Constant hold-scroll speed (constant-speed mode) |
+| Smooth initial speed | 2000 px/s | Starting speed for hold-based smooth scrolling (accelerating mode) |
+| Smooth max speed | 2000 px/s | Maximum hold-scroll speed (accelerating mode) |
+| Smooth acceleration | 2600 px/s² | Speed increase while holding a scroll key (accelerating mode) |
+| Smooth deceleration | 4200 px/s² | Speed decrease after key release (accelerating mode) |
+| Stop on release | off | If enabled, stop immediately when key is released (accelerating mode) |
 | Persist marks | off | Save marks in a child note under the PDF item so they survive restarts and sync |
 | Default highlight colour | Yellow | Colour used when no explicit colour key is pressed |
 
 Scroll settings save automatically on change.
 
-By default, `initial speed` and `max speed` are both `2000`, which gives a
-more constant "no acceleration jump" feel that many users perceive as smoother.
-If you prefer stronger acceleration/deceleration dynamics, you can set
-different values for these parameters.
+- **Step scrolling** moves instantly by the scroll step per `j`/`k`/`H`/`L` press.
+- **Constant-speed scrolling** glides at a fixed speed while a scroll key is
+  held and stops immediately on release.
+- **Accelerating (trapezoid curve) scrolling** ramps from `initial speed` to
+  `max speed` while held, then decelerates after release (unless *stop on
+  release* is enabled). With `initial speed` and `max speed` both set to
+  `2000`, it behaves like the constant-speed mode with a gentle glide on
+  release.
 
 ---
 

@@ -284,14 +284,25 @@ const ZV_ACTION_LABELS = {
 const ZV_ALL_ACTIONS = Object.keys(ZV_ACTION_LABELS).sort();
 
 const ZV_SCROLL_DEFAULTS = {
+  mode: 'follow',
   scrollStep: 60,
-  smoothScroll: true,
+  smoothFollowSpeed: 2000,
   smoothInitialSpeed: 2000,
   smoothMaxSpeed: 2000,
   smoothAcceleration: 2600,
   smoothDeceleration: 4200,
   smoothStopOnRelease: false,
 };
+
+// True when the pref key exists at all (regardless of value) — used to
+// distinguish "never set" from "explicitly set" during legacy migration.
+function _zvHasPref(key) {
+  try {
+    return _zvPrefs().getPrefType(ZV_PREFIX + key) !== 0;
+  } catch (_) {
+    return false;
+  }
+}
 
 function _zvClampInt(value, fallback, min, max) {
   const n = parseInt(value, 10);
@@ -449,19 +460,34 @@ function _zvInit() {
     }
   });
 
-  // ── Scroll step ────────────────────────────────────────────────────────────
+  // ── Scroll ─────────────────────────────────────────────────────────────────
   _zvSection("scroll", () => {
-    const smoothScrollCb = document.getElementById("zv-smooth-scroll-enabled");
+    const modeSelect = document.getElementById("zv-scroll-mode");
+    const followSpeedInput = document.getElementById("zv-smooth-follow-speed");
     const initialSpeedInput = document.getElementById("zv-smooth-initial-speed");
     const maxSpeedInput = document.getElementById("zv-smooth-max-speed");
     const accelInput = document.getElementById("zv-smooth-accel");
     const decelInput = document.getElementById("zv-smooth-decel");
     const stopOnReleaseCb = document.getElementById("zv-smooth-stop-on-release");
     const scrollStatus = document.getElementById("zv-scroll-config-status");
+    const stepRow = document.getElementById("zv-scroll-step-row");
+    const followRow = document.getElementById("zv-scroll-follow-row");
+    const trapezoidBlock = document.getElementById("zv-scroll-trapezoid-block");
+
+    // Legacy migration: no scroll.mode yet → honor an explicitly set old
+    // smoothScroll bool (true → trapezoid, false → step); otherwise use the
+    // default mode.
+    const savedMode = _zvGet("scroll.mode", "");
+    const mode = (savedMode === "step" || savedMode === "follow" || savedMode === "trapezoid")
+      ? savedMode
+      : (_zvHasPref("smoothScroll")
+          ? (_zvGet("smoothScroll", true) ? "trapezoid" : "step")
+          : ZV_SCROLL_DEFAULTS.mode);
 
     scrollInput.value = _zvGet("scrollStep", ZV_SCROLL_DEFAULTS.scrollStep);
-    if (smoothScrollCb) {
-      smoothScrollCb.checked = _zvGet("smoothScroll", ZV_SCROLL_DEFAULTS.smoothScroll);
+    if (modeSelect) modeSelect.value = mode;
+    if (followSpeedInput) {
+      followSpeedInput.value = _zvGet("smoothScroll.followSpeed", ZV_SCROLL_DEFAULTS.smoothFollowSpeed);
     }
     if (initialSpeedInput) {
       initialSpeedInput.value = _zvGet("smoothScroll.initialSpeed", ZV_SCROLL_DEFAULTS.smoothInitialSpeed);
@@ -479,10 +505,19 @@ function _zvInit() {
       stopOnReleaseCb.checked = _zvGet("smoothScroll.stopOnRelease", ZV_SCROLL_DEFAULTS.smoothStopOnRelease);
     }
 
+    // Show only the parameter group of the active mode.
+    const updateModeUI = () => {
+      const m = modeSelect ? modeSelect.value : mode;
+      if (stepRow) stepRow.hidden = m !== "step";
+      if (followRow) followRow.hidden = m !== "follow";
+      if (trapezoidBlock) trapezoidBlock.hidden = m !== "trapezoid";
+    };
+
     // Scroll settings save automatically on change; numeric inputs are clamped
     // on "change" (fires on blur / Enter), so typing is never interrupted.
     const saveScrollConfig = () => {
       const scrollStep = _zvClampInt(scrollInput.value, ZV_SCROLL_DEFAULTS.scrollStep, 10, 500);
+      const followSpeed = _zvClampInt(followSpeedInput?.value, ZV_SCROLL_DEFAULTS.smoothFollowSpeed, 100, 6000);
       const initialSpeed = _zvClampInt(initialSpeedInput?.value, ZV_SCROLL_DEFAULTS.smoothInitialSpeed, 50, 2000);
       const maxSpeed = _zvClampInt(maxSpeedInput?.value, ZV_SCROLL_DEFAULTS.smoothMaxSpeed, 100, 6000);
       const acceleration = _zvClampInt(accelInput?.value, ZV_SCROLL_DEFAULTS.smoothAcceleration, 100, 10000);
@@ -490,13 +525,14 @@ function _zvInit() {
       const finalMaxSpeed = Math.max(maxSpeed, initialSpeed);
 
       scrollInput.value = scrollStep;
+      if (followSpeedInput) followSpeedInput.value = followSpeed;
       if (initialSpeedInput) initialSpeedInput.value = initialSpeed;
       if (maxSpeedInput) maxSpeedInput.value = finalMaxSpeed;
       if (accelInput) accelInput.value = acceleration;
       if (decelInput) decelInput.value = deceleration;
 
       _zvSet("scrollStep", scrollStep);
-      _zvSet("smoothScroll", !!smoothScrollCb?.checked);
+      _zvSet("smoothScroll.followSpeed", followSpeed);
       _zvSet("smoothScroll.initialSpeed", initialSpeed);
       _zvSet("smoothScroll.maxSpeed", finalMaxSpeed);
       _zvSet("smoothScroll.acceleration", acceleration);
@@ -506,8 +542,16 @@ function _zvInit() {
       _zvFlashStatus(scrollStatus, ZV_I18N_STR("zv.status.saved", ZV_I18N_CURRENT_LANG()), "#5FB236");
     };
 
+    updateModeUI();
+    if (modeSelect) {
+      modeSelect.addEventListener("command", () => {
+        _zvSet("scroll.mode", modeSelect.value);
+        updateModeUI();
+        _zvFlashStatus(scrollStatus, ZV_I18N_STR("zv.status.saved", ZV_I18N_CURRENT_LANG()), "#5FB236");
+      });
+    }
     scrollInput.addEventListener("change", saveScrollConfig);
-    if (smoothScrollCb) _zvSaveCheckbox(smoothScrollCb, "smoothScroll", scrollStatus);
+    if (followSpeedInput) followSpeedInput.addEventListener("change", saveScrollConfig);
     if (initialSpeedInput) initialSpeedInput.addEventListener("change", saveScrollConfig);
     if (maxSpeedInput) maxSpeedInput.addEventListener("change", saveScrollConfig);
     if (accelInput) accelInput.addEventListener("change", saveScrollConfig);

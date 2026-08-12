@@ -287,17 +287,33 @@ var ZoteroVim = {
 
   getScrollStep() { return this.getPref('scrollStep', 60); },
 
-  isSmoothScrollEnabled() { return this.getPref('smoothScroll', true); },
+  // 'step' | 'follow' | 'trapezoid'. Defaults to 'follow'; migrates the
+  // legacy smoothScroll bool (when explicitly set: true → trapezoid,
+  // false → step).
+  getScrollMode() {
+    const mode = this.getPref('scroll.mode', '');
+    if (mode === 'step' || mode === 'follow' || mode === 'trapezoid') return mode;
+    let legacySet = false;
+    try {
+      legacySet = Services.prefs.getPrefType(this.PREF_PREFIX + '.smoothScroll') !== 0;
+    } catch (_) {}
+    if (legacySet) return this.getPref('smoothScroll', true) ? 'trapezoid' : 'step';
+    return 'follow';
+  },
+
+  isSmoothScrollEnabled() { return this.getScrollMode() !== 'step'; },
 
   getSmoothScrollConfig() {
     const initialSpeed = this.getPref('smoothScroll.initialSpeed', 2000);
     const maxSpeed = Math.max(initialSpeed, this.getPref('smoothScroll.maxSpeed', 2000));
     return {
+      mode: this.getScrollMode(),
       initialSpeed,
       maxSpeed,
       acceleration: this.getPref('smoothScroll.acceleration', 2600),
       deceleration: this.getPref('smoothScroll.deceleration', 4200),
       stopOnRelease: this.getPref('smoothScroll.stopOnRelease', false),
+      followSpeed: this.getPref('smoothScroll.followSpeed', 2000),
     };
   },
 
@@ -964,6 +980,7 @@ var ZoteroVim = {
 
     const config = this.getSmoothScrollConfig();
     const sameVector = hold.axis === spec.axis && hold.direction === spec.direction;
+    const startSpeed = config.mode === 'follow' ? config.followSpeed : config.initialSpeed;
 
     hold.active = true;
     hold.releasing = false;
@@ -971,10 +988,10 @@ var ZoteroVim = {
     hold.axis = spec.axis;
     hold.direction = spec.direction;
     hold.lastTS = 0;
-    hold.speed = sameVector ? Math.max(config.initialSpeed, hold.speed) : config.initialSpeed;
+    hold.speed = sameVector ? Math.max(startSpeed, hold.speed) : startSpeed;
 
     // Immediate response on keydown so short taps still feel consistent.
-    const kick = hold.direction * (config.initialSpeed / 120);
+    const kick = hold.direction * (startSpeed / 120);
     const kickDX = hold.axis === 'x' ? kick : 0;
     const kickDY = hold.axis === 'y' ? kick : 0;
     this._scrollContainerBy(this._getScrollContainer(pdfWin), kickDX, kickDY, { forceInstant: true });
@@ -997,7 +1014,12 @@ var ZoteroVim = {
       hold.lastTS = ts;
 
       if (hold.active) {
-        hold.speed = Math.min(frameConfig.maxSpeed, Math.max(frameConfig.initialSpeed, hold.speed + frameConfig.acceleration * dt));
+        if (frameConfig.mode === 'follow') {
+          // Constant-velocity mode: no acceleration curve.
+          hold.speed = frameConfig.followSpeed;
+        } else {
+          hold.speed = Math.min(frameConfig.maxSpeed, Math.max(frameConfig.initialSpeed, hold.speed + frameConfig.acceleration * dt));
+        }
       } else if (hold.releasing) {
         hold.speed = Math.max(0, hold.speed - frameConfig.deceleration * dt);
         if (hold.speed <= 0) {
@@ -1043,7 +1065,10 @@ var ZoteroVim = {
     if (!['j', 'k', 'H', 'L'].includes(event.key)) return;
     if (state?.smoothHold?.key === event.key) {
       const config = this.getSmoothScrollConfig();
-      this._stopSmoothHoldScroll(state, pdfWin, !!config.stopOnRelease);
+      // Follow mode stops instantly by design; trapezoid decelerates unless
+      // "stop immediately on release" is enabled.
+      const immediate = config.mode === 'follow' || !!config.stopOnRelease;
+      this._stopSmoothHoldScroll(state, pdfWin, immediate);
     }
   },
 

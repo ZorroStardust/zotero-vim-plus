@@ -994,7 +994,7 @@ var ZoteroVim = {
     const kick = hold.direction * (startSpeed / 120);
     const kickDX = hold.axis === 'x' ? kick : 0;
     const kickDY = hold.axis === 'y' ? kick : 0;
-    this._scrollContainerBy(this._getScrollContainer(pdfWin), kickDX, kickDY, { forceInstant: true });
+    this._scrollContainerBy(this._getScrollContainer(pdfWin), kickDX, kickDY);
 
     if (hold.rafId) return;
 
@@ -1031,7 +1031,7 @@ var ZoteroVim = {
       const delta = hold.direction * hold.speed * dt;
       const dx = hold.axis === 'x' ? delta : 0;
       const dy = hold.axis === 'y' ? delta : 0;
-      this._scrollContainerBy(this._getScrollContainer(pdfWin), dx, dy, { forceInstant: true });
+      this._scrollContainerBy(this._getScrollContainer(pdfWin), dx, dy);
       hold.rafId = pdfWin.requestAnimationFrame(tick);
     };
 
@@ -1385,8 +1385,8 @@ var ZoteroVim = {
 
       const step = this.getScrollStep();
       const getContainer = () => this._getScrollContainer(pdfWin);
-      const scrollBy  = (dy) => this._scrollContainerBy(getContainer(), 0, dy);
-      const scrollXBy = (dx) => this._scrollContainerBy(getContainer(), dx, 0);
+      const scrollBy  = (dy, opts) => this._scrollContainerBy(getContainer(), 0, dy, opts);
+      const scrollXBy = (dx, opts) => this._scrollContainerBy(getContainer(), dx, 0, opts);
       const viewportH = () => { try { return getContainer()?.clientHeight || 600; } catch (_) { return 600; } };
       // Count prefixes (e.g. `3j`, `5l`, `2ctrl+f`) multiply the step or page
       // count; `G`/`gg` with a count jump to that page number.
@@ -1412,10 +1412,10 @@ var ZoteroVim = {
         case 'scrollUp':      clearAnnotation(); scrollBy(-step * n);                     break;
         case 'scrollLeft':    clearAnnotation(); scrollXBy(-step * n);                    break;
         case 'scrollRight':   clearAnnotation(); scrollXBy(step * n);                     break;
-        case 'halfPageDown':  clearAnnotation(); scrollBy(Math.round(viewportH() / 2) * n); break;
-        case 'halfPageUp':    clearAnnotation(); scrollBy(-Math.round(viewportH() / 2) * n);break;
-        case 'fullPageDown':  clearAnnotation(); scrollBy(viewportH() * n);               break;
-        case 'fullPageUp':    clearAnnotation(); scrollBy(-viewportH() * n);              break;
+        case 'halfPageDown':  clearAnnotation(); scrollBy(Math.round(viewportH() / 2) * n, { smooth: true }); break;
+        case 'halfPageUp':    clearAnnotation(); scrollBy(-Math.round(viewportH() / 2) * n, { smooth: true });break;
+        case 'fullPageDown':  clearAnnotation(); scrollBy(viewportH() * n, { smooth: true });               break;
+        case 'fullPageUp':    clearAnnotation(); scrollBy(-viewportH() * n, { smooth: true });              break;
         case 'scrollTop':    clearAnnotation(); this._scrollToPagePosition(pdfWin, 'top');    break;
         case 'scrollCenter': clearAnnotation(); this._scrollToPagePosition(pdfWin, 'center'); break;
         case 'scrollBottom': clearAnnotation(); this._scrollToPagePosition(pdfWin, 'bottom'); break;

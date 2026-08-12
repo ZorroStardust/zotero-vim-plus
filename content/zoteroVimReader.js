@@ -1930,7 +1930,7 @@ Object.assign(ZoteroVim, {
         dx = Math.max(-maxPan, Math.min(maxPan, dx));
         dy = Math.max(-maxPan, Math.min(maxPan, dy));
         // Keep cursor tracking tight in visual mode; avoid smooth lag here.
-        this._scrollContainerBy(container, dx, dy, { forceInstant: true });
+        this._scrollContainerBy(container, dx, dy);
       }
     } catch (_) {}
   },
@@ -2388,7 +2388,7 @@ Object.assign(ZoteroVim, {
         let top = 0;
         if (position === 'bottom')  top = Math.max(0, h - vh);
         else if (position === 'center') top = Math.max(0, (h - vh) / 2);
-        this._scrollContainerTo(c, top);
+        this._scrollContainerTo(c, top, { smooth: true });
         return;
       }
 
@@ -2405,7 +2405,7 @@ Object.assign(ZoteroVim, {
       else if (position === 'bottom') newTop = pageTop + pageH - viewH;
       else                           newTop = pageTop + pageH / 2 - viewH / 2;   // center
 
-      this._scrollContainerTo(container, Math.max(0, newTop));
+      this._scrollContainerTo(container, Math.max(0, newTop), { smooth: true });
     } catch (e) {
       Zotero.debug('[ZoteroVim] _scrollToPagePosition error: ' + e);
     }
@@ -2422,17 +2422,33 @@ Object.assign(ZoteroVim, {
 
   _scrollContainerBy(container, dx, dy, opts = null) {
     if (!container) return;
-    this._applyScrollBehavior(container, opts);
-    try {
-      container.scrollBy(dx, dy);
-    } catch (_) {
-      try { container.scrollBy(dx, dy); } catch (_) {}
+    if (opts?.smooth && this.isSmoothScrollEnabled()) {
+      try {
+        // The options dictionary is created in the chrome compartment, but the
+        // container lives in the reader's content iframe: pass it cloned into
+        // that window, or Xray shielding makes the content side read every
+        // member as undefined and the scroll silently does nothing.
+        const win = container.ownerDocument?.defaultView || container.ownerGlobal;
+        if (win) {
+          container.scrollBy(Components.utils.cloneInto({ left: dx, top: dy, behavior: 'smooth' }, win));
+          return;
+        }
+      } catch (_) {}
     }
+    try { container.scrollBy(dx, dy); } catch (_) {}
   },
 
   _scrollContainerTo(container, top, opts = null) {
     if (!container) return;
-    this._applyScrollBehavior(container, opts);
+    if (opts?.smooth && this.isSmoothScrollEnabled()) {
+      try {
+        const win = container.ownerDocument?.defaultView || container.ownerGlobal;
+        if (win && typeof container.scrollTo === 'function') {
+          container.scrollTo(Components.utils.cloneInto({ top, behavior: 'smooth' }, win));
+          return;
+        }
+      } catch (_) {}
+    }
     try {
       if (typeof container.scrollTo === 'function') {
         container.scrollTo(0, top);
@@ -2442,17 +2458,6 @@ Object.assign(ZoteroVim, {
     } catch (_) {
       try { container.scrollTop = top; } catch (_) {}
     }
-  },
-
-  _applyScrollBehavior(container, opts = null) {
-    if (!container?.style) return;
-    try {
-      if (opts?.forceInstant) {
-        container.style.scrollBehavior = 'auto';
-      } else {
-        container.style.scrollBehavior = this.isSmoothScrollEnabled() ? 'smooth' : 'auto';
-      }
-    } catch (_) {}
   },
 
   /**
@@ -3349,13 +3354,12 @@ Object.assign(ZoteroVim, {
       }
       if (pageIndex !== null && this._viewHasPageNav(reader)) {
         this._instantPageFlip(pdfWin, pageIndex);
-        this._scrollToPageRatio(pdfWin, pageIndex, ratio, 0, { forceInstant: true });
+        this._scrollToPageRatio(pdfWin, pageIndex, ratio, 0);
       } else {
         const c = this._getScrollContainer(pdfWin);
         if (c) {
           this._scrollContainerTo(c,
-            ratio * Math.max(0, (c.scrollHeight || 0) - (c.clientHeight || 0)),
-            { forceInstant: true });
+            ratio * Math.max(0, (c.scrollHeight || 0) - (c.clientHeight || 0)));
         }
       }
       this._showStatus(state,

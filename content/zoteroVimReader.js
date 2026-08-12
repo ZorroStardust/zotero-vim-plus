@@ -3174,11 +3174,34 @@ Object.assign(ZoteroVim, {
         '→ ann ' + (targetIdx + 1) + '/' + annotations.length +
         '  p.' + (posPage + 1), 2000);
 
-      // ── Navigate to annotation ─────────────────────────────────────────
-      // _internalReader lives in a different JS compartment (reader.html iframe).
-      // Arrays/objects passed as arguments must be cloned into that compartment
-      // with Cu.cloneInto() — otherwise the security wrapper blocks property
-      // access and the calls silently fail or throw "Permission denied".
+      this._navigateToAnnotationKey(state, reader, target);
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] _navigateAnnotation error: ' + e);
+      this._showStatus(state, '✗ nav: ' + String(e).slice(0, 30), 4000);
+    }
+  },
+
+  /**
+   * Navigate to an annotation by key: smooth-scroll the PDF and select it.
+   * Shared by annotation navigation ([ / ]) and persisted mark jumps.
+   *
+   * _internalReader lives in a different JS compartment (reader.html iframe);
+   * arrays/objects passed as arguments must be cloned into that compartment
+   * with Cu.cloneInto() — otherwise the security wrapper blocks property
+   * access and the calls silently fail or throw "Permission denied".
+   */
+  _navigateToAnnotationKey(state, reader, target) {
+    try {
+      const internalReader = reader._internalReader;
+      if (!internalReader) return false;
+
+      // Page/position resolution (used by the page-jump last resort).
+      let posPage = parseInt((target.annotationSortIndex || '00000').split('|')[0], 10) || 0;
+      try {
+        const parsed = JSON.parse(target.annotationPosition || '{}');
+        if (typeof parsed.pageIndex === 'number') posPage = parsed.pageIndex;
+      } catch (_) {}
+
       const readerWin = reader._iframeWindow;
       const Cu = Components.utils;
 
@@ -3214,10 +3237,620 @@ Object.assign(ZoteroVim, {
           } catch (_) {}
         }
       }
+      return true;
     } catch (e) {
-      Zotero.debug('[ZoteroVim] _navigateAnnotation error: ' + e);
-      this._showStatus(state, '✗ nav: ' + String(e).slice(0, 30), 4000);
+      Zotero.debug('[ZoteroVim] _navigateToAnnotationKey error: ' + e);
+      return false;
     }
+  },
+
+  // ── Marks (m / ` / dm) ──────────────────────────────────────────────────
+
+  /**
+   * Compute the current mark position: page index plus the vertical position
+   * within that page (0–1).  Non-PDF views (EPUB/snapshot) fall back to a
+   * whole-document scroll ratio with pageIndex null.
+   */
+  _markPosition(pdfWin) {
+    try {
+      const pdfApp = pdfWin.PDFViewerApplication;
+      const container =
+        pdfApp?.pdfViewer?.container || pdfWin.document.getElementById('viewerContainer');
+      if (pdfApp?.pdfViewer && container) {
+        const pageNum = pdfApp.pdfViewer.currentPageNumber || 1;
+        const pageEl = pdfWin.document.querySelector(`.page[data-page-number="${pageNum}"]`);
+        if (pageEl && pageEl.offsetHeight > 0) {
+          const pageTop = pageEl.offsetTop;
+          const viewH = container.clientHeight || 600;
+          // Viewport-centre semantics: the marked point is whatever sits in
+          // the middle of the screen, so jumping back reproduces the exact
+          // view (jump centres the ratio point, _scrollToPageRatio).
+          const ratio = Math.min(1, Math.max(0,
+            (container.scrollTop - pageTop + viewH / 2) / pageEl.offsetHeight));
+          return { pageIndex: pageNum - 1, ratio };
+        }
+        return { pageIndex: pageNum - 1, ratio: 0 };
+      }
+      const c = this._getScrollContainer(pdfWin);
+      if (c && (c.scrollHeight - c.clientHeight) > 0) {
+        return { pageIndex: null, ratio: c.scrollTop / (c.scrollHeight - c.clientHeight) };
+      }
+      return { pageIndex: null, ratio: 0 };
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] _markPosition error: ' + e);
+      return { pageIndex: null, ratio: 0 };
+    }
+  },
+
+  /**
+   * Set a mark at the current viewport position ("m<x>").
+   * Binds to the currently selected annotation (via lastAnnotationKey) when
+   * available; with persistence enabled the whole mark set is saved through
+   * the storage cascade (child note → extra field → local pref).
+   */
+  async _setMark(state, reader, pdfWin, char) {
+    try {
+      const pos = this._markPosition(pdfWin);
+      state.marks[char] = {
+        pageIndex: pos.pageIndex,
+        ratio:     pos.ratio,
+        key:       state.lastAnnotationKey || null,
+        ts:        Date.now(),
+      };
+      const persist = this.getPref('marks.persist', false);
+      let persistLabel = ' (session)';
+      if (persist) {
+        const store = await this._saveMarks(state, reader, state.marks);
+        if (store) persistLabel = ' · saved (' + store + ')';
+      }
+      const pageLabel = pos.pageIndex === null ? '' : '  p.' + (pos.pageIndex + 1);
+      this._showStatus(state, '✓ mark ' + char + ' set' + pageLabel + persistLabel, 1200);
+      Zotero.debug('[ZoteroVim] setMark ' + char + ' page=' + pos.pageIndex +
+                   ' ratio=' + pos.ratio.toFixed(3) + ' key=' + (state.marks[char].key || ''));
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] _setMark error: ' + e);
+      this._showStatus(state, '✗ mark: ' + String(e).slice(0, 35), 3000);
+    }
+  },
+
+  /**
+   * Jump to a mark ("`<x>") — instant page flip (no animated scroll), then
+   * the saved viewport-centre position is scrolled to the centre again with
+   * forced instant scrolling.  The stored page/ratio is always used so the
+   * jump reproduces the exact view that was marked; the annotation key (when
+   * present) only feeds state.lastAnnotationKey for follow-up commands.
+   */
+  async _jumpMark(state, reader, pdfWin, char) {
+    try {
+      const mark = state.marks[char];
+      if (!mark) {
+        this._showStatus(state, '✗ mark ' + char + ' not set', 2000);
+        return;
+      }
+      let pageIndex = mark.pageIndex;
+      let ratio = mark.ratio;
+      let annotationOK = true;
+      if (mark.key) {
+        const attachment = Zotero.Items.get(reader.itemID);
+        const target = attachment?.getAnnotations()?.find(a => a.key === mark.key);
+        if (target) {
+          state.lastAnnotationKey = mark.key;
+        } else {
+          annotationOK = false;
+          state.lastAnnotationKey = null;
+        }
+        // Legacy marks migrated from the old annotation-tag scheme carry no
+        // stored position — derive it from the annotation as a fallback.
+        if (pageIndex === null && target) {
+          const pos = await this._annotationPageRatio(pdfWin, target);
+          pageIndex = pos.pageIndex;
+          ratio = pos.ratio;
+        }
+      }
+      if (pageIndex !== null && this._viewHasPageNav(reader)) {
+        this._instantPageFlip(pdfWin, pageIndex);
+        this._scrollToPageRatio(pdfWin, pageIndex, ratio, 0, { forceInstant: true });
+      } else {
+        const c = this._getScrollContainer(pdfWin);
+        if (c) {
+          this._scrollContainerTo(c,
+            ratio * Math.max(0, (c.scrollHeight || 0) - (c.clientHeight || 0)),
+            { forceInstant: true });
+        }
+      }
+      this._showStatus(state,
+        '→ mark ' + char + (annotationOK ? '' : ' · annotation gone'), 1200);
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] _jumpMark error: ' + e);
+      this._showStatus(state, '✗ mark: ' + String(e).slice(0, 35), 3000);
+    }
+  },
+
+  /** Flip to a page instantly via PDF.js (no animated navigation). */
+  _instantPageFlip(pdfWin, pageIndex) {
+    try {
+      const pdfApp = pdfWin.PDFViewerApplication;
+      if (pdfApp?.pdfViewer) pdfApp.pdfViewer.currentPageNumber = pageIndex + 1;
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] _instantPageFlip error: ' + e);
+    }
+  },
+
+  /**
+   * Resolve an annotation's page index and within-page ratio (0–1) from its
+   * stored position.  The ratio falls back to 0.5 (page centre) when the
+   * page height cannot be resolved.
+   */
+  async _annotationPageRatio(pdfWin, annotation) {
+    try {
+      const parsed = JSON.parse(annotation.annotationPosition || '{}');
+      const pageIndex = typeof parsed.pageIndex === 'number' ? parsed.pageIndex : 0;
+      let ratio = 0.5;
+      const rects = Array.isArray(parsed.rects) ? parsed.rects : null;
+      if (rects?.length && Array.isArray(rects[0]) && rects[0].length >= 2) {
+        const pdfApp = pdfWin.PDFViewerApplication;
+        if (typeof pdfApp?.pdfDocument?.getPage === 'function') {
+          try {
+            const page = await pdfApp.pdfDocument.getPage(pageIndex + 1);
+            const viewport = page.getViewport({ scale: 1 });
+            if (viewport?.height > 0) {
+              // PDF coordinates are bottom-up; y2 is the rect's top edge.
+              const y2 = rects[0][3] ?? rects[0][1];
+              ratio = Math.min(1, Math.max(0, (viewport.height - y2) / viewport.height));
+            }
+          } catch (_) {}
+        }
+      }
+      return { pageIndex, ratio };
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] _annotationPageRatio error: ' + e);
+      return { pageIndex: 0, ratio: 0.5 };
+    }
+  },
+
+  /**
+   * Scroll the given page's ratio point to the viewport centre.
+   * Retries briefly until the page element exists (PDF.js renders pages lazily).
+   */
+  _scrollToPageRatio(pdfWin, pageIndex, ratio, attempt = 0, opts = null) {
+    try {
+      const container =
+        pdfWin.PDFViewerApplication?.pdfViewer?.container ||
+        pdfWin.document.getElementById('viewerContainer');
+      const pageEl = pdfWin.document.querySelector(`.page[data-page-number="${pageIndex + 1}"]`);
+      if (!pageEl) {
+        if (attempt < 10) {
+          setTimeout(() => this._scrollToPageRatio(pdfWin, pageIndex, ratio, attempt + 1, opts), 80);
+        }
+        return;
+      }
+      if (!container) return;
+      const viewH = container.clientHeight || 600;
+      const top = Math.max(0, pageEl.offsetTop + pageEl.offsetHeight * ratio - viewH / 2);
+      this._scrollContainerTo(container, top, opts);
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] _scrollToPageRatio error: ' + e);
+    }
+  },
+
+  /** Delete a mark ("dm<x>"). */
+  async _delMark(state, reader, char) {
+    try {
+      const mark = state.marks[char];
+      if (!mark) {
+        this._showStatus(state, '✗ mark ' + char + ' not set', 2000);
+        return;
+      }
+      delete state.marks[char];
+      if (this.getPref('marks.persist', false)) {
+        await this._saveMarks(state, reader, state.marks);
+      }
+      this._showStatus(state, '✓ mark ' + char + ' deleted', 1200);
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] _delMark error: ' + e);
+    }
+  },
+
+  /** Delete every mark ("dM", or "x" inside the marks explorer). */
+  async _clearAllMarks(state, reader) {
+    try {
+      state.marks = {};
+      if (this.getPref('marks.persist', false)) {
+        await this._saveMarks(state, reader, state.marks);
+      }
+      this._showStatus(state, '✓ all marks deleted', 1200);
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] _clearAllMarks error: ' + e);
+    }
+  },
+
+  /**
+   * Persist all marks, cascading through storage backends:
+   *   1) child note under the attachment (syncs via Zotero sync)
+   *   2) a "zv-marks: {json}" line in the attachment's extra field (syncs)
+   *   3) local pref marks.data.<itemID> (device-local only)
+   * Returns the backend name that succeeded, or '' if all failed (a status
+   * bar message with the first backend's error is shown in that case).
+   * An empty mark set removes marks from all backends.
+   */
+  async _saveMarks(state, reader, marks) {
+    const attachment = Zotero.Items.get(reader.itemID);
+    if (!attachment) return '';
+    const payload = { v: 1, marks: {} };
+    for (const c of Object.keys(marks)) {
+      payload.marks[c] = {
+        pageIndex: marks[c].pageIndex,
+        ratio:     marks[c].ratio,
+        key:       marks[c].key || null,
+      };
+    }
+    const hasMarks = Object.keys(payload.marks).length > 0;
+    const errors = [];
+
+    // 1) Child note (synced).  Mirrors the proven note-creation pattern
+    //    used by the main window (_createMainCurrentChildNote).
+    try {
+      const existing = this._findMarksNote(attachment);
+      if (hasMarks) {
+        if (!existing) {
+          const note = new Zotero.Item('note');
+          note.libraryID = attachment.libraryID ||
+            (Zotero.Libraries ? Zotero.Libraries.userLibraryID : 1);
+          note.parentID = attachment.id;
+          if (note.parentID !== attachment.id) throw new Error('parentID setter no-op');
+          if (typeof note.setNote === 'function') note.setNote(this._marksNoteBody(payload));
+          else note.note = this._marksNoteBody(payload);
+          await note.saveTx();
+        } else if (existing.note !== this._marksNoteBody(payload)) {
+          if (typeof existing.setNote === 'function') existing.setNote(this._marksNoteBody(payload));
+          else existing.note = this._marksNoteBody(payload);
+          await existing.saveTx();
+        }
+      } else if (existing) {
+        await existing.eraseTx();
+      }
+      this._clearMarksExtra(attachment);
+      this._clearMarksPref(reader);
+      return 'note';
+    } catch (e) {
+      errors.push(String(e.message || e).slice(0, 80));
+      Zotero.debug('[ZoteroVim] _saveMarks note backend failed: ' + e);
+    }
+
+    // 2) Extra field (synced).  Best-effort remove any stale marks note so
+    //    it cannot shadow the extra data on load.
+    try {
+      if (hasMarks) {
+        await this._writeMarksExtra(attachment, payload);
+      } else {
+        await this._clearMarksExtra(attachment);
+      }
+      const stale = this._findMarksNote(attachment);
+      if (stale) { try { await stale.eraseTx(); } catch (_) {} }
+      this._clearMarksPref(reader);
+      return 'extra';
+    } catch (e) {
+      errors.push(String(e.message || e).slice(0, 80));
+      Zotero.debug('[ZoteroVim] _saveMarks extra backend failed: ' + e);
+    }
+
+    // 3) Local pref fallback (no sync).
+    try {
+      if (hasMarks) this._saveMarksPref(reader, payload);
+      else this._clearMarksPref(reader);
+      return 'local';
+    } catch (e) {
+      errors.push(String(e.message || e).slice(0, 80));
+      Zotero.debug('[ZoteroVim] _saveMarks pref backend failed: ' + e);
+    }
+
+    if (state) {
+      this._showStatus(state, '✗ persist failed: ' + (errors[0] || 'unknown'), 4000);
+    }
+    return '';
+  },
+
+  /** Build the marks-note HTML body for a payload. */
+  _marksNoteBody(payload) {
+    return '<h1>zv-marks</h1><pre>' + JSON.stringify(payload) + '</pre>';
+  },
+
+  /** Find the child note under the attachment that stores the marks JSON. */
+  _findMarksNote(attachment) {
+    try {
+      for (const note of (attachment.getNotes() || [])) {
+        if ((note.note || '').includes('<h1>zv-marks</h1>')) return note;
+      }
+    } catch (_) {}
+    return null;
+  },
+
+  /** Read a payload from the attachment's "zv-marks: " extra line. */
+  _readMarksExtra(attachment) {
+    try {
+      const line = (attachment.extra || '').split('\n')
+        .find(l => l.startsWith('zv-marks: '));
+      if (!line) return null;
+      return JSON.parse(line.slice('zv-marks: '.length));
+    } catch (_) {
+      return null;
+    }
+  },
+
+  /** Replace the "zv-marks: " extra line with the payload. */
+  async _writeMarksExtra(attachment, payload) {
+    const line = 'zv-marks: ' + JSON.stringify(payload);
+    const lines = (attachment.extra || '').split('\n')
+      .filter(l => l.trim() && !l.startsWith('zv-marks: '));
+    lines.push(line);
+    attachment.extra = lines.join('\n');
+    await attachment.saveTx();
+  },
+
+  /** Remove the "zv-marks: " line from the attachment's extra field. */
+  async _clearMarksExtra(attachment) {
+    try {
+      const joined = (attachment.extra || '').split('\n')
+        .filter(l => l.trim() && !l.startsWith('zv-marks: ')).join('\n');
+      if (joined !== (attachment.extra || '')) {
+        attachment.extra = joined;
+        await attachment.saveTx();
+      }
+    } catch (_) {}
+  },
+
+  /** Device-local pref fallback storage. */
+  _saveMarksPref(reader, payload) {
+    this.setPref('marks.data.' + reader.itemID, JSON.stringify(payload));
+  },
+
+  _readMarksPref(reader) {
+    try {
+      const raw = this.getPref('marks.data.' + reader.itemID, '');
+      return raw ? JSON.parse(raw) : null;
+    } catch (_) {
+      return null;
+    }
+  },
+
+  _clearMarksPref(reader) {
+    try { this.setPref('marks.data.' + reader.itemID, ''); } catch (_) {}
+  },
+
+  /**
+   * Rebuild persisted marks from the storage cascade: child note → extra
+   * field → local pref.  Also performs a one-time migration from the old
+   * annotation-tag scheme ("zv-mark:<char>"), merging any found tags in.
+   * Called when a reader opens so marks survive restarts and sync.
+   */
+  async _loadPersistedMarks(state, reader) {
+    try {
+      if (!this.getPref('marks.persist', false)) return;
+      const attachment = Zotero.Items.get(reader.itemID);
+      if (!attachment) return;
+      let payload = null;
+
+      // 1) Child note.
+      const note = this._findMarksNote(attachment);
+      if (note) {
+        const m = /<h1>zv-marks<\/h1>\s*<pre>([\s\S]*?)<\/pre>/.exec(note.note || '');
+        if (m) {
+          try { payload = JSON.parse(m[1]); } catch (_) {}
+        }
+      }
+      // 2) Extra field.
+      if (!payload || !payload.marks) payload = this._readMarksExtra(attachment);
+      // 3) Local pref fallback.
+      if (!payload || !payload.marks) payload = this._readMarksPref(reader);
+
+      if (payload && payload.v === 1 && payload.marks) {
+        for (const [c, mm] of Object.entries(payload.marks)) {
+          state.marks[c] = {
+            pageIndex: mm.pageIndex ?? null,
+            ratio:     mm.ratio ?? 0,
+            key:       mm.key || null,
+            ts:        0,
+          };
+        }
+      }
+      // One-time migration from the old annotation-tag scheme.
+      const tagRe = /^zv-mark:([a-z0-9])$/;
+      let migrated = false;
+      for (const a of (attachment.getAnnotations() || [])) {
+        for (const t of (a.tags || [])) {
+          const tm = tagRe.exec(t.tag);
+          if (tm && !state.marks[tm[1]]) {
+            state.marks[tm[1]] = { key: a.key, pageIndex: null, ratio: 0, ts: 0 };
+            migrated = true;
+          }
+        }
+      }
+      if (migrated) await this._saveMarks(state, reader, state.marks);
+      if (Object.keys(state.marks).length) {
+        Zotero.debug('[ZoteroVim] loaded persisted marks: ' + Object.keys(state.marks).join(','));
+      }
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] _loadPersistedMarks error: ' + e);
+    }
+  },
+
+  // ── Marks explorer overlay (<space>m) ──────────────────────────────────
+
+  /**
+   * Key handling while the marks explorer overlay is open.  Every key is
+   * consumed so the PDF cannot scroll underneath the overlay.  Typing a
+   * mark character jumps to it directly; the command keys j/k/g/G/d/x take
+   * precedence so a mark named "d" can never be deleted by accident.
+   */
+  _onReaderMarksExplorerKeyDown(event, reader, state, pdfWin) {
+    const keyStr = this._keyString(event);
+    if (!keyStr) return true;
+    event.preventDefault();
+    event.stopPropagation();
+    if (/^[a-z0-9]$/.test(keyStr) && state.marks[keyStr]
+        && !['j', 'k', 'g', 'G', 'd', 'x'].includes(keyStr)) {
+      this._activateReaderMarksExplorer(state, reader, pdfWin, keyStr);
+      return true;
+    }
+    const chars = Object.keys(state.marks).sort();
+    switch (keyStr) {
+      case 'j':
+        if (chars.length) {
+          state.marksExplorerSelected =
+            Math.min(chars.length - 1, state.marksExplorerSelected + 1);
+        }
+        this._renderReaderMarksExplorer(state);
+        return true;
+      case 'k':
+        state.marksExplorerSelected = Math.max(0, state.marksExplorerSelected - 1);
+        this._renderReaderMarksExplorer(state);
+        return true;
+      case 'gg':
+        state.marksExplorerSelected = 0;
+        this._renderReaderMarksExplorer(state);
+        return true;
+      case 'G':
+        state.marksExplorerSelected = Math.max(0, chars.length - 1);
+        this._renderReaderMarksExplorer(state);
+        return true;
+      case 'enter':
+      case 'return':
+        this._activateReaderMarksExplorer(state, reader, pdfWin);
+        return true;
+      case 'd':
+        this._deleteReaderMarksExplorerSelected(state, reader);
+        return true;
+      case 'x':
+        this._clearAllMarks(state, reader);
+        state.marksExplorerSelected = 0;
+        this._renderReaderMarksExplorer(state);
+        return true;
+      case 'escape':
+        this._closeReaderMarksExplorer(state, pdfWin);
+        return true;
+      default:
+        return true;
+    }
+  },
+
+  async _activateReaderMarksExplorer(state, reader, pdfWin, char = null) {
+    if (!char) {
+      const chars = Object.keys(state.marks).sort();
+      char = chars[state.marksExplorerSelected];
+    }
+    if (!char) return;
+    this._closeReaderMarksExplorer(state, pdfWin);
+    await this._jumpMark(state, reader, pdfWin, char);
+  },
+
+  _deleteReaderMarksExplorerSelected(state, reader) {
+    const chars = Object.keys(state.marks).sort();
+    const char = chars[state.marksExplorerSelected];
+    if (!char) return;
+    delete state.marks[char];
+    if (this.getPref('marks.persist', false)) this._saveMarks(state, reader, state.marks);
+    state.marksExplorerSelected =
+      Math.min(state.marksExplorerSelected, Math.max(0, Object.keys(state.marks).length - 1));
+    this._showStatus(state, '✓ mark ' + char + ' deleted', 1200);
+    this._renderReaderMarksExplorer(state);
+  },
+
+  async _toggleReaderMarksExplorer(state, reader, pdfWin) {
+    if (state.marksExplorerOpen) {
+      this._closeReaderMarksExplorer(state, pdfWin);
+      return;
+    }
+    if (state.outlineExplorerOpen) this._closeReaderOutlineExplorer(state, pdfWin);
+    state.marksExplorerOpen = true;
+    state.marksExplorerSelected = 0;
+    this._createReaderMarksExplorer(state, pdfWin);
+    this._renderReaderMarksExplorer(state);
+    try { state._marksExplorerOverlay?.focus?.(); } catch (_) {}
+  },
+
+  _closeReaderMarksExplorer(state, pdfWin = null) {
+    state.marksExplorerOpen = false;
+    try {
+      const overlay = state._marksExplorerOverlay;
+      if (overlay?.parentNode) overlay.parentNode.removeChild(overlay);
+    } catch (_) {}
+    state._marksExplorerOverlay = null;
+    state._marksExplorerList = null;
+    state._marksExplorerStatus = null;
+    if (pdfWin) {
+      setTimeout(() => { try { pdfWin.focus(); } catch (_) {} }, 30);
+    }
+  },
+
+  _createReaderMarksExplorer(state, pdfWin) {
+    const doc = pdfWin.document;
+    const H = 'http://www.w3.org/1999/xhtml';
+    const h = (tag) => doc.createElementNS(H, tag);
+    const root = doc.body || doc.documentElement;
+
+    const overlay = h('div');
+    overlay.id = 'zv-marks-explorer';
+    overlay.tabIndex = -1;
+    overlay.style.cssText =
+      'position:fixed;top:0;left:0;bottom:0;width:320px;z-index:99998;' +
+      'background:rgba(24,24,37,0.96);color:#cdd6f4;border-right:1px solid #313244;' +
+      'display:flex;flex-direction:column;box-shadow:12px 0 40px rgba(0,0,0,0.35);' +
+      'font:13px/1.35 monospace;';
+
+    const header = h('div');
+    header.style.cssText =
+      'padding:12px 14px;border-bottom:1px solid #313244;font-weight:bold;letter-spacing:0.04em;';
+    header.textContent = 'Marks';
+
+    const list = h('div');
+    list.style.cssText = 'flex:1;overflow:auto;padding:8px 0;';
+
+    const status = h('div');
+    status.style.cssText =
+      'padding:6px 12px;border-top:1px solid #313244;color:#6c7086;font-size:11px;';
+    status.textContent =
+      'type a mark char to jump  ·  j/k move  ·  Enter jump  ·  d delete  ·  x delete all  ·  Esc close';
+
+    overlay.appendChild(header);
+    overlay.appendChild(list);
+    overlay.appendChild(status);
+    root.appendChild(overlay);
+
+    state._marksExplorerOverlay = overlay;
+    state._marksExplorerList = list;
+    state._marksExplorerStatus = status;
+  },
+
+  /** Re-render the marks list.  Returns the number of rows. */
+  _renderReaderMarksExplorer(state) {
+    const list = state._marksExplorerList;
+    if (!list) return 0;
+    list.textContent = '';
+    const H = 'http://www.w3.org/1999/xhtml';
+    const doc = list.ownerDocument;
+    const chars = Object.keys(state.marks).sort();
+    if (chars.length === 0) {
+      const empty = doc.createElementNS(H, 'div');
+      empty.style.cssText = 'padding:10px 14px;color:#6c7086;';
+      empty.textContent = 'No marks — press m<x> in Normal mode to set one';
+      list.appendChild(empty);
+      return 0;
+    }
+    chars.forEach((char, idx) => {
+      const mark = state.marks[char];
+      const row = doc.createElementNS(H, 'div');
+      row.style.cssText = 'padding:6px 14px;cursor:pointer;white-space:nowrap;';
+      if (idx === state.marksExplorerSelected) {
+        row.style.background = 'rgba(138,173,244,0.22)';
+        row.style.color = '#a6d189';
+      }
+      const pageLabel = mark.pageIndex !== null ? 'p.' + (mark.pageIndex + 1) : '—';
+      const pct = mark.pageIndex !== null ? '  ' + Math.round((mark.ratio || 0) * 100) + '%' : '';
+      const ann = mark.key ? '  ⚑ ann' : '';
+      row.textContent = char + '   ' + pageLabel + pct + ann;
+      list.appendChild(row);
+    });
+    return chars.length;
   },
 
   /**

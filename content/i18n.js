@@ -29,6 +29,10 @@ const ZV_I18N = {
     "zv.scroll.stopOnRelease": "Stop immediately on key release instead of decelerating",
     "zv.scroll.staged":     "Scroll settings are staged until you apply them.",
     "zv.scroll.apply":      "Apply configuration",
+    "zv.marks":             "Marks",
+    "zv.marks.persist":     "Persist marks in a child note under the PDF item (m / ` / dm) — survive restarts and sync",
+    "zv.marks.staged":      "Marks settings save automatically on change.",
+    "zv.marks.apply":       "Apply configuration",
     "zv.color.group":       "Default highlight colour",
     "zv.color.help":        "Used when no explicit colour prefix is given (zh in the default bindings, if bound).",
     "zv.color.default":     "Default colour",
@@ -74,6 +78,10 @@ const ZV_I18N = {
     "zv.scroll.stopOnRelease": "松开按键立即停止而不是减速",
     "zv.scroll.staged":     "滚动设置会暂存，直到你点击应用。",
     "zv.scroll.apply":      "应用配置",
+    "zv.marks":             "标记",
+    "zv.marks.persist":     "将标记保存为 PDF 条目下的子笔记（m / ` / dm）— 重启后保留并同步",
+    "zv.marks.staged":      "标记设置在更改时自动保存。",
+    "zv.marks.apply":       "应用配置",
     "zv.color.group":       "默认高亮颜色",
     "zv.color.help":        "未按显式颜色前缀时使用（默认绑定中的 zh，若已绑定）。",
     "zv.color.default":     "默认颜色",
@@ -214,6 +222,7 @@ const ZV_I18N_ACTION_LABELS = {
   toggleReaderSplitHorizontal: "阅读器：切换水平分栏（<space>-）",
   toggleReaderSplitVertical:   "阅读器：切换垂直分栏（<space>|）",
   toggleReaderSidebarOutline:  "阅读器：切换目录浏览浮层（<space>e）",
+  toggleMarksExplorer:         "阅读器：切换标记浏览浮层（<space>m）",
 };
 
 function _zvI18nPrefs() {

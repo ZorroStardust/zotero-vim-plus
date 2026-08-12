@@ -1,5 +1,71 @@
 # Pending Issues
 
+## ZV-003: Marks persistence — child-note backend fails, extra-field fallback used (shelved)
+
+- Status: Shelved — extra-field backend works and syncs; note backend still fails
+- Reported on: 2026-08-12
+- Area: Reader marks persistence (`content/zoteroVimReader.js` `_saveMarks`)
+
+### Marks feature (solution summary)
+
+Vim-style marks added in v1.6.0 (issue: number-key tags from sioyek):
+
+- `m<x>` set, `` `<x> `` instant jump, `dm<x>` delete, `dM` delete all,
+  `<space>m` marks explorer overlay (type a mark char to jump directly;
+  `j`/`k` move, `Enter` jump, `d` delete, `x` delete all, `Esc` close).
+- Mark characters are `a`–`z` + `0`–`9`; digits only act as counts when no
+  prefix key is pending, so `4j` still scrolls and `` `1 `` jumps to mark 1.
+- Marks store the viewport-centre position (`pageIndex` + in-page ratio), so a
+  jump reproduces the exact view that was marked (instant page flip via
+  `pdfViewer.currentPageNumber`, forced-instant scroll).
+- Persistence cascades: child note → attachment Extra field → local pref.
+  Both note and extra sync via Zotero sync. Status bar shows the backend used
+  (`· saved (note|extra|local)`), or `(session)` when persistence is off.
+
+### Problem
+
+With "Persist marks" enabled, the child-note backend always throws; the cascade
+falls back to the attachment's Extra field (`zv-marks: {json}` line), which
+works and syncs. Status bar shows `· saved (extra)`.
+
+### Reproduction
+
+1. Preferences → Marks → enable "Persist marks", click Apply configuration.
+2. Open a PDF, press `ma`.
+3. Status shows `✓ mark a set · p.X · saved (extra)` instead of `· saved (note)`.
+
+### Notes From Previous Attempts
+
+- Note backend mirrors the proven main-window pattern (`new Zotero.Item('note')`
+  + `libraryID` + `parentID` + `setNote` + `saveTx`); the same pattern creates
+  annotations successfully in the reader context.
+- Extra-field `saveTx()` on the existing attachment works, so item saving in
+  the reader context is not the problem.
+- Suspects: `note.parentID` setter is a no-op on this Zotero build (the guard
+  throws `parentID setter no-op` and falls through), or note-specific saveTx
+  validation rejects the `<h1>`/`<pre>` note body.
+- Diagnostic log line: `[ZoteroVim] _saveMarks note backend failed: ...`
+  (Error Console → Help → Developer → Developer Options).
+
+### Historical issues fixed during this feature (for reference)
+
+- `.xpi` built with PowerShell `Compress-Archive` stored backslash entry paths
+  (`content\zoteroVim.js`), breaking jar:// script loading (no icon, no prefs
+  pane, no functionality). `tools/build.ps1` (ZipArchive with POSIX paths) added.
+- `_markPosition` ratio had a sign error (`pageTop - scrollTop` instead of
+  `scrollTop - pageTop`), making jumps land half a viewport off; fixed so jumps
+  reproduce the exact marked view.
+- Note creation initially missed `libraryID` and used `note.note =` instead of
+  `note.setNote()`; aligned with the main-window pattern.
+
+### Next Investigation Directions
+
+- Read the exact `[ZoteroVim] _saveMarks note backend failed:` message.
+- If `parentID setter no-op`: use `new Zotero.Item('note', { parentID, libraryID })`
+  constructor options or the version's native parent setter.
+- If setNote/saveTx rejects the `<h1>`/`<pre>` body: move the JSON into a
+  `<p>`-based payload or a comment-style block.
+
 ## ZV-002: Note editor `o` / `O` still splits text after caret (shelved)
 
 - Status: Shelved (temporarily)

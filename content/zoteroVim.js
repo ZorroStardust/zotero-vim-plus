@@ -90,6 +90,7 @@ var ZoteroVim = {
     'normal: yy':  'mainYankCitekey',
     'normal: o':   'mainOpenPDF',
     'normal: q':   'mainClosePDF',
+    'normal: m':   'toggleMarksExplorer',
 
     // Visual mode — selection extension
     'visual:j':       'extendDown',
@@ -198,7 +199,7 @@ var ZoteroVim = {
     this.rootURI = rootURI;
     this._registerPrefsPane();
     this._registerReaderListeners();
-    Zotero.debug('[ZoteroVim] Initialized v' + version);
+    Zotero.debug('[ZoteroVim] Initialized v' + version + ' on Zotero ' + (Zotero.version || '?'));
   },
 
   shutdown() {
@@ -437,6 +438,12 @@ var ZoteroVim = {
       cursorLastKey: '',
       cursorLastKeyTS: 0,
       filterColor: null,    // active colour filter hex string, or null for all
+      marks: {},            // vim-style marks: char → { pageIndex, ratio, key, ts }
+      marksExplorerOpen: false,
+      marksExplorerSelected: 0,
+      _marksExplorerOverlay: null,
+      _marksExplorerList: null,
+      _marksExplorerStatus: null,
       smoothHold: {
         active: false,
         releasing: false,
@@ -478,6 +485,7 @@ var ZoteroVim = {
     if (reader.itemID) {
       this._readerStateByItemID.set(reader.itemID, state);
     }
+    this._loadPersistedMarks(state, reader);
 
     const outerDoc = reader._iframeWindow?.document;
     if (outerDoc) {
@@ -942,6 +950,12 @@ var ZoteroVim = {
       }
     }
 
+    if (state.marksExplorerOpen) {
+      if (this._onReaderMarksExplorerKeyDown(event, reader, state, pdfWin)) {
+        return;
+      }
+    }
+
     // Hint mode: user is picking a selection starting point.
     if (state.hintMode) {
       event.preventDefault();
@@ -1008,12 +1022,67 @@ var ZoteroVim = {
     }
 
     // Accumulate a count prefix (1–9 to start, 0 to extend) in normal mode.
-    if ((state.mode === 'normal' || state.mode === 'cursor') && /^\d$/.test(keyStr)) {
+    // Skipped while a prefix key is pending (e.g. mark chords "m1" / "`1")
+    // so digits can act as mark characters there.
+    if ((state.mode === 'normal' || state.mode === 'cursor') && !state.keyBuffer
+        && /^\d$/.test(keyStr)) {
       if (keyStr !== '0' || state.countBuffer) {
         state.countBuffer = (state.countBuffer || '') + keyStr;
         event.preventDefault();
         event.stopImmediatePropagation();
         this._updateIndicator(state);
+        return;
+      }
+    }
+
+    // Mark chords (vim-style): "m<x>" set, "`<x>" jump, "dm<x>" delete,
+    // "dM" delete all.  Reserved while unbound — skipped if the user binds
+    // 'm' or '`' explicitly.  Chords only start from an empty keyBuffer so
+    // that "<space>m" etc. still reach the binding table.
+    if (state.mode === 'normal' && !bindings['normal:m'] && !bindings['normal:`']) {
+      if (!state.keyBuffer && (keyStr === 'm' || keyStr === '`')) {
+        state.keyBuffer = keyStr;
+        state.countBuffer = '';
+        this._armMarkKeyTimeout(state);
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        this._updateIndicator(state);
+        return;
+      }
+      if (state.keyBuffer === 'm' && /^[a-z0-9]$/.test(keyStr)) {
+        this._clearMarkKey(state);
+        this._setMark(state, reader, pdfWin, keyStr);
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        return;
+      }
+      if (state.keyBuffer === '`' && /^[a-z0-9]$/.test(keyStr)) {
+        this._clearMarkKey(state);
+        this._jumpMark(state, reader, pdfWin, keyStr);
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        return;
+      }
+      if (state.keyBuffer === 'd' && keyStr === 'm') {
+        state.keyBuffer = 'dm';
+        this._armMarkKeyTimeout(state);
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        this._updateIndicator(state);
+        return;
+      }
+      if (state.keyBuffer === 'd' && keyStr === 'M') {
+        this._clearMarkKey(state);
+        this._clearAllMarks(state, reader);
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        return;
+      }
+      if (state.keyBuffer === 'dm' && /^[a-z0-9]$/.test(keyStr)) {
+        this._clearMarkKey(state);
+        this._delMark(state, reader, keyStr);
+        event.preventDefault();
+        event.stopImmediatePropagation();
         return;
       }
     }
@@ -1040,6 +1109,28 @@ var ZoteroVim = {
     event.preventDefault();
     event.stopImmediatePropagation();
     this._processBuffer(newBuffer, exact, possible, modePrefix, bindings, state);
+  },
+
+  /**
+   * Arm the pending-key timeout for mark chords ("m", "`", "dm").
+   * Clears a stale prefix so a later key never mis-fires a mark command.
+   */
+  _armMarkKeyTimeout(state) {
+    clearTimeout(state.keyTimeout);
+    state.keyTimeout = setTimeout(() => {
+      state.keyBuffer = '';
+      state.countBuffer = '';
+      this._updateIndicator(state);
+    }, 1200);
+  },
+
+  /** Clear the pending mark prefix and its timeout. */
+  _clearMarkKey(state) {
+    clearTimeout(state.keyTimeout);
+    state.keyTimeout = null;
+    state.keyBuffer = '';
+    state.countBuffer = '';
+    this._updateIndicator(state);
   },
 
   _processBuffer(buffer, exact, possible, modePrefix, bindings, state) {
@@ -1102,6 +1193,16 @@ var ZoteroVim = {
   _readerConsumesKey(state, keyStr) {
     if (!keyStr) return false;
     if (state.mode === 'insert' && keyStr !== 'escape') return false;
+    // The marks explorer overlay consumes every key.
+    if (state.marksExplorerOpen) return true;
+    // A pending mark prefix ("m", "`", "dm") means the next alphanumeric key
+    // is consumed as a mark character — do not forward it to Zotero (which
+    // would e.g. toggle the pointer tool on "ms").
+    if (state.mode === 'normal' && state.keyBuffer
+        && (state.keyBuffer === 'm' || state.keyBuffer === '`' || state.keyBuffer === 'dm')
+        && /^[a-z0-9]$/.test(keyStr)) return true;
+    // "dM" deletes all marks — the "M" is consumed by the mark chord.
+    if (state.mode === 'normal' && state.keyBuffer === 'd' && keyStr === 'M') return true;
     const modePrefix = state.mode + ':';
     const bindings = this.getBindings();
     if (bindings[modePrefix + keyStr]) return true;
@@ -1357,6 +1458,11 @@ var ZoteroVim = {
 
     if (action === 'toggleReaderSidebarOutline') {
       this._toggleReaderOutlineExplorer(state, reader, pdfWin);
+      return true;
+    }
+
+    if (action === 'toggleMarksExplorer') {
+      this._toggleReaderMarksExplorer(state, reader, pdfWin);
       return true;
     }
 

@@ -94,6 +94,7 @@ const ZV_DEFAULT_BINDINGS = {
   "normal: yy":  "mainYankCitekey",
   "normal: o":   "mainOpenPDF",
   "normal: q":   "mainClosePDF",
+  "normal: m":   "toggleMarksExplorer",
   "visual:j":       "extendDown",
   "visual:k":       "extendUp",
   "visual:h":       "extendLeft",
@@ -277,6 +278,7 @@ const ZV_ACTION_LABELS = {
   toggleReaderSplitHorizontal: "Reader: toggle horizontal split (<space>-)",
   toggleReaderSplitVertical:   "Reader: toggle vertical split (<space>|)",
   toggleReaderSidebarOutline:  "Reader: toggle outline explorer overlay (<space>e)",
+  toggleMarksExplorer:         "Reader: toggle marks explorer overlay (<space>m)",
 };
 
 const ZV_ALL_ACTIONS = Object.keys(ZV_ACTION_LABELS).sort();
@@ -351,6 +353,24 @@ function _zvInit() {
   if (noteEditorCb) {
     noteEditorCb.checked = _zvGet("noteEditor.enabled", true);
     noteEditorCb.addEventListener("change", () => _zvSet("noteEditor.enabled", noteEditorCb.checked));
+  }
+
+  // ── Marks ──────────────────────────────────────────────────────────────────
+  const marksPersistCb = document.getElementById("zv-marks-persist-enabled");
+  const applyMarksBtn = document.getElementById("zv-apply-marks-config");
+  const marksStatus = document.getElementById("zv-marks-config-status");
+  if (marksPersistCb) {
+    marksPersistCb.checked = _zvGet("marks.persist", false);
+    marksPersistCb.addEventListener("change", () => {
+      _zvSet("marks.persist", marksPersistCb.checked);
+      _zvFlashStatus(marksStatus, ZV_I18N_STR("zv.status.saved", ZV_I18N_CURRENT_LANG()), "#5FB236");
+    });
+  }
+  if (applyMarksBtn) {
+    applyMarksBtn.addEventListener("click", () => {
+      _zvSet("marks.persist", !!marksPersistCb?.checked);
+      _zvFlashStatus(marksStatus, ZV_I18N_STR("zv.status.saved", ZV_I18N_CURRENT_LANG()), "#5FB236");
+    });
   }
 
   // ── Scroll step ────────────────────────────────────────────────────────────

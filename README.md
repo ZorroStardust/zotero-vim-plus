@@ -60,6 +60,10 @@ Vibe coded with Claude Sonnet 4.5.
   (top/bottom) and `zt`/`zz`/`zb` work in web snapshots and EPUBs too
   (snapshots have no pages, so `h`/`l` show a hint). Visual mode, cursor mode
   and annotation commands remain PDF-specific
+- **Marks** — vim-style position marks (`m<x>` set, `` `<x> `` instant jump,
+  `dm<x>`/`dM` delete, `<space>m` explorer overlay) with `a`–`z` or `0`–`9`
+  characters (sioyek-style numbered tags); optionally persisted as a child
+  note under the PDF item so they survive restarts and sync
 
 ---
 
@@ -267,6 +271,39 @@ you still press `Enter` to jump.
 | `Ctrl+j` | Focus split pane below (or toggle pane in vertical split) |
 | `Ctrl+k` | Focus split pane above (or toggle pane in vertical split) |
 | `Ctrl+l` | In vertical split, move to the right reader pane first and then the right-side note editor; otherwise focus the split pane to the right |
+
+#### Marks
+
+Vim-style position marks for quick jumps. `m<x>` sets a mark at the current
+viewport position, `` `<x> `` jumps back to it. Mark characters can be `a`–`z`
+or `0`–`9` (sioyek-style numbered tags).
+
+| Key | Action |
+|-----|--------|
+| `m<x>` | Set a mark at the current position (e.g. `ma`, `m1`) |
+| `` `<x> `` | Jump to the mark — instant page flip, reproducing the exact view that was marked (e.g. `` `a ``, `` `1 ``) |
+| `dm<x>` | Delete the mark (e.g. `dma`) |
+| `dM` | Delete all marks |
+| `<space>m` | Toggle the marks explorer overlay (type a mark char to jump directly; `j`/`k` move, `Enter` jump, `d` delete, `x` delete all) |
+
+Notes:
+
+- Digits after a mark prefix are mark characters, not counts — `4j` still
+  scrolls four steps, but `` `1 `` jumps to mark 1.
+- A mark stores the viewport-centre position: whatever was in the middle of
+  the screen when you pressed `m<x>` will be in the middle of the screen when
+  you jump back — even mid-page.
+- If an annotation is selected (via `[`/`]`), the mark also binds to it so
+  follow-up commands (`[`/`]`, `zy`, `y`, …) work after a jump. `[`/`]`
+  annotation navigation is unaffected.
+- With **Persist marks** enabled (Preferences → Marks) the whole mark set is
+  saved through a storage cascade — a child note under the PDF item (heading
+  `zv-marks`), falling back to a `zv-marks:` line in the attachment's **Extra**
+  field (both sync via Zotero sync), and finally to a device-local pref. The
+  status bar shows which backend was used (`· saved (note)` / `· saved (extra)`
+  / `· saved (local)`). Marks from the previous annotation-tag scheme are
+  migrated automatically.
+- Marks set with persistence disabled live for the current reader session only.
 
 #### Note editor (context pane and standalone note tab)
 
@@ -693,6 +730,7 @@ Open **Edit → Preferences** (macOS: **Zotero → Settings**) and navigate to t
 | Smooth acceleration | 2600 px/s² | Speed increase while holding a scroll key |
 | Smooth deceleration | 4200 px/s² | Speed decrease after key release |
 | Stop on release | off | If enabled, stop immediately when key is released |
+| Persist marks | off | Save marks in a child note under the PDF item so they survive restarts and sync |
 | Default highlight colour | Yellow | Colour used when no explicit colour key is pressed |
 
 Scroll settings are staged and only saved when you click **Apply configuration**.

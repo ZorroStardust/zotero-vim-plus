@@ -26,8 +26,11 @@ the README / CHANGELOG once implemented, and mark them done below.
   biggest vim-identity win.
 - **Cursor mode `f` / `F` / `t` / `T` character find** — reuse the existing
   text-node scanning / keyword machinery from `_cursorMoveByGranularity`.
-- **Marks `m` + `` ` ``** — session-level first; optionally persist marks as
-  tagged annotations so they sync with Zotero.
+- **~~Marks `m` + `` ` ``~~** — **Done (unreleased)** — session marks (`m<x>`
+  set, `` `<x> `` instant jump, `dm<x>` delete, `dM` delete all, `<space>m`
+  explorer overlay; chars `a`–`z` and `0`–`9`), plus opt-in persistence as a
+  child note under the PDF item (Preferences → Marks). Old annotation-tag
+  marks migrate automatically.
 - **Visual-mode text objects `vi"` / `vi(` / `vi[`** — only word / sentence /
   paragraph exist today.
 - **`.` repeat last action** — record the last `(action, count)` and replay.

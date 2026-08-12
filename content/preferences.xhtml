@@ -135,6 +135,26 @@
     </hbox>
   </groupbox>
 
+  <!-- ── Marks ──────────────────────────────────────────────────────── -->
+  <groupbox>
+    <label data-i18n="zv.marks" value="Marks" style="font-weight: bold;" />
+    <hbox align="center" style="margin-top: 8px;">
+      <checkbox id="zv-marks-persist-enabled"
+        data-i18n="zv.marks.persist"
+        label="Persist marks in a child note under the PDF item (m / ` / dm) — survive restarts and sync" />
+    </hbox>
+    <hbox style="margin-top: 10px; justify-content: flex-end; align-items: center;">
+      <html:p style="font-size: 0.85em; color: #888; margin: 0 12px 0 0;"
+        data-i18n="zv.marks.staged">
+        Marks settings save automatically on change.
+      </html:p>
+      <html:button id="zv-apply-marks-config"
+        data-i18n="zv.marks.apply" style="padding: 4px 16px; font-weight: bold;">Apply configuration</html:button>
+      <html:span id="zv-marks-config-status"
+        style="margin-left: 10px; font-size: 0.9em; color: #5FB236;"></html:span>
+    </hbox>
+  </groupbox>
+
   <!-- ── Default highlight colour ───────────────────────────────────── -->
   <groupbox>
     <label data-i18n="zv.color.group" value="Default highlight colour" style="font-weight: bold;" />

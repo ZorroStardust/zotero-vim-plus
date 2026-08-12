@@ -53,10 +53,12 @@
     <hbox align="center">
       <label data-i18n="zv.lang.label" value="Language"
         style="font-weight: bold; margin-right: 12px;" />
-      <html:select id="zv-language" style="padding: 2px 6px;">
-        <html:option value="en">English</html:option>
-        <html:option value="zh-CN">中文</html:option>
-      </html:select>
+      <menulist id="zv-language" style="padding: 2px 6px;">
+        <menupopup>
+          <menuitem value="en" label="English" />
+          <menuitem value="zh-CN" label="中文" />
+        </menupopup>
+      </menulist>
     </hbox>
   </groupbox>
 
@@ -78,6 +80,10 @@
       <checkbox id="zv-note-editor-enabled"
         data-i18n="zv.mode.noteEditor"
         label="Enable Vim-style editing in note editors (context pane and note tabs)" />
+    </hbox>
+    <hbox style="margin-top: 6px; justify-content: flex-end; align-items: center;">
+      <html:span id="zv-modes-status"
+        style="font-size: 0.9em; color: #5FB236;"></html:span>
     </hbox>
   </groupbox>
 
@@ -125,11 +131,9 @@
     </hbox>
     <hbox style="margin-top: 10px; justify-content: flex-end; align-items: center;">
       <html:p style="font-size: 0.85em; color: #888; margin: 0 12px 0 0;"
-        data-i18n="zv.scroll.staged">
-        Scroll settings are staged until you apply them.
+        data-i18n="zv.scroll.autosave">
+        Scroll settings save automatically on change.
       </html:p>
-      <html:button id="zv-apply-scroll-config"
-        data-i18n="zv.scroll.apply" style="padding: 4px 16px; font-weight: bold;">Apply configuration</html:button>
       <html:span id="zv-scroll-config-status"
         style="margin-left: 10px; font-size: 0.9em; color: #5FB236;"></html:span>
     </hbox>
@@ -148,8 +152,6 @@
         data-i18n="zv.marks.staged">
         Marks settings save automatically on change.
       </html:p>
-      <html:button id="zv-apply-marks-config"
-        data-i18n="zv.marks.apply" style="padding: 4px 16px; font-weight: bold;">Apply configuration</html:button>
       <html:span id="zv-marks-config-status"
         style="margin-left: 10px; font-size: 0.9em; color: #5FB236;"></html:span>
     </hbox>
@@ -166,13 +168,17 @@
       <html:label for="zv-default-color"
         data-i18n="zv.color.default"
         style="min-width: 180px; font-weight: 600;">Default colour</html:label>
-      <html:select id="zv-default-color" style="padding: 2px 6px;">
-        <html:option value="yellow" data-i18n="zv.color.opt.yellow">Yellow  (#FFD400)</html:option>
-        <html:option value="red"    data-i18n="zv.color.opt.red">Red     (#FF6666)</html:option>
-        <html:option value="green"  data-i18n="zv.color.opt.green">Green   (#5FB236)</html:option>
-        <html:option value="blue"   data-i18n="zv.color.opt.blue">Blue    (#2EA8E5)</html:option>
-        <html:option value="purple" data-i18n="zv.color.opt.purple">Purple  (#A28AE5)</html:option>
-      </html:select>
+      <menulist id="zv-default-color" style="padding: 2px 6px;">
+        <menupopup>
+          <menuitem value="yellow" data-i18n="zv.color.opt.yellow" label="Yellow  (#FFD400)" />
+          <menuitem value="red"    data-i18n="zv.color.opt.red" label="Red     (#FF6666)" />
+          <menuitem value="green"  data-i18n="zv.color.opt.green" label="Green   (#5FB236)" />
+          <menuitem value="blue"   data-i18n="zv.color.opt.blue" label="Blue    (#2EA8E5)" />
+          <menuitem value="purple" data-i18n="zv.color.opt.purple" label="Purple  (#A28AE5)" />
+        </menupopup>
+      </menulist>
+      <html:span id="zv-default-color-status"
+        style="margin-left: 10px; font-size: 0.9em; color: #5FB236;"></html:span>
     </hbox>
   </groupbox>
 
@@ -216,12 +222,12 @@
   </groupbox>
 
   <!-- ── Keybinding apply ───────────────────────────────────────────── -->
-  <!-- Modes/scroll/colour save live on change.
+  <!-- Modes/marks/colour/scroll save live on change.
        Keybindings need an explicit "Apply" because the table is edited. -->
   <hbox style="margin-top: 12px; justify-content: flex-end; align-items: center;">
     <html:p style="font-size: 0.85em; color: #888; margin: 0 12px 0 0;"
       data-i18n="zv.bindings.footer">
-      Modes and colour settings save automatically. Scroll settings require Apply configuration.
+      Modes, marks, colour and scroll settings save automatically.
     </html:p>
     <html:button id="zv-save"
       data-i18n="zv.bindings.apply" style="padding: 4px 16px; font-weight: bold;">Apply bindings</html:button>

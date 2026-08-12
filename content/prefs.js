@@ -286,8 +286,8 @@ const ZV_ALL_ACTIONS = Object.keys(ZV_ACTION_LABELS).sort();
 const ZV_SCROLL_DEFAULTS = {
   scrollStep: 60,
   smoothScroll: true,
-  smoothInitialSpeed: 320,
-  smoothMaxSpeed: 2400,
+  smoothInitialSpeed: 2000,
+  smoothMaxSpeed: 2000,
   smoothAcceleration: 2600,
   smoothDeceleration: 4200,
   smoothStopOnRelease: false,
@@ -306,105 +306,182 @@ function _zvFlashStatus(el, text, color) {
   window.setTimeout(() => { el.textContent = ""; }, 1800);
 }
 
-// ── DOM init (retry until elements appear) ────────────────────────────────────
+// XUL <checkbox> fires neither "change" nor "input": state changes arrive as
+// "command" (click path) and "CheckboxStateChange" (checked setter — covers
+// keyboard and programmatic toggles). Bind both, plus click, deduped by the
+// last seen value so saving happens exactly once per toggle.
+function _zvBindCheckbox(cb, onChange) {
+  let last = cb.checked;
+  const handler = () => {
+    if (cb.checked === last) return;
+    last = cb.checked;
+    onChange(cb.checked);
+  };
+  cb.addEventListener("command", handler);
+  cb.addEventListener("CheckboxStateChange", handler);
+  cb.addEventListener("click", handler);
+}
 
-var _zvRetries = 0;
+// Bind a checkbox to a pref key and flash "Saved!" feedback on toggle.
+function _zvSaveCheckbox(cb, key, statusEl) {
+  _zvBindCheckbox(cb, (value) => {
+    _zvSet(key, value);
+    _zvFlashStatus(statusEl, ZV_I18N_STR("zv.status.saved", ZV_I18N_CURRENT_LANG()), "#5FB236");
+  });
+}
+
+// ── DOM init ─────────────────────────────────────────────────────────────────
+// Zotero loads pane scripts BEFORE inserting the pane markup (see _loadPane()
+// in Zotero's preferences.js), so _zvInit() must wait for the pane elements.
+// A fixed retry budget silently kills the whole pane if the first insertion is
+// slow (e.g. right after install), so the wait is unbounded: exponential
+// backoff capped at 1s, plus a MutationObserver that wakes up the moment the
+// markup lands.
+
+var _zvInitTries = 0;
+var _zvInitStarted = 0;
+var _zvInitObserver = null;
+var _zvLogTS = 0;
+
+// Append a diagnostic line to <profile>/zv-startup.log (same file bootstrap.js
+// uses) and mirror it to Zotero.debug.
+function _zvLog(msg) {
+  try { Zotero.debug('[ZoteroVim] [prefs] ' + msg); } catch (_) {}
+  try {
+    if (!_zvLogTS) _zvLogTS = Date.now();
+    const dir = (typeof Zotero.getProfileDirectory === 'function')
+      ? Zotero.getProfileDirectory()
+      : Components.classes['@mozilla.org/file/directory_service;1']
+          .getService(Components.interfaces.nsIProperties)
+          .get('ProfD', Components.interfaces.nsIFile);
+    const file = dir.clone();
+    file.append('zv-startup.log');
+    const stream = Components.classes['@mozilla.org/network/file-output-stream;1']
+      .createInstance(Components.interfaces.nsIFileOutputStream);
+    stream.init(file, 0x02 | 0x08 | 0x10, 0o600, 0);
+    const line = (Date.now() - _zvLogTS) + 'ms  [prefs] ' + msg + '\n';
+    stream.write(line, line.length);
+    stream.close();
+  } catch (_) {}
+}
+
+// Run one init section in isolation so a single failure can't kill the pane.
+function _zvSection(name, fn) {
+  try {
+    fn();
+    _zvLog('section "' + name + '" wired');
+  } catch (e) {
+    _zvLog('section "' + name + '" FAILED: ' + e);
+    if (e && e.stack) _zvLog(e.stack);
+  }
+}
+
+function _zvScheduleInit() {
+  // 50ms → 100ms → 200ms → 400ms → 800ms → 1000ms (capped), forever.
+  const delay = Math.min(1000, 50 * Math.pow(2, Math.min(5, _zvInitTries++)));
+  window.setTimeout(_zvInit, delay);
+}
+
+// Wake up the moment the pane markup is inserted into the prefs document.
+function _zvWatchForPane() {
+  try {
+    if (_zvInitObserver) return;
+    _zvInitObserver = new MutationObserver(() => _zvInit());
+    _zvInitObserver.observe(document.documentElement, { childList: true, subtree: true });
+  } catch (_) {}
+}
 
 function _zvInit() {
   const scrollInput = document.getElementById("zv-scroll-step");
   if (!scrollInput) {
-    if (++_zvRetries <= 40) {
-      window.setTimeout(_zvInit, 50);
-    }
+    _zvScheduleInit();
     return;
   }
   if (scrollInput._zvInited) return;
   scrollInput._zvInited = true;
-
-  // ── Language ────────────────────────────────────────────────────────────────
-  const langSelect = document.getElementById("zv-language");
+  if (!_zvInitStarted) _zvInitStarted = Date.now();
   const lang = ZV_I18N_CURRENT_LANG();
-  if (langSelect) {
-    langSelect.value = lang;
-    langSelect.addEventListener("change", () => {
-      const next = langSelect.value === "zh-CN" ? "zh-CN" : "en";
-      _zvSet("language", next);
-      ZV_I18N_APPLY(document, next);
-      // Re-render action dropdowns with labels in the new language,
-      // preserving any unsaved edits in the table.
-      _zvRenderTable(_zvReadTable());
-    });
-  }
-  ZV_I18N_APPLY(document, lang);
+
+  _zvSection("language", () => {
+    const langSelect = document.getElementById("zv-language");
+    if (langSelect) {
+      langSelect.value = lang;
+      langSelect.addEventListener("command", () => {
+        const next = langSelect.value === "zh-CN" ? "zh-CN" : "en";
+        _zvSet("language", next);
+        ZV_I18N_APPLY(document, next);
+        // Re-render action dropdowns with labels in the new language,
+        // preserving any unsaved edits in the table.
+        _zvRenderTable(_zvReadTable());
+      });
+    }
+    ZV_I18N_APPLY(document, lang);
+  });
 
   // ── Modes ──────────────────────────────────────────────────────────────────
-  const visualCb = document.getElementById("zv-visual-enabled");
-  const insertCb = document.getElementById("zv-insert-enabled");
-  const noteEditorCb = document.getElementById("zv-note-editor-enabled");
+  _zvSection("modes", () => {
+    const visualCb = document.getElementById("zv-visual-enabled");
+    const insertCb = document.getElementById("zv-insert-enabled");
+    const noteEditorCb = document.getElementById("zv-note-editor-enabled");
+    const modesStatus = document.getElementById("zv-modes-status");
 
-  if (visualCb) {
-    visualCb.checked = _zvGet("mode.visual.enabled", true);
-    visualCb.addEventListener("change", () => _zvSet("mode.visual.enabled", visualCb.checked));
-  }
-  if (insertCb) {
-    insertCb.checked = _zvGet("mode.insert.enabled", true);
-    insertCb.addEventListener("change", () => _zvSet("mode.insert.enabled", insertCb.checked));
-  }
-  if (noteEditorCb) {
-    noteEditorCb.checked = _zvGet("noteEditor.enabled", true);
-    noteEditorCb.addEventListener("change", () => _zvSet("noteEditor.enabled", noteEditorCb.checked));
-  }
+    if (visualCb) {
+      visualCb.checked = _zvGet("mode.visual.enabled", true);
+      _zvSaveCheckbox(visualCb, "mode.visual.enabled", modesStatus);
+    }
+    if (insertCb) {
+      insertCb.checked = _zvGet("mode.insert.enabled", true);
+      _zvSaveCheckbox(insertCb, "mode.insert.enabled", modesStatus);
+    }
+    if (noteEditorCb) {
+      noteEditorCb.checked = _zvGet("noteEditor.enabled", true);
+      _zvSaveCheckbox(noteEditorCb, "noteEditor.enabled", modesStatus);
+    }
+  });
 
   // ── Marks ──────────────────────────────────────────────────────────────────
-  const marksPersistCb = document.getElementById("zv-marks-persist-enabled");
-  const applyMarksBtn = document.getElementById("zv-apply-marks-config");
-  const marksStatus = document.getElementById("zv-marks-config-status");
-  if (marksPersistCb) {
-    marksPersistCb.checked = _zvGet("marks.persist", false);
-    marksPersistCb.addEventListener("change", () => {
-      _zvSet("marks.persist", marksPersistCb.checked);
-      _zvFlashStatus(marksStatus, ZV_I18N_STR("zv.status.saved", ZV_I18N_CURRENT_LANG()), "#5FB236");
-    });
-  }
-  if (applyMarksBtn) {
-    applyMarksBtn.addEventListener("click", () => {
-      _zvSet("marks.persist", !!marksPersistCb?.checked);
-      _zvFlashStatus(marksStatus, ZV_I18N_STR("zv.status.saved", ZV_I18N_CURRENT_LANG()), "#5FB236");
-    });
-  }
+  _zvSection("marks", () => {
+    const marksPersistCb = document.getElementById("zv-marks-persist-enabled");
+    const marksStatus = document.getElementById("zv-marks-config-status");
+    if (marksPersistCb) {
+      marksPersistCb.checked = _zvGet("marks.persist", false);
+      _zvSaveCheckbox(marksPersistCb, "marks.persist", marksStatus);
+    }
+  });
 
   // ── Scroll step ────────────────────────────────────────────────────────────
-  const smoothScrollCb = document.getElementById("zv-smooth-scroll-enabled");
-  const initialSpeedInput = document.getElementById("zv-smooth-initial-speed");
-  const maxSpeedInput = document.getElementById("zv-smooth-max-speed");
-  const accelInput = document.getElementById("zv-smooth-accel");
-  const decelInput = document.getElementById("zv-smooth-decel");
-  const stopOnReleaseCb = document.getElementById("zv-smooth-stop-on-release");
-  const applyScrollBtn = document.getElementById("zv-apply-scroll-config");
-  const scrollStatus = document.getElementById("zv-scroll-config-status");
+  _zvSection("scroll", () => {
+    const smoothScrollCb = document.getElementById("zv-smooth-scroll-enabled");
+    const initialSpeedInput = document.getElementById("zv-smooth-initial-speed");
+    const maxSpeedInput = document.getElementById("zv-smooth-max-speed");
+    const accelInput = document.getElementById("zv-smooth-accel");
+    const decelInput = document.getElementById("zv-smooth-decel");
+    const stopOnReleaseCb = document.getElementById("zv-smooth-stop-on-release");
+    const scrollStatus = document.getElementById("zv-scroll-config-status");
 
-  scrollInput.value = _zvGet("scrollStep", ZV_SCROLL_DEFAULTS.scrollStep);
-  if (smoothScrollCb) {
-    smoothScrollCb.checked = _zvGet("smoothScroll", ZV_SCROLL_DEFAULTS.smoothScroll);
-  }
-  if (initialSpeedInput) {
-    initialSpeedInput.value = _zvGet("smoothScroll.initialSpeed", ZV_SCROLL_DEFAULTS.smoothInitialSpeed);
-  }
-  if (maxSpeedInput) {
-    maxSpeedInput.value = _zvGet("smoothScroll.maxSpeed", ZV_SCROLL_DEFAULTS.smoothMaxSpeed);
-  }
-  if (accelInput) {
-    accelInput.value = _zvGet("smoothScroll.acceleration", ZV_SCROLL_DEFAULTS.smoothAcceleration);
-  }
-  if (decelInput) {
-    decelInput.value = _zvGet("smoothScroll.deceleration", ZV_SCROLL_DEFAULTS.smoothDeceleration);
-  }
-  if (stopOnReleaseCb) {
-    stopOnReleaseCb.checked = _zvGet("smoothScroll.stopOnRelease", ZV_SCROLL_DEFAULTS.smoothStopOnRelease);
-  }
+    scrollInput.value = _zvGet("scrollStep", ZV_SCROLL_DEFAULTS.scrollStep);
+    if (smoothScrollCb) {
+      smoothScrollCb.checked = _zvGet("smoothScroll", ZV_SCROLL_DEFAULTS.smoothScroll);
+    }
+    if (initialSpeedInput) {
+      initialSpeedInput.value = _zvGet("smoothScroll.initialSpeed", ZV_SCROLL_DEFAULTS.smoothInitialSpeed);
+    }
+    if (maxSpeedInput) {
+      maxSpeedInput.value = _zvGet("smoothScroll.maxSpeed", ZV_SCROLL_DEFAULTS.smoothMaxSpeed);
+    }
+    if (accelInput) {
+      accelInput.value = _zvGet("smoothScroll.acceleration", ZV_SCROLL_DEFAULTS.smoothAcceleration);
+    }
+    if (decelInput) {
+      decelInput.value = _zvGet("smoothScroll.deceleration", ZV_SCROLL_DEFAULTS.smoothDeceleration);
+    }
+    if (stopOnReleaseCb) {
+      stopOnReleaseCb.checked = _zvGet("smoothScroll.stopOnRelease", ZV_SCROLL_DEFAULTS.smoothStopOnRelease);
+    }
 
-  if (applyScrollBtn) {
-    applyScrollBtn.addEventListener("click", () => {
+    // Scroll settings save automatically on change; numeric inputs are clamped
+    // on "change" (fires on blur / Enter), so typing is never interrupted.
+    const saveScrollConfig = () => {
       const scrollStep = _zvClampInt(scrollInput.value, ZV_SCROLL_DEFAULTS.scrollStep, 10, 500);
       const initialSpeed = _zvClampInt(initialSpeedInput?.value, ZV_SCROLL_DEFAULTS.smoothInitialSpeed, 50, 2000);
       const maxSpeed = _zvClampInt(maxSpeedInput?.value, ZV_SCROLL_DEFAULTS.smoothMaxSpeed, 100, 6000);
@@ -426,55 +503,70 @@ function _zvInit() {
       _zvSet("smoothScroll.deceleration", deceleration);
       _zvSet("smoothScroll.stopOnRelease", !!stopOnReleaseCb?.checked);
 
-      _zvFlashStatus(scrollStatus, ZV_I18N_STR("zv.status.applied", ZV_I18N_CURRENT_LANG()), "#5FB236");
-    });
-  }
+      _zvFlashStatus(scrollStatus, ZV_I18N_STR("zv.status.saved", ZV_I18N_CURRENT_LANG()), "#5FB236");
+    };
 
-  // ── Default highlight colour ───────────────────────────────────────────────
-  const colorSelect = document.getElementById("zv-default-color");
-  if (colorSelect) {
-    const saved = _zvGet("defaultHighlightColor", "yellow");
-    for (const opt of colorSelect.options) {
-      if (opt.value === saved) { opt.selected = true; break; }
-    }
-    colorSelect.addEventListener("change", () => {
-      _zvSet("defaultHighlightColor", colorSelect.value);
-    });
-  }
-
-  // ── Keybindings table ──────────────────────────────────────────────────────
-  let currentBindings = {};
-  try {
-    const raw = _zvGet("bindings", "");
-    currentBindings = raw ? Object.assign({}, ZV_DEFAULT_BINDINGS, JSON.parse(raw))
-                           : Object.assign({}, ZV_DEFAULT_BINDINGS);
-  } catch (_) {
-    currentBindings = Object.assign({}, ZV_DEFAULT_BINDINGS);
-  }
-
-  _zvRenderTable(currentBindings);
-
-  const addBtn   = document.getElementById("zv-add-binding");
-  const resetBtn = document.getElementById("zv-reset-bindings");
-
-  if (addBtn)   addBtn.addEventListener("click",   _zvAddRow);
-  if (resetBtn) resetBtn.addEventListener("click", () => {
-    _zvRenderTable(ZV_DEFAULT_BINDINGS);
-    _zvSaveBindings();
+    scrollInput.addEventListener("change", saveScrollConfig);
+    if (smoothScrollCb) _zvSaveCheckbox(smoothScrollCb, "smoothScroll", scrollStatus);
+    if (initialSpeedInput) initialSpeedInput.addEventListener("change", saveScrollConfig);
+    if (maxSpeedInput) maxSpeedInput.addEventListener("change", saveScrollConfig);
+    if (accelInput) accelInput.addEventListener("change", saveScrollConfig);
+    if (decelInput) decelInput.addEventListener("change", saveScrollConfig);
+    if (stopOnReleaseCb) _zvSaveCheckbox(stopOnReleaseCb, "smoothScroll.stopOnRelease", scrollStatus);
   });
 
-  // ── Remove Save button — settings are live ────────────────────────────────
-  const saveBtn    = document.getElementById("zv-save");
-  const saveStatus = document.getElementById("zv-save-status");
-  if (saveBtn) {
-    saveBtn.textContent = ZV_I18N_STR("zv.bindings.apply", lang);
-    saveBtn.addEventListener("click", () => {
+  // ── Default highlight colour ───────────────────────────────────────────────
+  _zvSection("colour", () => {
+    const colorSelect = document.getElementById("zv-default-color");
+    const colorStatus = document.getElementById("zv-default-color-status");
+    if (colorSelect) {
+      colorSelect.value = _zvGet("defaultHighlightColor", "yellow");
+      colorSelect.addEventListener("command", () => {
+        _zvSet("defaultHighlightColor", colorSelect.value);
+        _zvFlashStatus(colorStatus, ZV_I18N_STR("zv.status.saved", ZV_I18N_CURRENT_LANG()), "#5FB236");
+      });
+    }
+  });
+
+  // ── Keybindings table ──────────────────────────────────────────────────────
+  _zvSection("bindings", () => {
+    let currentBindings = {};
+    try {
+      const raw = _zvGet("bindings", "");
+      currentBindings = raw ? Object.assign({}, ZV_DEFAULT_BINDINGS, JSON.parse(raw))
+                             : Object.assign({}, ZV_DEFAULT_BINDINGS);
+    } catch (_) {
+      currentBindings = Object.assign({}, ZV_DEFAULT_BINDINGS);
+    }
+
+    _zvRenderTable(currentBindings);
+
+    const addBtn   = document.getElementById("zv-add-binding");
+    const resetBtn = document.getElementById("zv-reset-bindings");
+
+    if (addBtn)   addBtn.addEventListener("click", _zvAddRow);
+    if (resetBtn) resetBtn.addEventListener("click", () => {
+      _zvRenderTable(ZV_DEFAULT_BINDINGS);
       _zvSaveBindings();
-      if (saveStatus) {
-        _zvFlashStatus(saveStatus, ZV_I18N_STR("zv.status.saved", ZV_I18N_CURRENT_LANG()), "#5FB236");
-      }
     });
-  }
+
+    // ── Remove Save button — settings are live ──────────────────────────────
+    const saveBtn    = document.getElementById("zv-save");
+    const saveStatus = document.getElementById("zv-save-status");
+    if (saveBtn) {
+      saveBtn.textContent = ZV_I18N_STR("zv.bindings.apply", lang);
+      saveBtn.addEventListener("click", () => {
+        _zvSaveBindings();
+        if (saveStatus) {
+          _zvFlashStatus(saveStatus, ZV_I18N_STR("zv.status.saved", ZV_I18N_CURRENT_LANG()), "#5FB236");
+        }
+      });
+    }
+  });
+
+  try { _zvInitObserver?.disconnect(); } catch (_) {}
+  _zvLog('prefs init complete in ' + (Date.now() - _zvInitStarted) + 'ms ('
+         + (_zvInitTries + 1) + ' attempts)');
 }
 
 // ── Table helpers ─────────────────────────────────────────────────────────────
@@ -624,3 +716,4 @@ function _zvSaveBindings() {
 
 // Boot
 _zvInit();
+_zvWatchForPane();

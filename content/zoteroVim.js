@@ -244,6 +244,11 @@ var ZoteroVim = {
     if (!Zotero.PreferencePanes) return;
     this._prefsPaneRegistered = true;
     Zotero.PreferencePanes.register({
+      // A stable id is required: without one Zotero generates a random pane
+      // id on every startup, so `lastSelectedPrefPane` points to a stale id
+      // after a restart and the first settings open ends up in a degraded
+      // window state (unselectable pane, dead controls until reopened).
+      id:       'zotero-vim-plus-prefs',
       pluginID: this.id,
       src:      this.rootURI + 'content/preferences.xhtml',
       scripts:  [this.rootURI + 'content/i18n.js', this.rootURI + 'content/prefs.js'],

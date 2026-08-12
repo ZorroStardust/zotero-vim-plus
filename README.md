@@ -595,10 +595,15 @@ Open **Edit → Preferences** (macOS: **Zotero → Settings**) and navigate to t
 - Multi-key sequences such as `gg`, `zy`, or `yy` are supported.
 - Click **+ Add binding** to add a new row; click **×** to remove one.
 - Click **Apply bindings** to save keybinding changes.
-- Scroll behavior settings have a separate **Apply configuration** button.
-- Highlight colour and mode-enable toggles save automatically on change.
+- Highlight colour, mode, marks and scroll settings save automatically on change.
 - Note editor Vim mode can be turned on or off independently from the Preferences panel.
 - Click **Reset to defaults** to restore all bindings to their defaults.
+
+The preferences pane is registered with a stable pane id, so the panel opens
+directly on the last-used section even after a restart, and its dropdowns use
+native Zotero `menulist` controls to stay reliable on every open. Init
+failures are reported to `zv-startup.log` in the profile directory with
+`[prefs]`-prefixed lines.
 
 ### Action reference
 
@@ -733,7 +738,7 @@ Open **Edit → Preferences** (macOS: **Zotero → Settings**) and navigate to t
 | Persist marks | off | Save marks in a child note under the PDF item so they survive restarts and sync |
 | Default highlight colour | Yellow | Colour used when no explicit colour key is pressed |
 
-Scroll settings are staged and only saved when you click **Apply configuration**.
+Scroll settings save automatically on change.
 
 By default, `initial speed` and `max speed` are both `2000`, which gives a
 more constant "no acceleration jump" feel that many users perceive as smoother.

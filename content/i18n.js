@@ -27,12 +27,10 @@ const ZV_I18N = {
     "zv.scroll.accel":      "Acceleration (px/s²)",
     "zv.scroll.decel":      "Deceleration (px/s²)",
     "zv.scroll.stopOnRelease": "Stop immediately on key release instead of decelerating",
-    "zv.scroll.staged":     "Scroll settings are staged until you apply them.",
-    "zv.scroll.apply":      "Apply configuration",
+    "zv.scroll.autosave":   "Scroll settings save automatically on change.",
     "zv.marks":             "Marks",
     "zv.marks.persist":     "Persist marks in the parent item's Extra field (m / ` / dm) — survive restarts and sync",
     "zv.marks.staged":      "Marks settings save automatically on change.",
-    "zv.marks.apply":       "Apply configuration",
     "zv.color.group":       "Default highlight colour",
     "zv.color.help":        "Used when no explicit colour prefix is given (zh in the default bindings, if bound).",
     "zv.color.default":     "Default colour",
@@ -56,9 +54,8 @@ const ZV_I18N = {
     "zv.bindings.mode":     "Mode",
     "zv.bindings.key":      "Key sequence",
     "zv.bindings.action":   "Action",
-    "zv.bindings.footer":   "Modes and colour settings save automatically. Scroll settings require Apply configuration.",
+    "zv.bindings.footer":   "Modes, marks, colour and scroll settings save automatically.",
     "zv.bindings.apply":    "Apply bindings",
-    "zv.status.applied":    "Applied!",
     "zv.status.saved":      "Saved!",
   },
   "zh-CN": {
@@ -76,12 +73,10 @@ const ZV_I18N = {
     "zv.scroll.accel":      "加速度（px/s²）",
     "zv.scroll.decel":      "减速度（px/s²）",
     "zv.scroll.stopOnRelease": "松开按键立即停止而不是减速",
-    "zv.scroll.staged":     "滚动设置会暂存，直到你点击应用。",
-    "zv.scroll.apply":      "应用配置",
+    "zv.scroll.autosave":   "滚动设置在更改时自动保存。",
     "zv.marks":             "标记",
     "zv.marks.persist":     "将标记保存到父条目的 Extra 字段（m / ` / dm）— 重启后保留并同步",
     "zv.marks.staged":      "标记设置在更改时自动保存。",
-    "zv.marks.apply":       "应用配置",
     "zv.color.group":       "默认高亮颜色",
     "zv.color.help":        "未按显式颜色前缀时使用（默认绑定中的 zh，若已绑定）。",
     "zv.color.default":     "默认颜色",
@@ -105,9 +100,8 @@ const ZV_I18N = {
     "zv.bindings.mode":     "模式",
     "zv.bindings.key":      "键序列",
     "zv.bindings.action":   "动作",
-    "zv.bindings.footer":   "模式与颜色设置在更改时自动保存。滚动设置需要点击“应用配置”。",
+    "zv.bindings.footer":   "模式、标记、颜色与滚动设置在更改时自动保存。",
     "zv.bindings.apply":    "应用绑定",
-    "zv.status.applied":    "已应用！",
     "zv.status.saved":      "已保存！",
   },
 };
@@ -287,6 +281,7 @@ function ZV_I18N_APPLY(doc, lang) {
     if (el.namespaceURI === ZV_XUL_NS) {
       if (el.localName === "label") el.setAttribute("value", text);
       else if (el.localName === "checkbox" || el.localName === "button") el.setAttribute("label", text);
+      else if (el.localName === "menulist" || el.localName === "menuitem") el.setAttribute("label", text);
       else el.textContent = text;
     } else {
       el.textContent = text;

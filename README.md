@@ -492,6 +492,13 @@ sentence start, and every other label places the caret at that word.
 | `0` / `$` | Move caret to line start / line end |
 | `2w`, `3b`, ... | Count prefix repeats the motion |
 
+> **Multi-column papers:** text flows column by column — `j` at the bottom
+> of a column wraps to the next column's first line on the same page (`k`
+> back the other way), then continues into the next page's first column.
+> Page headers/footers are treated as decoration and skipped: a caret never
+> lands on them, so `j`/`k` cannot stall there.  `0`/`$` stay within the
+> column; `h`/`l`/`w`/`b` follow the reading flow across column breaks.
+
 #### Mode switches
 
 | Key | Action |

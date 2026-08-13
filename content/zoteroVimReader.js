@@ -4129,6 +4129,20 @@ Object.assign(ZoteroVim, {
   },
 
   /**
+   * Restore Zotero's _enableAnnotationDeletionFromComment to the value it had
+   * before an insert session disabled it (so native comment editors keep
+   * their original Backspace behavior after we hand over).
+   */
+  _restoreAnnotationDeletionFlag(state, reader) {
+    try {
+      const ir = reader?._internalReader;
+      if (ir && state._prevAnnotationDeletionFromComment !== undefined) {
+        ir._enableAnnotationDeletionFromComment = state._prevAnnotationDeletionFromComment;
+      }
+    } catch (_) {}
+  },
+
+  /**
    * Keyboard-only annotation comment editing via the plugin's own overlay
    * input rendered inside the PDF iframe document.
    *
@@ -4182,8 +4196,13 @@ Object.assign(ZoteroVim, {
     } catch (_) {}
 
     // Guard against Zotero's Backspace-deletes-annotation behavior while
-    // forwarded keys still reach its KeyboardManager.
-    try { ir._enableAnnotationDeletionFromComment = false; } catch (_) {}
+    // forwarded keys still reach its KeyboardManager.  Stash the previous
+    // value so it can be restored when the session ends (Esc, handover to a
+    // native editor, or reader cleanup).
+    try {
+      state._prevAnnotationDeletionFromComment = ir._enableAnnotationDeletionFromComment;
+      ir._enableAnnotationDeletionFromComment = false;
+    } catch (_) {}
 
     const pdfWin = this._activeReaderPdfWin?.(reader) || state.activePdfWin || state.pdfWin;
     this._createAnnotationCommentOverlay(state, pdfWin, key, commentText, quotedText);
@@ -4196,6 +4215,13 @@ Object.assign(ZoteroVim, {
 
     const tryKeep = (attempt) => {
       if (state.mode !== 'insert' || state._insertSessionID !== mySession) {
+        state.insertWatchdog = null;
+        return;
+      }
+      // If the user has focused a Zotero-native editor (annotation popup or
+      // sidebar comment field), hand over instead of fighting for focus.
+      if (this._nativeEditableFocused(reader)) {
+        this._handOverAnnotationInsert(state, reader);
         state.insertWatchdog = null;
         return;
       }

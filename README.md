@@ -563,6 +563,11 @@ context.  Zotero's own popup is not used at all.
 The comment is also autosaved 2 seconds after the last keystroke, and `visual i`
 (add note) opens the same overlay for the newly created annotation.
 
+Zotero's own annotation popup and sidebar comment fields remain fully usable
+for mouse editing: clicking into either while the overlay is open saves and
+closes the overlay and hands over to the native editor (Escape inside native
+editors keeps its Zotero behavior).
+
 > **Note:** if pressing `i` shows a red `✗` status instead, the plugin writes
 > detailed diagnostics to `zv-startup.log` in your Zotero profile directory
 > (`%APPDATA%\Zotero\Zotero\Profiles\...` on Windows).

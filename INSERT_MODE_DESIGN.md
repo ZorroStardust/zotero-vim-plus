@@ -81,10 +81,19 @@
 - 气泡守卫（`_armAnnotationPopupGuard`）：若气泡仍意外弹出（例如焦点
   短暂离开 textarea 时按 Enter），MutationObserver 检测到后向其编辑器
   派发 Escape 立即关闭——`_textAnnotationFocused` 补丁之外的兜底。
+- **原生编辑框交接（`_handOverAnnotationInsert`）**：reader.html 的
+  focusin（capture）监听器检测到焦点落入原生可编辑元素（气泡评论
+  编辑器、侧栏评论框）且 insert 会话激活时：立即 `_setMode('normal')`
+  杀掉 watchdog（防止抢焦），异步保存并关闭浮窗、解除气泡守卫，
+  **不抢回 PDF 焦点**——原生编辑面完整接管。进入 insert 前暂存的
+  `ir._enableAnnotationDeletionFromComment` 原值在 Esc 退出/交接/reader
+  cleanup 时恢复；原生编辑器内的 Escape 完全交还 Zotero（旧的
+  outerEscapeHandler 已删除）。
 
 ## 已知限制
 
 - 浮窗是插件自绘 UI，样式不跟随 Zotero 主题（当前为深色固定样式，
   后续可加浅色适配）。
-- 若用户同时打开了 Zotero 自己的气泡（手动点击批注），两个输入面并存，
-  但不互相干扰（各自保存到同一 annotationComment 字段）。
+- 用户主动点开 Zotero 自己的气泡/侧栏编辑框时，插件浮窗保存并关闭、
+  交接给原生编辑（不会出现两个输入面并存）；之后按 `i` 可重新打开
+  浮窗。

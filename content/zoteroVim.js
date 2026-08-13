@@ -580,31 +580,33 @@ var ZoteroVim = {
       this._syncReaderPdfViewListeners(reader, state);
     }, 250);
 
-    // ── Outer reader.html: Escape returns from annotation comment editing ──
-    // When the user focuses a comment textarea (in the outer reader.html doc),
-    // Escape should blur it and return focus+mode to the PDF viewer.
-    // (outerDoc is already declared above for the mode indicator.)
-    const outerEscapeHandler = (e) => {
-      if (e.key !== 'Escape') return;
-      const active = outerDoc?.activeElement;
-      if (!active) return;
-      if (active.tagName === 'TEXTAREA' || active.isContentEditable ||
-          active.tagName === 'INPUT') {
-        e.preventDefault();
-        e.stopPropagation();
-        this._exitAnnotationInsert(state, reader);
-        setTimeout(() => {
-          try {
-            const targetWin = this._activeReaderPdfWin(reader, pdfWin) || pdfWin;
-            targetWin.focus();
-          } catch (_) {}
-        }, 30);
-      }
+    // ── Outer reader.html: hand over to Zotero's native comment editors ──
+    // When the user focuses a native editable in reader.html (the annotation
+    // popup's comment editor or the sidebar comment field) while the plugin's
+    // own overlay is open, save and close the overlay and leave the native
+    // editor in control — no focus fight with the insert watchdog.  The
+    // overlay lives in the PDF iframe document and focusin does not cross
+    // documents, so this listener can only fire for native reader.html
+    // editables.  Escape inside native editors is left entirely to Zotero.
+    const outerFocusinHandover = (e) => {
+      if (state.mode !== 'insert' || !state._commentOverlayInput) return;
+      const t = e.target;
+      if (!t) return;
+      if (t.tagName !== 'TEXTAREA' && t.tagName !== 'INPUT' && !t.isContentEditable) return;
+      this._handOverAnnotationInsert(state, reader);
     };
     const outerKeyHandler = (e) => {
       if (!outerDoc) return;
       const active = outerDoc.activeElement;
       if (active && (active.tagName === 'TEXTAREA' || active.tagName === 'INPUT' || active.isContentEditable)) {
+        // Throttled trace: confirms the plugin skipped the key because a
+        // native editor was focused.
+        const now = Date.now();
+        if (now - (state._lastSkipTraceTS || 0) > 500) {
+          state._lastSkipTraceTS = now;
+          try { zvLogFile('[ZoteroVim] trace: skipKey native-editable=' + zvEl(active)
+            + ' key=' + e.key + ' win=' + zvWin()); } catch (_) {}
+        }
         return;
       }
       const keyStr = this._keyString(e);
@@ -646,7 +648,7 @@ var ZoteroVim = {
     };
 
     if (outerDoc) {
-      outerDoc.addEventListener('keydown', outerEscapeHandler, true);
+      outerDoc.addEventListener('focusin', outerFocusinHandover, true);
       outerDoc.addEventListener('keydown', outerKeyHandler, true);
       outerDoc.addEventListener('keydown', findBarReturnBridge, true);
     }
@@ -701,7 +703,6 @@ var ZoteroVim = {
       }, 0);
     };
     const zvBlurTrace = (e) => {
-      if (state.mode !== 'insert') return;
       if (!zvIsEd(e.target)) return;
       const t = e.target;
       zvT('focusout from=' + zvEl(t) + ' to=' + zvEl(e.relatedTarget) + ' win=' + zvWin()
@@ -709,6 +710,13 @@ var ZoteroVim = {
         + ' popup=' + !!outerDoc?.querySelector('.annotation-popup')
         + ' activeAfter=' + zvEl(outerDoc?.activeElement)
         + ' mode=' + state.mode);
+    };
+    const zvFocusinTrace = (e) => {
+      const t = e.target;
+      if (!t || t.nodeType !== 1) return;
+      zvT('focusin target=' + zvEl(t) + ' editable=' + zvIsEd(t)
+        + ' win=' + zvWin() + ' mode=' + state.mode
+        + ' hasFocus=' + !!outerDoc?.hasFocus?.());
     };
     const zvPointerTrace = (e) => {
       if (state.mode !== 'insert') return;
@@ -747,6 +755,7 @@ var ZoteroVim = {
     if (outerDoc) {
       outerDoc.addEventListener('keydown', zvKeyTrace, true);
       outerDoc.addEventListener('focusout', zvBlurTrace, true);
+      outerDoc.addEventListener('focusin', zvFocusinTrace, true);
       outerDoc.addEventListener('pointerdown', zvPointerTrace, true);
     }
 
@@ -755,13 +764,15 @@ var ZoteroVim = {
       this._closeReaderOutlineExplorer(state);
       clearInterval(state._pdfViewSyncTimer);
       this._restoreReaderKeyForwarding(reader, state);
+      this._restoreAnnotationDeletionFlag(state, reader);
       this._clearReaderPdfViewListeners(state);
-      if (outerDoc) outerDoc.removeEventListener('keydown', outerEscapeHandler, true);
+      if (outerDoc) outerDoc.removeEventListener('focusin', outerFocusinHandover, true);
       if (outerDoc) outerDoc.removeEventListener('keydown', outerKeyHandler, true);
       if (outerDoc) outerDoc.removeEventListener('keydown', findBarReturnBridge, true);
       if (outerDoc) {
         outerDoc.removeEventListener('keydown', zvKeyTrace, true);
         outerDoc.removeEventListener('focusout', zvBlurTrace, true);
+        outerDoc.removeEventListener('focusin', zvFocusinTrace, true);
         outerDoc.removeEventListener('pointerdown', zvPointerTrace, true);
       }
       try { zvObserver?.disconnect(); } catch (_) {}
@@ -784,6 +795,21 @@ var ZoteroVim = {
     if (focusedWin === secondaryWin) return secondaryWin;
     if (focusedWin === primaryWin) return primaryWin;
     return primaryWin || secondaryWin || fallback;
+  },
+
+  /**
+   * Whether a Zotero-native editable in reader.html (annotation popup comment
+   * editor, sidebar comment field, find input, …) currently has DOM focus.
+   * While one does, the plugin stays completely inert — no key consumption,
+   * no focus moves — so native editing works exactly as without the plugin.
+   */
+  _nativeEditableFocused(reader) {
+    try {
+      const active = reader?._iframeWindow?.document?.activeElement;
+      if (!active) return false;
+      return active.tagName === 'TEXTAREA' || active.tagName === 'INPUT' || active.isContentEditable;
+    } catch (_) {}
+    return false;
   },
 
   /**
@@ -814,6 +840,9 @@ var ZoteroVim = {
         Zotero.debug('[ZoteroVim] _forwardReaderKey: no state for ' + reader._instanceID);
         return;
       }
+      // A Zotero-native editor has focus — leave the keystroke alone; do not
+      // steal focus to the PDF iframe.
+      if (this._nativeEditableFocused(reader)) return;
       const pdfWin = state.activePdfWin || this._activeReaderPdfWin(reader) || state.pdfWin;
       if (!pdfWin) {
         Zotero.debug('[ZoteroVim] _forwardReaderKey: no pdfWin for ' + reader._instanceID);
@@ -949,6 +978,10 @@ var ZoteroVim = {
         const orig = view._onKeyDown;
         const wrapperFn = function (event) {
           try {
+            // A native reader.html editor has DOM focus — keep Zotero's own
+            // shortcut handling quiet too (OS focus may still sit in this
+            // PDF window), so the keystroke never reaches the KeyboardManager.
+            if (zv._nativeEditableFocused(reader)) return;
             const keyStr = zv._keyString(event);
             if (zv._readerConsumesKey(state, keyStr)) {
               const n = state._dropTraceN = (state._dropTraceN || 0) + 1;
@@ -1324,6 +1357,12 @@ var ZoteroVim = {
   _onKeyDown(event, reader, state, pdfWin) {
     state.activePdfWin = pdfWin || state.activePdfWin;
 
+    // While a Zotero-native editor (annotation popup / sidebar comment /
+    // find input) has DOM focus, the plugin is completely inert: it must
+    // never consume keys or move focus, otherwise typing in Zotero's own
+    // editors loses focus.
+    if (this._nativeEditableFocused(reader)) return;
+
     if (state.outlineExplorerOpen) {
       if (this._onReaderOutlineExplorerKeyDown(event, reader, state, pdfWin)) {
         return;
@@ -1518,6 +1557,7 @@ var ZoteroVim = {
       try { saved = await this._saveAndCloseAnnotationCommentOverlay(state); } catch (_) {}
     }
     this._setMode(state, 'normal');
+    this._restoreAnnotationDeletionFlag(state, reader);
     try {
       const targetWin = this._activeReaderPdfWin?.(reader) || state.activePdfWin || state.pdfWin;
       targetWin?.focus();
@@ -1525,6 +1565,25 @@ var ZoteroVim = {
     if (hadOverlay) {
       this._showStatus(state, saved ? '✓ saved' : '✗ save failed', saved ? 1200 : 2500);
     }
+  },
+
+  /**
+   * Hand the annotation comment over to a Zotero-native editor (annotation
+   * popup or sidebar comment field) that just received focus: save and close
+   * the plugin's overlay, return to normal mode, and — unlike
+   * _exitAnnotationInsert — leave focus exactly where the user put it so the
+   * native editor works without a focus fight.
+   */
+  async _handOverAnnotationInsert(state, reader) {
+    state._composing = false;
+    state._composingSince = 0;
+    // Kill the focus watchdog before the async save so it cannot steal focus
+    // back from the native editor.
+    this._setMode(state, 'normal');
+    this._restoreAnnotationDeletionFlag(state, reader);
+    let saved = true;
+    try { saved = await this._saveAndCloseAnnotationCommentOverlay(state); } catch (_) {}
+    try { zvLogFile('[ZoteroVim] insert: handed over to native editor, saved=' + saved); } catch (_) {}
   },
 
   /**

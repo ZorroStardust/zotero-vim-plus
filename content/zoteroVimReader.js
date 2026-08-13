@@ -1632,108 +1632,209 @@ Object.assign(ZoteroVim, {
   },
 
   /**
-   * Show Tridactyl-style letter hint badges at the start of each visible
-   * sentence.  The user presses a letter to anchor selection at that point.
+   * Hint label generator: uppercase, prefix-free labels in home-row-first
+   * order.  count ≤ 26 → single letters; more → uniform two-letter labels
+   * (26² = 676).  With `reserved` set (fine stage), the first label is the
+   * reserved one and all following labels avoid its first character, so
+   * typing the reserved label is always an exact, unambiguous match.
+   */
+  _hintAlphabet() {
+    return 'ASDFJKLGHQWERTYUIOPZXCVBNM';
+  },
+
+  _hintLabelList(count, reserved = null) {
+    const alphabet = this._hintAlphabet();
+    const labels = [];
+    if (reserved !== null) {
+      labels.push(reserved);
+      const rest = alphabet.split('').filter(c => c !== reserved.charAt(0));
+      const n = count - 1;
+      if (n <= rest.length) {
+        for (let i = 0; i < n; i++) labels.push(rest[i]);
+      } else {
+        for (let i = 0; i < n; i++) {
+          labels.push(rest[Math.floor(i / alphabet.length)] + alphabet[i % alphabet.length]);
+        }
+      }
+      return labels;
+    }
+    if (count <= alphabet.length) return alphabet.slice(0, count).split('');
+    for (let i = 0; i < count; i++) {
+      labels.push(alphabet[Math.floor(i / alphabet.length)] + alphabet[i % alphabet.length]);
+    }
+    return labels;
+  },
+
+  /**
+   * Show Tridactyl/Vimium-style hint badges in two stages.
+   *
+   * Coarse stage: one badge per visible sentence start.  Picking a label
+   * enters the fine stage, which shows one badge per word start inside that
+   * sentence — the sentence's own start keeps its label, so pressing the
+   * same label again jumps straight back to the sentence start.
+   *
+   * While typing, the consumed prefix dims and non-matching badges hide;
+   * a full label or a uniquely matching prefix activates immediately.
    */
   _showVisualHints(state, pdfWin, targetMode = 'visual') {
     this._clearVisualHints(state, pdfWin);
-    const doc      = pdfWin.document;
-    const hintChars = 'asdfjklghqwertyuiopzxcvbnm';
-    const hints    = {};
-    let charIdx    = 0;
+    const starts = this._findSentenceStarts(pdfWin);
+    if (!starts.length) {
+      this._placeCursorAtFirstText(state, pdfWin);
+      return;
+    }
+    const labels = this._hintLabelList(starts.length);
+    const badges = [];
+    for (let i = 0; i < starts.length; i++) {
+      const b = this._createHintBadge(
+        pdfWin.document, labels[i], starts[i].textNode, starts[i].offset
+      );
+      if (b) badges.push(b);
+    }
+    if (!badges.length) {
+      this._placeCursorAtFirstText(state, pdfWin);
+      return;
+    }
+    this._layoutHintBadges(pdfWin.document, badges);
+    state.hintMode = true;
+    state.hintStage = 'coarse';
+    state.hintBuffer = '';
+    state.hintBadges = badges;
+    state.hintStarts = starts;
+    state.hintSelected = null;
+    state.hintTargetMode = targetMode;
+  },
 
-    const starts = targetMode === 'cursor'
-      ? this._findCursorStartsFast(pdfWin)
-      : this._findSentenceStarts(pdfWin);
-
-    for (const { textNode, offset } of starts) {
-      if (charIdx >= hintChars.length) break;
-      const letter = hintChars[charIdx++];
-
-      // Compute badge position: rect of the character at this offset.
-      let badgeLeft, badgeTop;
-      try {
-        const r = doc.createRange();
-        r.setStart(textNode, offset);
-        r.setEnd(textNode, Math.min(offset + 1, textNode.length));
-        const rects = r.getClientRects();
-        if (rects.length > 0) { badgeLeft = rects[0].left; badgeTop = rects[0].top; }
-      } catch (_) {}
-      if (badgeLeft === undefined) {
-        const pr = textNode.parentElement?.getBoundingClientRect?.();
-        if (!pr) { charIdx--; continue; }
-        badgeLeft = pr.left; badgeTop = pr.top;
+  /**
+   * Create one badge element for a target.  The label is split into a dim
+   * prefix span (typed part) and a bold rest span (still to be typed).
+   */
+  _createHintBadge(doc, label, textNode, offset) {
+    let badgeLeft, badgeTop, badgeHeight;
+    try {
+      const r = doc.createRange();
+      r.setStart(textNode, offset);
+      r.setEnd(textNode, Math.min(offset + 1, textNode.length));
+      const rects = r.getClientRects();
+      if (rects.length > 0) {
+        badgeLeft = rects[0].left;
+        badgeTop = rects[0].top;
+        badgeHeight = rects[0].height;
       }
-
-      const badge = doc.createElement('div');
-      badge.setAttribute('data-zv-hint', letter);
-      badge.textContent = letter;
-      badge.style.cssText =
-        'position:fixed;' +
-        'left:' + Math.max(0, Math.round(badgeLeft) - 2) + 'px;' +
-        'top:'  + Math.round(badgeTop) + 'px;' +
-        'background:#FFD400;color:#000;' +
-        'font:bold 11px/1.4 monospace;' +
-        'padding:0 3px;border-radius:2px;' +
-        'z-index:99999;pointer-events:none;' +
-        'border:1px solid #b8960c;' +
-        'box-shadow:0 1px 3px rgba(0,0,0,.4);';
-      doc.body.appendChild(badge);
-      hints[letter] = { textNode, offset };
+    } catch (_) {}
+    if (badgeLeft === undefined) {
+      const pr = textNode.parentElement?.getBoundingClientRect?.();
+      if (!pr) return null;
+      badgeLeft = pr.left;
+      badgeTop = pr.top;
+      badgeHeight = pr.height;
     }
 
-    if (Object.keys(hints).length > 0) {
-      state.hintMode = true;
-      state.hintMap  = hints;
-      state.hintTargetMode = targetMode;
-    } else {
-      this._placeCursorAtFirstText(state, pdfWin);
+    const badge = doc.createElement('div');
+    badge.setAttribute('data-zv-hint', label);
+    const prefix = doc.createElement('span');
+    prefix.setAttribute('data-zv-hint-part', 'prefix');
+    prefix.textContent = '';
+    prefix.style.cssText = 'color:#8f7d1c;';
+    const rest = doc.createElement('span');
+    rest.setAttribute('data-zv-hint-part', 'rest');
+    rest.textContent = label;
+    rest.style.cssText = 'color:#000;font-weight:bold;';
+    badge.appendChild(prefix);
+    badge.appendChild(rest);
+    badge.style.cssText =
+      'position:fixed;' +
+      'left:' + Math.max(0, Math.round(badgeLeft) - 2) + 'px;' +
+      'top:' + Math.round(badgeTop) + 'px;' +
+      'background:#FFD400;' +
+      'font:bold 11px/1.4 monospace;' +
+      'padding:0 3px;border-radius:2px;' +
+      'z-index:99999;pointer-events:none;' +
+      'border:1px solid #b8960c;' +
+      'box-shadow:0 1px 3px rgba(0,0,0,.4);';
+    doc.body.appendChild(badge);
+    return {
+      label,
+      textNode,
+      offset,
+      el: badge,
+      prefixEl: prefix,
+      restEl: rest,
+      left: badgeLeft,
+      top: badgeTop,
+      height: badgeHeight || 12,
+    };
+  },
+
+  /**
+   * Position every badge at the top-left of its character.  Only badges that
+   * truly overlap (same visual line AND horizontal intersection) are nudged
+   * down, and the cascade resets on every line, so badges stay glued to
+   * their words.  Layout covers ALL badges — positions must never depend on
+   * which badges are currently visible, otherwise filtering would make the
+   * remaining badges drift.
+   */
+  _layoutHintBadges(doc, badges) {
+    let lineTop = null;
+    let prevRight = -Infinity;
+    let prevBottom = -Infinity;
+    for (const b of badges) {
+      let { left, top, height } = b;
+      try {
+        const r = doc.createRange();
+        r.setStart(b.textNode, b.offset);
+        r.setEnd(b.textNode, Math.min(b.offset + 1, b.textNode.length));
+        const rects = r.getClientRects();
+        if (rects.length > 0) {
+          left = rects[0].left;
+          top = rects[0].top;
+          height = rects[0].height;
+        }
+      } catch (_) {}
+      const badgeH = Math.max(16, height + 6);
+      const badgeW = Math.max(12, b.label.length * 7 + 8);
+      if (lineTop === null || Math.abs(top - lineTop) > 6) {
+        lineTop = top;
+        prevRight = -Infinity;
+        prevBottom = -Infinity;
+      }
+      if (left < prevRight && top < prevBottom) {
+        top = prevBottom + 2;
+      }
+      b.el.style.left = Math.max(0, Math.round(left) - 2) + 'px';
+      b.el.style.top = Math.round(top) + 'px';
+      prevRight = Math.max(prevRight, left + badgeW);
+      prevBottom = Math.max(prevBottom, top + badgeH);
     }
   },
 
-  _findCursorStartsFast(pdfWin) {
-    const doc = pdfWin.document;
-    const container =
-      doc.getElementById('viewerContainer') ||
-      doc.querySelector('.pdfViewer') ||
-      doc.body;
-    const viewRect = container.getBoundingClientRect?.() || {
-      top: 0,
-      bottom: container.clientHeight || 0,
-      left: 0,
-      right: container.clientWidth || 0,
-    };
-
-    const spans = [];
-    for (const span of doc.querySelectorAll('.textLayer span')) {
-      const tn = span.firstChild;
-      if (!tn || tn.nodeType !== 3) continue;
-      const txt = tn.data;
-      if (!txt || !txt.trim()) continue;
-      const r = span.getBoundingClientRect();
-      if (r.bottom < viewRect.top + 2 || r.top > viewRect.bottom - 2) continue;
-      if (r.right < viewRect.left + 2 || r.left > viewRect.right - 2) continue;
-      if (r.width < 3 || r.height < 3) continue;
-      spans.push({ tn, rect: r });
-      if (spans.length >= 120) break;
+  /**
+   * Re-filter visible badges after each keystroke (Vimium-style).  Only
+   * visibility and label parts change — positions are NOT recomputed, so
+   * remaining badges never drift.
+   */
+  _refreshHintBadges(state, pdfWin) {
+    const buffer = state.hintBuffer || '';
+    for (const b of state.hintBadges) {
+      if (!b.label.startsWith(buffer)) {
+        b.el.style.display = 'none';
+        continue;
+      }
+      b.el.style.display = '';
+      b.prefixEl.textContent = buffer;
+      b.restEl.textContent = b.label.slice(buffer.length);
     }
+  },
 
-    spans.sort((a, b) => {
-      const dy = a.rect.top - b.rect.top;
-      return Math.abs(dy) > 4 ? dy : a.rect.left - b.rect.left;
+  /** Keep badges glued to the text while the user scrolls (rAF-throttled). */
+  _repositionHintBadges(state, pdfWin) {
+    if (!state.hintMode || !state.hintBadges?.length) return;
+    if (state._hintRepositionRAF) return;
+    state._hintRepositionRAF = pdfWin.requestAnimationFrame(() => {
+      state._hintRepositionRAF = null;
+      if (!state.hintMode || !state.hintBadges?.length) return;
+      this._layoutHintBadges(pdfWin.document, state.hintBadges);
     });
-
-    const starts = [];
-    let lastTop = -Infinity;
-    for (const s of spans) {
-      if (Math.abs(s.rect.top - lastTop) < 4) continue;
-      const off = s.tn.data.search(/\S/);
-      if (off < 0) continue;
-      starts.push({ textNode: s.tn, offset: off });
-      lastTop = s.rect.top;
-      if (starts.length >= 26) break;
-    }
-    return starts;
   },
 
   /**
@@ -1760,17 +1861,10 @@ Object.assign(ZoteroVim, {
     spans.sort((a, b) => {
       const ra = a.getBoundingClientRect(), rb = b.getBoundingClientRect();
       const dy = ra.top - rb.top;
-      return Math.abs(dy) > 5 ? dy : ra.left - rb.left;
+      return Math.abs(dy) > 4 ? dy : ra.left - rb.left;
     });
 
     const results = [];
-    // Deduplicate: skip if we already have a hint on the same visual line.
-    const lastHintTopAt = (rect) => {
-      if (!results.length) return -Infinity;
-      const prev = results[results.length - 1].textNode.parentElement?.getBoundingClientRect?.();
-      return prev ? prev.top : -Infinity;
-    };
-
     let prevRect = null;
     let prevText = '';
 
@@ -1785,38 +1879,25 @@ Object.assign(ZoteroVim, {
       const isNewBlock = !prevRect || rect.top > prevRect.bottom + lineH * 0.5;
       if (isNewBlock) {
         const off = text.search(/\S/);
-        if (off >= 0 && Math.abs(rect.top - lastHintTopAt()) > 3) {
-          results.push({ textNode, offset: off });
-        }
+        if (off >= 0) results.push({ textNode, offset: off });
       } else {
         // Rule 2: previous span ended a sentence
         if (/[.!?]['")\]]*\s*$/.test(prevText)) {
           const off = text.search(/\S/);
-          if (off >= 0 && /[A-Z"'(\[]/.test(text[off]) &&
-              Math.abs(rect.top - lastHintTopAt()) > 3) {
-            results.push({ textNode, offset: off });
-          }
+          if (off >= 0) results.push({ textNode, offset: off });
         }
 
-        // Rule 3: sentence starts inside this span
-        const pat = /[.!?]['")\]]*\s+([A-Z"'(\[])/g;
+        // Rule 3: sentence starts inside this span (any non-space after
+        // sentence-ending punctuation + whitespace)
+        const pat = /[.!?]['")\]]*\s+(\S)/g;
         let m;
         while ((m = pat.exec(text)) !== null) {
           const off = m.index + m[0].length - m[1].length;
-          // Compute y of this character to deduplicate against same-line hints
-          let charTop = rect.top;
-          try {
-            const r = doc.createRange();
-            r.setStart(textNode, off);
-            r.setEnd(textNode, off + 1);
-            const cr = r.getClientRects();
-            if (cr.length > 0) charTop = cr[0].top;
-          } catch (_) {}
-          if (Math.abs(charTop - lastHintTopAt()) > 3) {
-            results.push({ textNode, offset: off });
-          }
+          results.push({ textNode, offset: off });
         }
       }
+
+      if (results.length >= 400) break;
 
       prevRect = rect;
       prevText = text;
@@ -1827,8 +1908,16 @@ Object.assign(ZoteroVim, {
 
   _clearVisualHints(state, pdfWin) {
     state.hintMode = false;
-    state.hintMap  = {};
+    state.hintStage = null;
+    state.hintBuffer = '';
+    state.hintBadges = [];
+    state.hintStarts = [];
+    state.hintSelected = null;
     state.hintTargetMode = null;
+    if (state._hintRepositionRAF && pdfWin) {
+      try { pdfWin.cancelAnimationFrame(state._hintRepositionRAF); } catch (_) {}
+    }
+    state._hintRepositionRAF = null;
     if (!pdfWin) return;
     try {
       for (const el of pdfWin.document.querySelectorAll('[data-zv-hint]')) el.remove();
@@ -1935,19 +2024,27 @@ Object.assign(ZoteroVim, {
     } catch (_) {}
   },
 
-  _selectHint(state, pdfWin, letter) {
+  /**
+   * Activate a fully-resolved hint badge.  In the coarse stage this opens
+   * the fine (word-level) stage for the picked sentence; in the fine stage
+   * it places the selection anchor (visual) or caret (cursor) at the word.
+   */
+  _activateHint(state, pdfWin, badge) {
+    if (!badge) return;
+    if (state.hintStage === 'coarse') {
+      this._showFineHints(state, pdfWin, badge);
+      return;
+    }
     const targetMode = state.hintTargetMode;
-    const hint = state.hintMap?.[letter];
     this._clearVisualHints(state, pdfWin);
-    if (!hint) return;
     try {
       const sel   = pdfWin.getSelection();
       const range = pdfWin.document.createRange();
-      range.setStart(hint.textNode, hint.offset);
+      range.setStart(badge.textNode, badge.offset);
       range.collapse(true);
       sel.removeAllRanges();
       sel.addRange(range);
-      state.visualCursor = { textNode: hint.textNode, offset: hint.offset };
+      state.visualCursor = { textNode: badge.textNode, offset: badge.offset };
       if (targetMode === 'visual') {
         state.visualPreferredX = this._cursorCurrentX(pdfWin.document, sel, state.visualPreferredX);
       } else if (targetMode === 'cursor') {
@@ -1955,10 +2052,118 @@ Object.assign(ZoteroVim, {
       }
       pdfWin.focus();
       this._updateVisualCursor(state, pdfWin);
-      Zotero.debug('[ZoteroVim] Hint selected: ' + letter);
+      Zotero.debug('[ZoteroVim] Hint selected: ' + badge.label);
     } catch (e) {
-      Zotero.debug('[ZoteroVim] _selectHint error: ' + e);
+      Zotero.debug('[ZoteroVim] _activateHint error: ' + e);
     }
+  },
+
+  /**
+   * Fine stage: show one badge per word start inside the sentence selected
+   * in the coarse stage.  The sentence's own start keeps the coarse label,
+   * so pressing the same label again jumps straight back to the sentence
+   * start; the remaining words get fresh labels.
+   */
+  _showFineHints(state, pdfWin, coarseBadge) {
+    const doc = pdfWin.document;
+    for (const el of doc.querySelectorAll('[data-zv-hint]')) el.remove();
+    state.hintBadges = [];
+    state.hintStage = 'fine';
+    state.hintBuffer = '';
+    state.hintSelected = coarseBadge;
+
+    const starts = state.hintStarts || [];
+    let next = null;
+    for (let i = 0; i < starts.length; i++) {
+      if (starts[i].textNode === coarseBadge.textNode &&
+          starts[i].offset === coarseBadge.offset) {
+        next = starts[i + 1] || null;
+        break;
+      }
+    }
+
+    const words = this._findWordStartsInSentence(pdfWin, coarseBadge, next);
+    if (!words.length) {
+      this._clearVisualHints(state, pdfWin);
+      return;
+    }
+    const labels = this._hintLabelList(words.length, coarseBadge.label);
+    const badges = [];
+    for (let i = 0; i < words.length; i++) {
+      const b = this._createHintBadge(doc, labels[i], words[i].textNode, words[i].offset);
+      if (b) badges.push(b);
+    }
+    if (!badges.length) {
+      this._clearVisualHints(state, pdfWin);
+      return;
+    }
+    this._layoutHintBadges(doc, badges);
+    state.hintBadges = badges;
+  },
+
+  /**
+   * Word-start offsets between a sentence start and the next sentence start
+   * (or the bottom of the viewport when there is none).  A word starts at
+   * any non-space character that follows whitespace — the sentence start
+   * itself always counts as the first word start.
+   */
+  _findWordStartsInSentence(pdfWin, coarseBadge, nextStart) {
+    const doc = pdfWin.document;
+    const nodes = this._cursorOrderedTextNodes(doc);
+    const startIdx = this._cursorNodeIndex(nodes, coarseBadge.textNode);
+    if (startIdx < 0) {
+      return [{ textNode: coarseBadge.textNode, offset: coarseBadge.offset }];
+    }
+
+    // Visible viewport bottom in viewport coordinates — innerHeight is the
+    // only reliable measure regardless of which container scrolls.
+    const container =
+      doc.getElementById('viewerContainer') ||
+      doc.querySelector('.pdfViewer') ||
+      doc.body;
+    const viewRect = container.getBoundingClientRect?.() || { top: 0 };
+    const viewBottom = (viewRect.top >= 0 ? viewRect.top : 0)
+      + (pdfWin.innerHeight || container.clientHeight || 800);
+
+    let endIdx = nodes.length - 1;
+    let endOffset = nodes[endIdx].length;
+    if (nextStart) {
+      const idx = this._cursorNodeIndex(nodes, nextStart.textNode);
+      if (idx > startIdx) {
+        endIdx = idx;
+        endOffset = nextStart.offset;
+      } else if (idx === startIdx && nextStart.offset > coarseBadge.offset) {
+        endIdx = idx;
+        endOffset = nextStart.offset;
+      }
+      // Otherwise (ordering mismatch or next before coarse) keep the open
+      // end — the viewport clamp below bounds the range.
+    }
+
+    const results = [];
+    let prevWasSpace = true;
+    for (let i = startIdx; i <= endIdx; i++) {
+      const node = nodes[i];
+      const elRect = node.parentElement?.getBoundingClientRect?.();
+      if (elRect && elRect.top > viewBottom + 40) break;
+      let from = 0;
+      let to = node.length;
+      if (i === startIdx) from = Math.max(0, Math.min(coarseBadge.offset, node.length));
+      if (i === endIdx) to = Math.max(from, Math.min(endOffset, node.length));
+      for (let off = from; off < to; off++) {
+        const ch = node.data.charAt(off);
+        if (/\s/.test(ch)) {
+          prevWasSpace = true;
+          continue;
+        }
+        if (prevWasSpace || (i === startIdx && off === from)) {
+          results.push({ textNode: node, offset: off });
+          if (results.length >= 650) return results;
+        }
+        prevWasSpace = false;
+      }
+    }
+    return results;
   },
 
   _placeCursorAtFirstText(state, pdfWin) {

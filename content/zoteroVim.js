@@ -516,8 +516,13 @@ var ZoteroVim = {
       selectionParams: null,
       indicatorEl: null,
       hintMode: false,
-      hintMap: {},
+      hintStage: null,      // 'coarse' (sentence starts) → 'fine' (word starts)
+      hintBuffer: '',       // typed uppercase label prefix
+      hintBadges: [],
+      hintStarts: [],       // coarse-stage sentence starts (for fine range + Esc back)
+      hintSelected: null,
       hintTargetMode: null,
+      _hintRepositionRAF: null,
       visualCursor: null,   // { textNode, offset } — restored if selection lost
       visualPreferredX: null,
       cursorPreferredX: null,
@@ -876,6 +881,7 @@ var ZoteroVim = {
       try { viewWin.removeEventListener('keydown', handlers.keyDown, true); } catch (_) {}
       try { viewWin.removeEventListener('keyup', handlers.keyUp, true); } catch (_) {}
       try { viewWin.removeEventListener('blur', handlers.blur, true); } catch (_) {}
+      try { viewWin.removeEventListener('resize', handlers.resize, { passive: true }); } catch (_) {}
       try { viewWin.document.removeEventListener('selectionchange', handlers.selection); } catch (_) {}
       try { handlers.scrollEl?.removeEventListener('scroll', handlers.scroll, { passive: true }); } catch (_) {}
       state._pdfViewHandlers.delete(viewWin);
@@ -912,8 +918,16 @@ var ZoteroVim = {
           } catch (_) {}
         },
         scroll: () => {
+          if (state.hintMode) {
+            this._repositionHintBadges(state, viewWin);
+          }
           if (state.mode === 'visual' || state.mode === 'cursor') {
             this._updateVisualCursor(state, viewWin, { autoPan: false });
+          }
+        },
+        resize: () => {
+          if (state.hintMode) {
+            this._repositionHintBadges(state, viewWin);
           }
         },
         scrollEl: null,
@@ -923,6 +937,7 @@ var ZoteroVim = {
       try { viewWin.addEventListener('keyup', handlers.keyUp, true); } catch (_) {}
       try { viewWin.addEventListener('blur', handlers.blur, true); } catch (_) {}
       try { viewWin.document.addEventListener('selectionchange', handlers.selection); } catch (_) {}
+      try { viewWin.addEventListener('resize', handlers.resize, { passive: true }); } catch (_) {}
       try {
         handlers.scrollEl = viewWin.document.getElementById('viewerContainer')
           || viewWin.document.querySelector('.pdfViewer');
@@ -1369,16 +1384,40 @@ var ZoteroVim = {
       }
     }
 
-    // Hint mode: user is picking a selection starting point.
+    // Hint mode: user is picking a selection starting point.  Coarse stage
+    // (sentence starts) → fine stage (word starts inside the sentence).
+    // Typed prefixes dim the consumed letters and hide non-matching badges;
+    // a full label or a uniquely matching prefix activates immediately.
     if (state.hintMode) {
       event.preventDefault();
       event.stopImmediatePropagation();
       const key = event.key;
       if (key === 'Escape') {
-        this._clearVisualHints(state, pdfWin);
-        this._setMode(state, 'normal');
-      } else if (/^[a-z]$/.test(key) && state.hintMap[key]) {
-        this._selectHint(state, pdfWin, key);
+        if (state.hintStage === 'fine') {
+          // Fine → back to coarse sentence-start hints.
+          this._showVisualHints(state, pdfWin, state.hintTargetMode);
+        } else {
+          this._clearVisualHints(state, pdfWin);
+          this._setMode(state, 'normal');
+        }
+      } else if (key === 'Backspace') {
+        state.hintBuffer = state.hintBuffer.slice(0, -1);
+        this._refreshHintBadges(state, pdfWin);
+      } else if (/^[a-zA-Z]$/.test(key)) {
+        const next = state.hintBuffer + key.toUpperCase();
+        const matches = state.hintBadges.filter(b => b.label.startsWith(next));
+        if (!matches.length) {
+          state.hintBuffer = '';
+          this._refreshHintBadges(state, pdfWin);
+          this._showStatus(state, '✗ no hint: ' + next, 900);
+          return;
+        }
+        state.hintBuffer = next;
+        this._refreshHintBadges(state, pdfWin);
+        const exact = matches.find(b => b.label === next);
+        if (exact || matches.length === 1) {
+          this._activateHint(state, pdfWin, exact || matches[0]);
+        }
       }
       return;
     }

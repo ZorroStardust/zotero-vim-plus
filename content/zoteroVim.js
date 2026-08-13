@@ -414,10 +414,15 @@ var ZoteroVim = {
         if (this._ensureReaderInjected(reader)) injected++;
       }
       if (readers.length > 0) {
-        this._logRescan('readers=' + readers.length + ' newlyInjected=' + injected);
-        try {
-          zvLogFile('rescan readers=' + readers.length + ' newlyInjected=' + injected);
-        } catch (_) {}
+        // Both logs share the 5 s throttle — the unthrottled zvLogFile call
+        // used to write ~1 line per second and bloated zv-startup.log.
+        const msg = 'readers=' + readers.length + ' newlyInjected=' + injected;
+        this._logRescan(msg);
+        const now = Date.now();
+        if (!this._lastRescanFileTS || now - this._lastRescanFileTS >= 5000) {
+          this._lastRescanFileTS = now;
+          try { zvLogFile('rescan ' + msg); } catch (_) {}
+        }
       }
     } catch (e) {
       Zotero.debug('[ZoteroVim] _rescanSelectedReader error: ' + e);
@@ -954,18 +959,13 @@ var ZoteroVim = {
         // only touch the Xray shadow, not the view Zotero actually calls.
         try { view = Components.utils.unwrap(view); } catch (_) {}
         const patches = state.zvKeyPatches = state.zvKeyPatches || new Map();
-        if (patches.has(view)) {
-          // Zotero may replace _onKeyDown when recreating reader internals —
-          // if the stored wrapper is no longer installed, re-patch.
-          const patch = patches.get(view);
-          try {
-            if (view._onKeyDown === patch.exported) continue;
-            try {
-              zvLogFile('[ZoteroVim] trace: _onKeyDown replaced by Zotero — re-patching');
-            } catch (_) {}
-            patches.delete(view);
-          } catch (_) {}
-        }
+        // Patch each view only once.  No re-checking: comparing the installed
+        // wrapper across the chrome/content boundary can never yield object
+        // identity, so re-checking caused an endless re-patch loop that both
+        // spammed the log and nested wrappers on every tick.  Zotero never
+        // replaces _onKeyDown on a live view, and view recreation is handled
+        // by the per-view patch map.
+        if (patches.has(view)) continue;
         if (typeof view._onKeyDown !== 'function') {
           const logged = state._patchMissingLogged = state._patchMissingLogged || new Set();
           if (!logged.has(view)) {
@@ -1036,16 +1036,10 @@ var ZoteroVim = {
         if (!view) continue;
         try { view = Components.utils.unwrap(view); } catch (_) {}
         const patches = state.zvTextFocusPatches = state.zvTextFocusPatches || new Map();
-        if (patches.has(view)) {
-          const patch = patches.get(view);
-          try {
-            if (view._textAnnotationFocused === patch.exported) continue;
-            try {
-              zvLogFile('[ZoteroVim] trace: _textAnnotationFocused replaced — re-patching');
-            } catch (_) {}
-            patches.delete(view);
-          } catch (_) {}
-        }
+        // Patch once per view — see the note in _patchReaderKeyForwarding on
+        // why re-checking the installed wrapper is impossible cross-compartment
+        // and caused an endless re-patch loop.
+        if (patches.has(view)) continue;
         if (typeof view._textAnnotationFocused !== 'function') continue;
         const orig = view._textAnnotationFocused;
         const wrapperFn = function () {

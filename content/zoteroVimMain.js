@@ -599,6 +599,13 @@ Object.assign(ZoteroVim, {
   _onMainContextNoteKeyDown(event, win, winState) {
     if (!winState) return;
     if (!this.isNoteEditorVimEnabled()) return;
+    // The same handler is installed on both the note window and its document
+    // as a capture listener. stopPropagation() covers the handled branches,
+    // but insert-mode passthrough returns without stopping propagation; this
+    // guard keeps that second invocation from becoming observable if the
+    // handler ever does work in that branch.
+    if (event._zvContextNoteHandled) return;
+    try { event._zvContextNoteHandled = true; } catch (_) {}
     const keyStr = this._keyString(event);
     if (!keyStr) return;
 
@@ -884,7 +891,7 @@ Object.assign(ZoteroVim, {
   _executeMainContextNoteCommand(editableEl, command, count, win, winState) {
     if (!editableEl) return false;
 
-    if (/^[dyc][hjklwebWEB0\^\$G]$/.test(command)) {
+    if (/^[dyc][hjklwebWEB0^$G]$/.test(command)) {
       return this._noteOperateByMotion(editableEl, command[0], command[1], count, win, winState);
     }
     if (/^[dyc]iw$/.test(command)) {
@@ -2929,18 +2936,6 @@ Object.assign(ZoteroVim, {
         e.preventDefault();
         e.stopPropagation();
         this._mainNotesSwitchSection(win, winState, 'current');
-        return;
-      case 'j':
-      case 'arrowdown':
-        e.preventDefault();
-        e.stopPropagation();
-        this._mainNotesMoveSelection(win, winState, +1, 1);
-        return;
-      case 'k':
-      case 'arrowup':
-        e.preventDefault();
-        e.stopPropagation();
-        this._mainNotesMoveSelection(win, winState, -1, 1);
         return;
       case 'ctrl+d':
         e.preventDefault();

@@ -8,6 +8,8 @@
 // English action labels live in prefs.js's ZV_ACTION_LABELS; this file only
 // supplies the zh-CN action labels and the dictionary/apply helpers.
 
+// Legacy preference branch, kept for migration/compatibility with the
+// original zotero-vim add-on.
 const ZV_I18N_PREFIX = "extensions.zotero-vim@zotero-vim.";
 const ZV_XUL_NS = "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul";
 
@@ -224,6 +226,7 @@ const ZV_I18N_ACTION_LABELS = {
   toggleReaderSplitHorizontal: "阅读器：切换水平分栏（<space>-）",
   toggleReaderSplitVertical:   "阅读器：切换垂直分栏（<space>|）",
   toggleReaderSidebarOutline:  "阅读器：切换目录浏览浮层（<space>e）",
+  focusReaderSidebar:          "阅读器：聚焦或重新打开目录浏览浮层",
   toggleMarksExplorer:         "阅读器：切换标记浏览浮层（<space>m）",
 };
 

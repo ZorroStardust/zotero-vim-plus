@@ -4,6 +4,8 @@
 // Uses raw XPCOM — the only thing reliably available in every Gecko chrome
 // sandbox without imports or external globals.
 
+// Legacy preference branch, kept for migration/compatibility with the
+// original zotero-vim add-on (the current add-on ID is zotero-vim-plus@zotero-vim).
 const ZV_PREFIX = "extensions.zotero-vim@zotero-vim.";
 
 function _zvPrefs() {
@@ -56,6 +58,7 @@ const ZV_DEFAULT_BINDINGS = {
   "normal:N":       "findPrevious",
   "normal:[":       "prevAnnotation",
   "normal:]":       "nextAnnotation",
+  "normal:enter":   "editAnnotation",
   "normal:return":  "editAnnotation",
   "normal:dd":      "deleteAnnotation",
   "normal:zy":      "recolorYellow",
@@ -278,6 +281,7 @@ const ZV_ACTION_LABELS = {
   toggleReaderSplitHorizontal: "Reader: toggle horizontal split (<space>-)",
   toggleReaderSplitVertical:   "Reader: toggle vertical split (<space>|)",
   toggleReaderSidebarOutline:  "Reader: toggle outline explorer overlay (<space>e)",
+  focusReaderSidebar:          "Reader: focus or reopen outline explorer overlay",
   toggleMarksExplorer:         "Reader: toggle marks explorer overlay (<space>m)",
 };
 
@@ -616,7 +620,7 @@ function _zvInit() {
 // ── Table helpers ─────────────────────────────────────────────────────────────
 
 function _zvBindingsToRows(bindings) {
-  const modeOrder = { normal: 0, visual: 1, insert: 2, main: 3 };
+  const modeOrder = { normal: 0, visual: 1, cursor: 2, insert: 3, main: 4 };
   return Object.entries(bindings)
     .map(([full, action]) => {
       const colon = full.indexOf(":");
@@ -650,7 +654,7 @@ function _zvMakeRow(mode, key, action, isNew) {
   if (isNew) {
     const modeSel = document.createElement("select");
     modeSel.style.cssText = "padding:2px 4px;font-family:monospace;";
-    for (const m of ["normal", "visual", "insert", "main"]) {
+    for (const m of ["normal", "visual", "cursor", "insert", "main"]) {
       const o = document.createElement("option");
       o.value = m; o.textContent = m;
       if (m === mode) o.selected = true;

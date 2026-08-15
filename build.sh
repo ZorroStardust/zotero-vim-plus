@@ -7,10 +7,12 @@ PLUGIN_ID="zotero-vim-plus@zotero-vim"
 OUTPUT="zoetero-vim-plus.xpi"
 
 # Optional sanity checks. Only `zip` is required to build; if `node` is
-# available, verify JS syntax and that the two hand-maintained keybinding
-# tables (zoteroVim.js vs prefs.js) have not drifted.
+# available, verify JS syntax and that the hand-maintained keybinding/i18n
+# tables (zoteroVim.js vs prefs.js/i18n.js) have not drifted.
 if command -v node >/dev/null 2>&1; then
   echo "Checking JS syntax and binding-table sync ..."
+  node --check bootstrap.js
+  node --check content/i18n.js
   node --check content/zoteroVim.js
   node --check content/zoteroVimReader.js
   node --check content/zoteroVimMain.js

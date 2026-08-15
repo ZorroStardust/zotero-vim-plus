@@ -1101,8 +1101,12 @@ Object.assign(ZoteroVim, {
     try {
       const sel = pdfWin.getSelection();
       if (sel && !sel.isCollapsed) {
+        // Keep the existing mouse selection, but remember its anchor so
+        // subsequent j/k/w/b and `o` work exactly like a keyboard selection.
+        state.visualCursor = { textNode: sel.anchorNode, offset: sel.anchorOffset };
         state.visualPreferredX = this._cursorCurrentX(pdfWin.document, sel, null);
-        return;   // keep existing mouse selection
+        this._updateVisualCursor(state, pdfWin);
+        return;
       }
     } catch (_) {}
     this._showVisualHints(state, pdfWin, 'visual');
@@ -4549,7 +4553,13 @@ Object.assign(ZoteroVim, {
    * Opens the plugin's own comment overlay (see _enterAnnotationInsertMode).
    */
   _focusAnnotationComment(state, reader, opts = null) {
-    this._enterAnnotationInsertMode(state, reader, opts);
+    if (state.mode !== 'insert') this._setMode(state, 'insert');
+    return this._enterAnnotationInsertMode(state, reader, opts);
+  },
+
+  _isZhLocale() {
+    try { return /^zh/i.test(String(Zotero.locale || '')); } catch (_) {}
+    return false;
   },
 
   /**
@@ -4611,7 +4621,8 @@ Object.assign(ZoteroVim, {
     const hint = h('div');
     hint.style.cssText =
       'padding:5px 12px;border-top:1px solid #313244;color:#6c7086;font-size:11px;';
-    hint.textContent = 'Enter 换行 · Esc 保存并关闭';
+    const zh = this._isZhLocale();
+    hint.textContent = zh ? 'Enter 换行 · Esc 保存并关闭' : 'Enter newline · Esc save & close';
     overlay.appendChild(hint);
 
     doc.body.appendChild(overlay);
@@ -4744,8 +4755,7 @@ Object.assign(ZoteroVim, {
         if (!item || item.deleted) return;
         if ((item.annotationComment || '') !== ta.value) {
           item.annotationComment = ta.value;
-          item.saveTx();
-          try { zvLogFile('[ZoteroVim] autosave key=' + key); } catch (_) {}
+          await item.saveTx();
         }
       } catch (_) {}
     }, 2000);
@@ -4830,14 +4840,22 @@ Object.assign(ZoteroVim, {
     }
     state.lastAnnotationKey = key;
 
+    // Claim a fresh insert session before the first await. If the user
+    // presses Escape while the annotation item is being resolved, _setMode()
+    // invalidates this session and the rest of the function must not open
+    // the comment overlay.
+    const mySession = (state._insertSessionID = (state._insertSessionID || 0) + 1);
+
     // Resolve the annotation item via the attachment's child list — a bare
     // key passed to Zotero.Items.get() returns false (IDs only), which left
     // the overlay permanently empty.
     const item = await this._resolveAnnotationItem(reader, key);
+    if (state._insertSessionID !== mySession || state.mode !== 'insert') return;
+
     state._commentItemID = item?.id || null;
     state._commentLibraryID = item?.libraryID || null;
     if (!item) {
-      try { zvLogFile('[ZoteroVim] insert: annotation item not resolved key=' + key); } catch (_) {}
+      Zotero.debug('[ZoteroVim] annotation item not resolved key=' + key);
     }
     let commentText = '';
     let quotedText = '';
@@ -4873,7 +4891,6 @@ Object.assign(ZoteroVim, {
 
     const initialDelayMs = Math.max(0, Number(opts?.initialDelayMs || 60));
     const holdMs = Math.max(100, Number(opts?.holdMs || 500));
-    const mySession = (state._insertSessionID = (state._insertSessionID || 0) + 1);
 
     const tryKeep = (attempt) => {
       if (state.mode !== 'insert' || state._insertSessionID !== mySession) {
@@ -4894,33 +4911,30 @@ Object.assign(ZoteroVim, {
       if (input?.isConnected && !state._composing && doc?.activeElement !== input) {
         try { input.focus(); } catch (_) {}
       }
-      if (attempt % 10 === 0) {
-        try {
-          zvLogFile('[ZoteroVim] insert: watch ' + attempt + ' key=' + key
-            + ' overlay=' + !!state._commentOverlay
-            + ' focused=' + (doc?.activeElement === input));
-        } catch (_) {}
-      }
       state.insertWatchdog = setTimeout(() => tryKeep(attempt + 1), holdMs);
     };
 
     state.insertWatchdog = null;
     setTimeout(() => {
-      try { ta?.focus(); } catch (_) {}
+      // The overlay may have been closed (Esc) or handed over while this
+      // focus timeout was pending. Never resurrect the insert session then.
+      if (state._insertSessionID !== mySession || !ta?.isConnected) return;
+      try { ta.focus(); } catch (_) {}
       try {
-        const len = ta?.value?.length || 0;
-        if (ta) { ta.selectionStart = len; ta.selectionEnd = len; }
+        const len = ta.value.length || 0;
+        ta.selectionStart = len;
+        ta.selectionEnd = len;
       } catch (_) {}
-      if (state.mode !== 'insert') this._setMode(state, 'insert');
-      this._showStatus(state, '-- INSERT --  Esc 保存', 2000);
+      const zh = this._isZhLocale();
+      this._showStatus(state, zh ? '-- INSERT --  Esc 保存' : '-- INSERT --  Esc save', 2000);
       tryKeep(0);
     }, initialDelayMs);
   },
-  _enterInsertForAnnotation(state, reader, annotationKey) {
+  async _enterInsertForAnnotation(state, reader, annotationKey) {
     try {
       state.lastAnnotationKey = annotationKey;
       if (state.mode !== 'insert') this._setMode(state, 'insert');
-      this._enterAnnotationInsertMode(state, reader, { initialDelayMs: 150 });
+      await this._enterAnnotationInsertMode(state, reader, { initialDelayMs: 150 });
     } catch (e) {
       Zotero.debug('[ZoteroVim] _enterInsertForAnnotation error: ' + e);
     }

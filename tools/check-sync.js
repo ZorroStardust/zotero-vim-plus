@@ -47,6 +47,24 @@ function extractTable(rel, startRe, endRe, pairRe) {
   return table;
 }
 
+// Object literals silently discard duplicate keys (last one wins). Detect them
+// explicitly, otherwise a duplicated default binding or action label would
+// pass this script while still being wrong in the Preferences UI.
+function reportDuplicateKeys(rel, startRe, endRe, pairRe, label) {
+  const lines = readLines(rel);
+  const { start, end } = objectRange(lines, startRe, endRe);
+  const seen = new Map();
+  for (let i = start; i <= end; i++) {
+    for (const m of lines[i].matchAll(pairRe)) {
+      if (seen.has(m[1])) {
+        report(`${label} has duplicate key "${m[1]}" (first occurrence line ${seen.get(m[1]) + 1})`);
+      } else {
+        seen.set(m[1], i);
+      }
+    }
+  }
+}
+
 let failed = false;
 
 function report(msg) {
@@ -79,9 +97,39 @@ const actionLabels = extractTable(
   /^\s*(\w+)\s*:\s*"([^"]+)"/gm
 );
 
+const zhActionLabels = extractTable(
+  'content/i18n.js',
+  /ZV_I18N_ACTION_LABELS\s*=\s*\{/,
+  /^\s*\};\s*$/,
+  /^\s*(\w+)\s*:\s*"([^"]+)"/gm
+);
+
 console.log('[sync] zoteroVim.js bindings: ' + Object.keys(zoteroVimBindings).length);
 console.log('[sync] prefs.js bindings:     ' + Object.keys(prefsBindings).length);
 console.log('[sync] prefs.js action labels:' + Object.keys(actionLabels).length);
+console.log('[sync] zh-CN action labels:   ' + Object.keys(zhActionLabels).length);
+
+reportDuplicateKeys(
+  'content/zoteroVim.js',
+  /DEFAULT_BINDINGS\s*:\s*\{/,
+  /^\s*\},\s*$/,
+  /'([^']+)'\s*:\s*'([^']+)'/g,
+  'zoteroVim.js DEFAULT_BINDINGS'
+);
+reportDuplicateKeys(
+  'content/prefs.js',
+  /ZV_DEFAULT_BINDINGS\s*=\s*\{/,
+  /^\s*\};\s*$/,
+  /"([^"]+)"\s*:\s*"([^"]+)"/g,
+  'prefs.js ZV_DEFAULT_BINDINGS'
+);
+reportDuplicateKeys(
+  'content/prefs.js',
+  /ZV_ACTION_LABELS\s*=\s*\{/,
+  /^\s*\};\s*$/,
+  /^\s*(\w+)\s*:\s*"([^"]+)"/gm,
+  'prefs.js ZV_ACTION_LABELS'
+);
 
 // 1. The two default-binding tables must be identical.
 for (const key of diff(zoteroVimBindings, prefsBindings)) {
@@ -105,6 +153,23 @@ for (const action of new Set(Object.values(zoteroVimBindings))) {
   if (!(action in actionLabels)) {
     report('action missing from prefs.js ZV_ACTION_LABELS: ' + action);
   }
+}
+
+// 3. Binding modes must stay within the modes the Preferences panel can edit.
+const supportedModes = new Set(['normal', 'visual', 'cursor', 'insert', 'main']);
+for (const key of Object.keys(zoteroVimBindings)) {
+  const mode = key.slice(0, key.indexOf(':'));
+  if (!supportedModes.has(mode)) {
+    report('binding uses unsupported mode "' + mode + '": "' + key + '"');
+  }
+}
+
+// 4. English and zh-CN action dropdowns must contain the same actions.
+for (const action of diff(actionLabels, zhActionLabels)) {
+  report('action missing from zh-CN ZV_I18N_ACTION_LABELS: ' + action);
+}
+for (const action of diff(zhActionLabels, actionLabels)) {
+  report('action present only in zh-CN ZV_I18N_ACTION_LABELS: ' + action);
 }
 
 if (failed) {

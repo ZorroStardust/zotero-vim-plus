@@ -13,11 +13,11 @@ no framework, no npm, no build pipeline beyond a simple zip script.
 ./build.sh
 ```
 On Windows (no bash needed): `powershell -ExecutionPolicy Bypass -File tools\build.ps1`
-Creates `zotero-vim.xpi` — a zip of `manifest.json`, `bootstrap.js`, `content/`, and `icons/`.
+Creates `zoetero-vim-plus.xpi` — a zip of `manifest.json`, `bootstrap.js`, `content/`, and `icons/`.
 
 ### Installing
 1. Open Zotero → Tools → Add-ons → Gear icon → "Install Add-on From File..."
-2. Select `zotero-vim.xpi`
+2. Select `zoetero-vim-plus.xpi`
 3. Restart Zotero
 
 ### Debugging
@@ -39,11 +39,13 @@ There is **no automated test suite**. Test changes by:
 Use **2 spaces** for indentation. Do not use tabs.
 
 ### File Structure
-The codebase has three primary files:
+The codebase has several primary files:
 - `bootstrap.js` — Zotero lifecycle entry point (install/uninstall hooks)
-- `content/zoteroVim.js` — Main plugin logic (~5200 lines), structured as a single
-  object literal (`var ZoteroVim = { ... }`)
-- `content/prefs.js` — Preferences service helper
+- `content/zoteroVim.js` — Core plugin object: modes, keybindings, key handling,
+  action dispatcher (`var ZoteroVim = { ... }`)
+- `content/zoteroVimReader.js` — Reader-side methods
+- `content/zoteroVimMain.js` — Main-window methods
+- `content/prefs.js` / `content/i18n.js` — Preferences panel logic and labels
 
 ### JavaScript Conventions
 
@@ -56,7 +58,8 @@ var ZoteroVim = {
 };
 ```
 
-**No semicolons** — the codebase relies on ASI. Do not add semicolons at line ends.
+**Use semicolons consistently** — the existing code uses semicolons at line ends;
+match the surrounding file.
 
 **Global declarations.** Every file must declare its globals at the top:
 ```js

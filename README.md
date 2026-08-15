@@ -62,8 +62,8 @@ Vibe coded with Claude Sonnet 4.5.
   and annotation commands remain PDF-specific
 - **Marks** — vim-style position marks (`m<x>` set, `` `<x> `` instant jump,
   `dm<x>`/`dM` delete, `<space>m` explorer overlay) with `a`–`z` or `0`–`9`
-  characters (sioyek-style numbered tags); optionally persisted as a child
-  note under the PDF item so they survive restarts and sync
+  characters (sioyek-style numbered tags); optionally persisted in the parent
+  item's Extra field so they survive restarts and sync
 
 ---
 
@@ -790,7 +790,7 @@ failures are reported to `zv-startup.log` in the profile directory with
 | Smooth acceleration | 2600 px/s² | Speed increase while holding a scroll key (accelerating mode) |
 | Smooth deceleration | 4200 px/s² | Speed decrease after key release (accelerating mode) |
 | Stop on release | off | If enabled, stop immediately when key is released (accelerating mode) |
-| Persist marks | off | Save marks in a child note under the PDF item so they survive restarts and sync |
+| Persist marks | off | Save marks in the parent item's Extra field (`zv-marks-<attachmentKey>`) so they survive restarts and sync |
 | Default highlight colour | Yellow | Colour used when no explicit colour key is pressed |
 
 Scroll settings save automatically on change.

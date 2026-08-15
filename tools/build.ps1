@@ -16,6 +16,8 @@ $Root = (Resolve-Path -LiteralPath $Root).Path
 if (Get-Command node -ErrorAction SilentlyContinue) {
     Push-Location $Root
     try {
+        node --check bootstrap.js
+        node --check content/i18n.js
         node --check content/zoteroVim.js
         node --check content/zoteroVimReader.js
         node --check content/zoteroVimMain.js

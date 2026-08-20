@@ -6,7 +6,7 @@
 >
 > This repository is forked from the original Zotero Vim project.
 
-Vim-style keybindings for the Zotero 7/8 PDF reader. Navigate, scroll,
+Vim-style keybindings for the Zotero 7–10 PDF reader. Navigate, scroll,
 annotate, and copy text without touching the mouse.
 
 Vibe coded with Claude Sonnet 4.5.
@@ -69,7 +69,7 @@ Vibe coded with Claude Sonnet 4.5.
 
 ## Requirements
 
-- Zotero 7, 8, or 9 (the plugin uses the Zotero 7+ bootstrap API)
+- Zotero 7–10 (the plugin uses the Zotero 7+ bootstrap API)
 - macOS, Linux, or Windows
 
 ---

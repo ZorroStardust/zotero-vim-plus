@@ -186,7 +186,7 @@ var ZoteroVim = {
   _readerState: new Map(),          // instanceID → state
   _readerStateByItemID: new Map(),  // itemID → state  (fallback lookup)
   _windows: new Set(),
-  _readerListenerIDs: [],
+  _readerListenersRegistered: false,
   _mainWindowState: new Map(),   // win → mainWinState
 
   // Plugin-level cache: renderTextSelectionPopup params, regardless of which
@@ -206,10 +206,7 @@ var ZoteroVim = {
   },
 
   shutdown() {
-    for (const listenerID of this._readerListenerIDs) {
-      try { Zotero.Reader.unregisterEventListener(listenerID); } catch (_) {}
-    }
-    this._readerListenerIDs = [];
+    this._unregisterOwnReaderListeners();
     for (const [, state] of this._readerState) {
       try { state.cleanup(); } catch (_) {}
     }
@@ -344,25 +341,32 @@ var ZoteroVim = {
 
   // ── Reader event listeners ────────────────────────────────────────────────
 
+  /** Remove only this plugin's reader callbacks, including partial registration. */
+  _unregisterOwnReaderListeners() {
+    if (!this.id) return;
+    try {
+      // registerEventListener returns void; unregisterEventListener takes
+      // (type, handler), not an ID. Use Zotero's plugin-scoped cleanup instead.
+      Zotero.Reader._unregisterEventListenerByPluginID(this.id);
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] reader listener cleanup failed: ' + e);
+    }
+    this._readerListenersRegistered = false;
+  },
+
   _registerReaderListeners() {
     if (this._readerListenersRegistered) return;
-    const registered = [];
     try {
-      registered.push(
-        Zotero.Reader.registerEventListener(
-          'renderToolbar',
-          (event) => this._onRenderToolbar(event),
-          this.id
-        )
+      Zotero.Reader.registerEventListener(
+        'renderToolbar',
+        (event) => this._onRenderToolbar(event),
+        this.id
       );
-      registered.push(
-        Zotero.Reader.registerEventListener(
-          'renderTextSelectionPopup',
-          (event) => this._onTextSelectionPopup(event),
-          this.id
-        )
+      Zotero.Reader.registerEventListener(
+        'renderTextSelectionPopup',
+        (event) => this._onTextSelectionPopup(event),
+        this.id
       );
-      this._readerListenerIDs.push(...registered);
       // Flag only after successful registration, so a pre-init failure (e.g.
       // Zotero.Reader not ready yet) can be retried by the post-init init().
       this._readerListenersRegistered = true;
@@ -372,10 +376,7 @@ var ZoteroVim = {
       // If the first registration succeeded and the second threw, unregister
       // the first one before retrying. Without this a retry leaves a duplicate
       // renderToolbar callback behind.
-      for (const id of registered) {
-        try { Zotero.Reader.unregisterEventListener(id); } catch (_) {}
-      }
-      this._readerListenerIDs = [];
+      this._unregisterOwnReaderListeners();
       Zotero.debug('[ZoteroVim] _registerReaderListeners failed: ' + e);
     }
   },

@@ -214,8 +214,13 @@ Object.assign(ZoteroVim, {
       }
     } catch (_) {}
 
-    // Count prefix digits
-    if (/^\d$/.test(keyStr) && (keyStr !== '0' || winState.countBuffer)) {
+    // Count prefix digits — only when no chord prefix is pending, so that
+    // bindings like `main:t1` can extend `t` with a digit (issue #3).
+    if (
+      !winState.keyBuffer &&
+      /^\d$/.test(keyStr) &&
+      (keyStr !== '0' || winState.countBuffer)
+    ) {
       winState.countBuffer = (winState.countBuffer || '') + keyStr;
       e.preventDefault(); e.stopPropagation();
       return;
@@ -309,6 +314,19 @@ Object.assign(ZoteroVim, {
 
     this._mainSyncFocusedPanel(win, winState);
     Zotero.debug('[ZoteroVim] Main action: ' + action + ' count:' + count);
+
+    // Colored-tag shortcuts (t1..t9 toggle position N, t0 clears all).
+    // Routed before the switch so the ten actions share one implementation.
+    const coloredTagMatch = /^mainColoredTag([1-9])$/.exec(action);
+    if (coloredTagMatch) {
+      this._mainToggleColoredTag(win, winState, Number(coloredTagMatch[1]));
+      return;
+    }
+    if (action === 'mainColoredTagClear') {
+      this._mainToggleColoredTag(win, winState, 0);
+      return;
+    }
+
     switch (action) {
       case 'mainFuzzyAll':         this._openFuzzyPicker(win, winState, 'all');         break;
       case 'mainFuzzyCollection':  this._openFuzzyPicker(win, winState, 'collection');  break;
@@ -339,6 +357,76 @@ Object.assign(ZoteroVim, {
       case 'mainNavFirst':         this._mainNavigate(win, winState, 'first', 0);      break;
       case 'mainNavLast':          this._mainNavigate(win, winState, 'last',  count);  break;
       default: Zotero.debug('[ZoteroVim] Unknown main action: ' + action);
+    }
+  },
+
+  /**
+   * Toggle a Zotero colored tag on the items currently selected in the
+   * items pane, mirroring the native Digit1..Digit9 / Digit0 behaviour
+   * (see Zotero's items pane shortcut handler).  `number` is 1..9 for
+   * toggling a colored-tag position, or 0 to clear every colored tag.
+   *
+   * Only fires in the items pane; collections-tree selections are not
+   * valid targets and the user is shown a status message instead.  Mixed-
+   * library selections are also rejected because colored tags are
+   * library-scoped and applying different keys would be ambiguous.
+   */
+  async _mainToggleColoredTag(win, winState, number) {
+    try {
+      this._mainSyncFocusedPanel(win, winState);
+      if (winState.activePanelFocus !== 'items') {
+        this._mainShowStatus(win, '✗ colored tags only work in items pane', 1500);
+        return;
+      }
+
+      const itemsView = win.ZoteroPane?.itemsView;
+      const items = itemsView?.getSelectedItems?.() || [];
+      if (!items.length) {
+        this._mainShowStatus(win, '✗ no items selected', 1500);
+        return;
+      }
+
+      const libraryIDs = new Set(items.map(i => i.libraryID).filter(Boolean));
+      if (libraryIDs.size > 1) {
+        this._mainShowStatus(win, '✗ mixed-library selection not supported', 1800);
+        return;
+      }
+      const libraryID = items[0].libraryID;
+
+      if (number === 0) {
+        await Zotero.Tags.removeColoredTagsFromItems(items);
+        this._mainShowStatus(win, '✓ colored tags cleared', 1200);
+        return;
+      }
+
+      const colorData = Zotero.Tags.getColorByPosition(libraryID, number - 1);
+      if (!colorData) {
+        this._mainShowStatus(win, `✗ no colored tag at position ${number}`, 1800);
+        return;
+      }
+
+      // Match Zotero's native toggle: if any selected item already has the
+      // tag, remove it from all; otherwise add it to all.
+      const tagRemove = items.some(item => item.hasTag(colorData.name));
+      await Zotero.DB.executeTransaction(async () => {
+        Zotero.UndoHistory.stageAction(
+          tagRemove ? 'undo-action-remove-tag' : 'undo-action-add-tag',
+          { count: items.length }
+        );
+        for (const item of items) {
+          if (tagRemove) item.removeTag(colorData.name);
+          else item.addTag(colorData.name);
+          await item.save();
+        }
+      });
+      this._mainShowStatus(
+        win,
+        `✓ ${tagRemove ? 'removed' : 'added'} tag: ${colorData.name}`,
+        1500
+      );
+    } catch (err) {
+      Zotero.debug('[ZoteroVim] colored tag action failed: ' + err, 1);
+      this._mainShowStatus(win, '✗ colored tag action failed', 1800);
     }
   },
 

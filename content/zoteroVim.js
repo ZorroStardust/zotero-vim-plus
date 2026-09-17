@@ -157,6 +157,21 @@ var ZoteroVim = {
     'main: wh':   'mainFocusLeft',        // <space>wh  — focus collection tree
     'main: wl':   'mainFocusRight',       // <space>wl  — focus detail pane
     'main: ww':   'mainFocusItems',       // <space>ww  — focus items list
+    // Main window — Zotero colored-tag shortcuts (issue #3).  t1..t9 toggle
+    // the colored tag at position N for the selected items in the items pane;
+    // t0 clears every colored tag from the selection.  These rely on the
+    // count-digit parser skipping digits while a chord prefix (here `t`) is
+    // pending — see the `!winState.keyBuffer` guard in _onMainKeyDown.
+    'main:t0':    'mainColoredTagClear',
+    'main:t1':    'mainColoredTag1',
+    'main:t2':    'mainColoredTag2',
+    'main:t3':    'mainColoredTag3',
+    'main:t4':    'mainColoredTag4',
+    'main:t5':    'mainColoredTag5',
+    'main:t6':    'mainColoredTag6',
+    'main:t7':    'mainColoredTag7',
+    'main:t8':    'mainColoredTag8',
+    'main:t9':    'mainColoredTag9',
     // Main window — panel-scoped navigation
     'main:h':     'mainTreeCollapse',
     'main:l':     'mainTreeExpand',

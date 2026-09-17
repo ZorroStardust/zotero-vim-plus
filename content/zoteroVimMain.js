@@ -136,18 +136,12 @@ Object.assign(ZoteroVim, {
 
     // In standalone note tabs, route keys to note-vim first.
     // This prevents main item-list handlers from stealing hjkl/backspace.
+    // Note: Shift+J / Shift+K tab switching is intentionally NOT bridged from
+    // note normal mode here — the user is typing in the editor and expects
+    // Shift+J/K to insert characters, not switch tabs (see issue #5).
     if (this.isNoteEditorVimEnabled() && this._isStandaloneNoteTabSelected(win)) {
       const noteMode = String(winState?._contextNoteMode || 'normal');
       const keyStr = this._keyString(e);
-
-      // Keep global tab cycling available in note Normal mode.
-      if (noteMode === 'normal' && (keyStr === 'J' || keyStr === 'K')) {
-        e.preventDefault();
-        e.stopPropagation();
-        if (keyStr === 'J') this._executeMainAction('mainPrevTab', win, winState, 1);
-        else this._executeMainAction('mainNextTab', win, winState, 1);
-        return;
-      }
 
       this._onMainContextNoteKeyDown(e, win, winState);
       if (!e.defaultPrevented && noteMode === 'normal') {
@@ -190,6 +184,11 @@ Object.assign(ZoteroVim, {
     const modePrefix = 'main:';
     const directAction = bindings[modePrefix + keyStr];
     if (directAction === 'mainPrevTab' || directAction === 'mainNextTab') {
+      // Skip tab switching while the user is actually editing text — the
+      // side-panel note editor, Zotero's annotation-comment popup, or this
+      // plugin's own comment overlay all report <browser> as the main
+      // window's activeElement, so the input check above does not catch them.
+      if (this._isMainTextEditing(win, winState)) return;
       e.preventDefault();
       e.stopPropagation();
       if (e.repeat) return;
@@ -243,6 +242,59 @@ Object.assign(ZoteroVim, {
 
     e.preventDefault(); e.stopPropagation();
     this._processBuffer(newBuffer, exact, possible, modePrefix, bindings, winState);
+  },
+
+/**
+   * True when the user is actually editing text somewhere the keystroke should
+   * reach the editor rather than trigger a main-mode binding.  Covers the
+   * side-panel / standalone note editor and the PDF reader's annotation-
+   * comment editor (native textarea or this plugin's overlay).
+   *
+   * Without this guard the unconditional main:J / main:K fallback at the top
+   * of _onMainKeyDown swallows the keystroke and switches tabs even though
+   * the activeElement is a <browser> wrapper — see issue #5.  The check is
+   * driven by DOM focus (input / textarea / contenteditable) rather than by
+   * `_contextNoteMode === 'insert'` alone, because clicking directly into a
+   * native editor does not flip the plugin's tracked mode.
+   */
+  _isMainTextEditing(win, winState) {
+    if (!win || !winState) return false;
+    // (a) Plugin-tracked insert mode in the note editor.
+    if (winState._contextNoteMode === 'insert') return true;
+    // (b) Native focus on an editable inside the context note editor
+    //     (side panel) — even when mode is still 'normal' the user is typing.
+    try {
+      const noteDoc = winState._contextNoteEditorDoc;
+      const active = noteDoc?.activeElement;
+      if (active && this._isEditableElement(active)) return true;
+    } catch (_) {}
+    // (c) Native focus on an editable inside the PDF reader — annotation
+    //     comment popup, this plugin's overlay, or the reader's find bar.
+    //     Both the reader.html iframe (annotation popups) and the PDF.js
+    //     iframe (plugin's overlay textarea lives there) are checked, since
+    //     the user-facing `activeElement` lives in only one of them.
+    try {
+      const tabID = win.Zotero_Tabs?.selectedID;
+      const reader = tabID && Zotero.Reader.getByTabID?.(tabID);
+      if (!reader) return false;
+      if (this._nativeEditableFocused(reader)) return true;
+      const rState = this._readerState.get(reader._instanceID);
+      const pdfWin = rState?.activePdfWin
+        || reader?._internalReader?._primaryView?._iframeWindow
+        || reader?._internalReader?._secondaryView?._iframeWindow
+        || null;
+      if (pdfWin) {
+        const pdfActive = pdfWin.document?.activeElement;
+        if (pdfActive && this._isEditableElement(pdfActive)) return true;
+      }
+    } catch (_) {}
+    return false;
+  },
+
+  _isEditableElement(el) {
+    if (!el) return false;
+    const tag = el.tagName;
+    return tag === 'INPUT' || tag === 'TEXTAREA' || el.isContentEditable === true;
   },
 
   _executeMainAction(action, win, winState, count) {
@@ -788,16 +840,6 @@ Object.assign(ZoteroVim, {
     const bindings = this.getBindings();
     const modePrefix = 'main:';
     const mainBuffer = String(winState._contextNoteMainBuffer || '');
-
-    // Keep Shift+J/K global tab switching available in note Normal mode.
-    if (!mainBuffer && (keyStr === 'J' || keyStr === 'K')) {
-      const action = bindings[modePrefix + keyStr];
-      if (action === 'mainPrevTab' || action === 'mainNextTab') {
-        this._clearMainContextNoteKeyState(winState);
-        this._executeMainAction(action, win, winState, 1);
-        return true;
-      }
-    }
 
     // Bridge <space> leader bindings from main mode while focus is in note editor.
     if (mainBuffer || keyStr === ' ') {

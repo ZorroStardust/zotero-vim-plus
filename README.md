@@ -329,7 +329,7 @@ note tab), the plugin provides a minimal Vim-like layer.
 | `j` / `k` | Move caret down / up line |
 | `w` / `e` / `b` | Move by word (forward start / forward end / backward) |
 | `W` / `E` / `B` | Big-word variants |
-| `0` / `^` / `$` | Move to line start / first non-blank (approx) / line end |
+| `0` / `^` / `$` | Move to line start / first non-blank / line end |
 | `gg` | Jump to first line |
 | `G` | Jump to last line |
 | `3j` (example) | Count prefix for motions (repeat 3 times) |
@@ -341,14 +341,26 @@ note tab), the plugin provides a minimal Vim-like layer.
 | `yw` / `ye` / `yb` / `y$` | Yank by motion |
 | `cw` / `ce` / `c$` | Change by motion (delete range and enter Insert mode) |
 | `diw` / `yiw` / `ciw` | Inner-word text object (delete/yank/change) |
-| `p` / `P` | Paste last yanked/deleted text after / before caret |
+| `p` / `P` | Paste characterwise text after / before caret, or whole lines below / above |
 | `u` / `Ctrl+r` | Undo / redo bridge |
 | `<space>...` | Main-window leader bindings are available in note Normal mode (for example `<space>n`, `<space>ff`) |
-| `Shift+J` / `Shift+K` | Switch to previous / next tab from note Normal mode |
+| `Shift+J` / `Shift+K` | Switch to previous / next tab in note Normal mode; type `J` / `K` in Insert mode |
 
 `dd`, `yy`, and `x` support count prefixes (for example `3dd`, `5yy`, `4x`).
 Operator+motion combos also support counts (for example `3dw`, `2y$`).
-`p` and `P` use the plugin's internal note register (updated by `yy` and `dd`).
+Counts before and after the operator multiply: `2d3w` deletes six words.
+`1G` goes to the first line; bare `G` goes to the last line.
+`p` and `P` support counts (for example `3p`) and use the internal note register,
+updated by yank/delete/change operations including `x`.
+
+In rich-text notes, a line means a logical paragraph or an explicit hard-break
+line, not a visually wrapped screen line. `o` / `O` insert a clean empty line
+below / above without moving the original trailing text. Inside simple lists,
+they create a sibling list item. Native editor transactions preserve the
+remaining formatting and make edits available to Zotero's undo and save flow.
+Insert mode passes `Ctrl+Backspace` through to the editor; `Ctrl+h` / `Ctrl+l`
+remain explicit pane-focus shortcuts. `<space>bj` is also available in Normal
+mode to choose a tab directly.
 
 #### Library tree navigation (left pane)
 

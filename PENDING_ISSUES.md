@@ -105,11 +105,23 @@ now: parent-item Extra (synced) → local pref. Note backend removed.
 - DB inspection (zotero.sqlite itemData/itemDataValues) confirmed the extra
   field was empty for the test attachments before the fix; re-verify after.
 
-## ZV-002: Note editor `o` / `O` still splits text after caret (shelved)
+## ZV-002: Note editor `o` / `O` splits text or opens on the wrong side
 
-- Status: Shelved (temporarily)
+- Status: Fix implemented; awaiting manual Zotero regression testing
 - Reported on: 2026-03-18
-- Area: Note editor Vim emulation (`content/zoteroVim.js`)
+- Area: Note editor Vim emulation (`content/zoteroVimMain.js`)
+
+### Current fix (2026-10-01)
+- Resolve the actual editing host rather than an inherited contenteditable
+  formatting descendant.
+- Use Zotero's ProseMirror document positions and transactions to insert empty
+  paragraphs/list items before (`O`) or after (`o`) the current block.
+- Code blocks and hard-break paragraphs insert at logical line boundaries,
+  never at the original middle-of-line caret.
+- Local checks against Zotero 10.0.5's native editor model cover paragraph,
+  formatted text, list, code block and table-cell insertion, plus undo/redo.
+- Still requires manual verification in the real editor, including saving and
+  reopening notes. The investigation below is retained as historical context.
 
 ### Summary
 In note editor Normal mode, pressing `o` or `O` is intended to open a new line below/above and enter insert mode.

@@ -16,13 +16,21 @@ $Root = (Resolve-Path -LiteralPath $Root).Path
 if (Get-Command node -ErrorAction SilentlyContinue) {
     Push-Location $Root
     try {
-        node --check bootstrap.js
-        node --check content/i18n.js
-        node --check content/zoteroVim.js
-        node --check content/zoteroVimReader.js
-        node --check content/zoteroVimMain.js
-        node --check content/prefs.js
-        node tools/check-sync.js
+        foreach ($source in @(
+            'bootstrap.js', 'content/i18n.js', 'content/zoteroVim.js',
+            'content/zoteroVimReader.js', 'content/zoteroVimMain.js', 'content/prefs.js'
+        )) {
+            node --check $source
+            if ($LASTEXITCODE -ne 0) { throw "Syntax check failed: $source" }
+        }
+        foreach ($check in @(
+            'tools/check-sync.js', 'tools/check-note-editor-routing.js',
+            'tools/check-note-editing.js', 'tools/check-insert-mode-shifts.js',
+            'tools/check-count-digit-guard.js', 'tools/check-reader-listeners.js'
+        )) {
+            node $check
+            if ($LASTEXITCODE -ne 0) { throw "Regression check failed: $check" }
+        }
     } finally {
         Pop-Location
     }

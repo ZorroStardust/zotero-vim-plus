@@ -69,8 +69,10 @@ Object.assign(ZoteroVim, {
       _contextNoteKeyBuffer: '',
       _contextNoteMainBuffer: '',
       _contextNoteCountBuffer: '',
+      _contextNoteOperatorCountBuffer: '',
       _contextNoteKeyTimeout: null,
       _contextNoteLastYank: '',
+      _contextNoteRegisterType: 'character',
       executeAction: null,  // set below
       cleanup: () => {},
     };
@@ -121,6 +123,7 @@ Object.assign(ZoteroVim, {
   },
 
   _onMainKeyDown(e, win, winState) {
+    if (e._zvNoteEditorCommand) return;
     // When picker is open, delegate to _onPickerKeyDown.  Nav keys get full
     // preventDefault+stopPropagation; regular keys only get stopPropagation
     // so they still reach the input element and filter results.
@@ -136,9 +139,8 @@ Object.assign(ZoteroVim, {
 
     // In standalone note tabs, route keys to note-vim first.
     // This prevents main item-list handlers from stealing hjkl/backspace.
-    // Note: Shift+J / Shift+K tab switching is intentionally NOT bridged from
-    // note normal mode here — the user is typing in the editor and expects
-    // Shift+J/K to insert characters, not switch tabs (see issue #5).
+    // The editor's original event handles tab switching in Normal mode;
+    // forwarded copies must not execute it again (issue #6).
     if (this.isNoteEditorVimEnabled() && this._isStandaloneNoteTabSelected(win)) {
       const noteMode = String(winState?._contextNoteMode || 'normal');
 
@@ -775,6 +777,7 @@ Object.assign(ZoteroVim, {
   _onMainContextNoteKeyDown(event, win, winState) {
     if (!winState) return;
     if (!this.isNoteEditorVimEnabled()) return;
+    if (event._zvNoteEditorCommand) return;
     // The same handler is installed on both the note window and its document
     // as a capture listener. stopImmediatePropagation() covers handled keys,
     // but insert-mode passthrough returns without stopping propagation; this
@@ -784,9 +787,11 @@ Object.assign(ZoteroVim, {
     try { event._zvContextNoteHandled = true; } catch (_) {}
     const keyStr = this._keyString(event);
     if (!keyStr) return;
+    const mode = winState._contextNoteMode || 'normal';
+    if (event.isComposing && mode === 'insert') return;
 
     const isCtrlH = keyStr === 'ctrl+h'
-      || keyStr === 'ctrl+backspace'
+      || (mode !== 'insert' && keyStr === 'ctrl+backspace')
       || ((event.ctrlKey || event.metaKey) && (event.key === 'h' || event.key === 'H' || event.code === 'KeyH'));
 
     if (isCtrlH) {
@@ -806,8 +811,6 @@ Object.assign(ZoteroVim, {
       return;
     }
 
-    const mode = winState._contextNoteMode || 'normal';
-
     if (mode === 'insert') {
       if (keyStr === 'escape') {
         event.preventDefault();
@@ -826,7 +829,8 @@ Object.assign(ZoteroVim, {
     event.preventDefault();
     event.stopImmediatePropagation();
 
-    if (keyStr === 'i') {
+    if (keyStr === 'i' && !winState._contextNoteKeyBuffer
+        && !winState._contextNoteMainBuffer) {
       this._clearMainContextNoteKeyState(winState);
       winState._contextNoteMode = 'insert';
       this._syncNoteCursorVisualState(event.target?.ownerDocument || null, 'insert', event.target);
@@ -839,6 +843,14 @@ Object.assign(ZoteroVim, {
       winState._contextNoteMode = 'normal';
       this._syncNoteCursorVisualState(event.target?.ownerDocument || null, 'normal', event.target);
       this._mainShowStatus(win, '-- NOTE NORMAL --', 700);
+      return;
+    }
+
+    const tabAction = this.getBindings()['main:' + keyStr];
+    if (!winState._contextNoteKeyBuffer && !winState._contextNoteMainBuffer
+        && (tabAction === 'mainPrevTab' || tabAction === 'mainNextTab')) {
+      this._clearMainContextNoteKeyState(winState);
+      if (!event.repeat) this._executeMainAction(tabAction, win, winState, 1);
       return;
     }
 
@@ -856,6 +868,7 @@ Object.assign(ZoteroVim, {
     winState._contextNoteKeyBuffer = '';
     winState._contextNoteMainBuffer = '';
     winState._contextNoteCountBuffer = '';
+    winState._contextNoteOperatorCountBuffer = '';
     clearTimeout(winState._contextNoteKeyTimeout);
     winState._contextNoteKeyTimeout = null;
   },
@@ -1011,6 +1024,10 @@ Object.assign(ZoteroVim, {
     const command = this._matchMainContextNoteCommand(newBuffer, keyStr);
 
     if (command === 'pending') {
+      if (/^[dyc]$/.test(newBuffer)) {
+        winState._contextNoteOperatorCountBuffer = winState._contextNoteCountBuffer || '';
+        winState._contextNoteCountBuffer = '';
+      }
       winState._contextNoteKeyBuffer = newBuffer;
       clearTimeout(winState._contextNoteKeyTimeout);
       winState._contextNoteKeyTimeout = setTimeout(() => this._clearMainContextNoteKeyState(winState), 1200);
@@ -1024,9 +1041,12 @@ Object.assign(ZoteroVim, {
       return this._executeMainContextNoteCommand(editableEl, fallback, 1, win, winState);
     }
 
-    const count = parseInt(winState._contextNoteCountBuffer || '0', 10) || 1;
+    const hasCount = !!(winState._contextNoteCountBuffer
+      || winState._contextNoteOperatorCountBuffer);
+    const count = (parseInt(winState._contextNoteCountBuffer || '1', 10) || 1)
+      * (parseInt(winState._contextNoteOperatorCountBuffer || '1', 10) || 1);
     this._clearMainContextNoteKeyState(winState);
-    return this._executeMainContextNoteCommand(editableEl, command, count, win, winState);
+    return this._executeMainContextNoteCommand(editableEl, command, count, win, winState, hasCount);
   },
 
   _matchMainContextNoteCommand(buffer, keyStr) {
@@ -1050,11 +1070,12 @@ Object.assign(ZoteroVim, {
     return null;
   },
 
-  _executeMainContextNoteCommand(editableEl, command, count, win, winState) {
+  _executeMainContextNoteCommand(editableEl, command, count, win, winState, hasCount = false) {
     if (!editableEl) return false;
 
     if (/^[dyc][hjklwebWEB0^$G]$/.test(command)) {
-      return this._noteOperateByMotion(editableEl, command[0], command[1], count, win, winState);
+      return this._noteOperateByMotion(
+        editableEl, command[0], command[1], count, win, winState, hasCount);
     }
     if (/^[dyc]iw$/.test(command)) {
       return this._noteOperateTextObject(editableEl, command[0], 'iw', count, win, winState);
@@ -1096,23 +1117,24 @@ Object.assign(ZoteroVim, {
       case 'gg':
         return this._noteGoToLine(editableEl, count);
       case 'G':
-        return count > 1
+        return hasCount
           ? this._noteGoToLine(editableEl, count)
           : this._noteGoToLastLine(editableEl);
       case 'x':
-        return this._noteDeleteChar(editableEl, count);
+        return this._noteDeleteChar(editableEl, count, winState);
       case 'u':
         return this._noteUndoRedo(editableEl, false);
       case 'ctrl+r':
         return this._noteUndoRedo(editableEl, true);
       case 'p':
-        return this._notePasteRegister(editableEl, winState, false);
+        return this._notePasteRegister(editableEl, winState, false, count);
       case 'P':
-        return this._notePasteRegister(editableEl, winState, true);
+        return this._notePasteRegister(editableEl, winState, true, count);
       case 'dd': {
         const deletedText = this._noteDeleteLines(editableEl, count);
         if (deletedText) {
           winState._contextNoteLastYank = deletedText;
+          winState._contextNoteRegisterType = 'line';
           this._mainShowStatus(win, '▶ dd', 700);
           return true;
         }
@@ -1122,6 +1144,7 @@ Object.assign(ZoteroVim, {
         const yankedText = this._noteYankLines(editableEl, count);
         if (yankedText) {
           winState._contextNoteLastYank = yankedText;
+          winState._contextNoteRegisterType = 'line';
           this._mainShowStatus(win, '✓ yy', 900);
           return true;
         }
@@ -1133,413 +1156,578 @@ Object.assign(ZoteroVim, {
     }
   },
 
-  _moveNoteCaretByKey(editableEl, keyStr, count = 1) {
-    const doc = editableEl.ownerDocument;
-    const sel = doc?.getSelection?.();
-    if (!sel || !sel.modify) return false;
+  // ── Note editing primitives ──────────────────────────────────────────────
 
-    const map = {
-      h: ['backward', 'character'],
-      l: ['forward', 'character'],
-      j: ['forward', 'line'],
-      k: ['backward', 'line'],
-      w: ['forward', 'word'],
-      W: ['forward', 'word'],
-      e: ['forward', 'word'],
-      E: ['forward', 'word'],
-      b: ['backward', 'word'],
-      B: ['backward', 'word'],
-      '0': ['backward', 'lineboundary'],
-      '^': ['backward', 'lineboundary'],
-      '$': ['forward', 'lineboundary'],
-    };
+  /**
+   * Resolve Zotero's native ProseMirror view, not a descendant formatting node.
+   * All edits use its transactions so saving and undo see the same document.
+   */
+  _noteEditorContext(editableEl) {
+    try {
+      const win = editableEl?.ownerDocument?.defaultView;
+      const editorWin = win?.wrappedJSObject || win;
+      const core = editorWin?._currentEditorInstance?._editorCore;
+      const view = core?.view;
+      if (!view?.state?.doc || !view.dispatch || !view.dom) return null;
+      if (view.dom !== editableEl && !view.dom.contains(editableEl)) return null;
+      return { win: editorWin, core, view };
+    } catch (_) {
+      return null;
+    }
+  },
 
-    const spec = map[keyStr];
-    if (!spec) return false;
+  _noteNativeSelection(ctx, tr, from, to = from) {
+    const doc = tr.doc;
+    const anchor = Math.max(0, Math.min(from, doc.content.size));
+    const head = Math.max(0, Math.min(to, doc.content.size));
+    const data = Components.utils.cloneInto({ type: 'text', anchor, head }, ctx.win);
+    const selection = ctx.view.state.selection.constructor.fromJSON(doc, data);
+    return tr.setSelection(selection);
+  },
 
-    if (doc.activeElement !== editableEl) {
-      try { editableEl.focus({ preventScroll: true }); } catch (_) { try { editableEl.focus(); } catch (_) {} }
+  /**
+   * Build a text/position map without losing the editor's rich-text structure.
+   * Paragraph boundaries and hard breaks are logical newlines; soft wrapping
+   * never changes the meaning of dd, O or a numbered line.
+   */
+  _noteTextSnapshot(editableEl) {
+    if (!editableEl) return null;
+    const tag = String(editableEl.tagName || '').toUpperCase();
+    if (tag === 'TEXTAREA' || tag === 'INPUT') {
+      return {
+        editableEl, text: String(editableEl.value || ''),
+        caret: Number(editableEl.selectionStart || 0), control: true,
+      };
     }
 
-    try {
-      if (!sel.isCollapsed) sel.collapseToStart();
-    } catch (_) {}
+    const ctx = this._noteEditorContext(editableEl);
+    const doc = editableEl.ownerDocument;
+    const sel = doc?.getSelection?.();
+    const snapshot = { editableEl, ctx, text: '', points: [], blocks: [], caret: 0 };
+    const append = (text, pointAt) => {
+      const start = snapshot.text.length;
+      for (let i = 0; i <= text.length; i += 1) snapshot.points[start + i] = pointAt(i);
+      snapshot.text += text;
+    };
 
+    if (ctx) {
+      const walk = (node, pos, ancestors) => {
+        if (node.isTextblock) {
+          if (snapshot.blocks.length) snapshot.text += '\n';
+          const start = snapshot.text.length;
+          const inline = (parent, base) => {
+            let offset = 0;
+            for (let i = 0; i < parent.childCount; i += 1) {
+              const child = parent.child(i);
+              const childPos = base + offset;
+              if (child.isText) {
+                append(child.text, n => childPos + n);
+              } else if (child.isLeaf) {
+                append(/^(hardBreak|hard_break)$/.test(child.type.name) ? '\n' : '\uFFFC',
+                  n => childPos + n);
+              } else {
+                inline(child, childPos + 1);
+              }
+              offset += child.nodeSize;
+            }
+          };
+          snapshot.points[start] = pos + 1;
+          inline(node, pos + 1);
+          snapshot.points[snapshot.text.length] = pos + node.nodeSize - 1;
+          snapshot.blocks.push({
+            start, end: snapshot.text.length, from: pos, to: pos + node.nodeSize,
+            node, ancestors,
+          });
+          return;
+        }
+        let offset = 0;
+        for (let i = 0; i < node.childCount; i += 1) {
+          const child = node.child(i);
+          walk(child, pos + offset + (node === ctx.view.state.doc ? 0 : 1),
+            ancestors.concat([{ node, pos }]));
+          offset += child.nodeSize;
+        }
+      };
+      walk(ctx.view.state.doc, 0, []);
+      let caret = ctx.view.state.selection.from;
+      try {
+        if (sel?.rangeCount && ctx.view.dom.contains(sel.anchorNode)) {
+          caret = ctx.view.posAtDOM(sel.anchorNode, sel.anchorOffset);
+        }
+      } catch (_) {}
+      let best = Infinity;
+      for (let i = 0; i < snapshot.points.length; i += 1) {
+        const distance = Math.abs(snapshot.points[i] - caret);
+        if (distance < best) { snapshot.caret = i; best = distance; }
+      }
+      return snapshot;
+    }
+
+    const blocks = new Set(['P', 'DIV', 'LI', 'BLOCKQUOTE', 'PRE',
+      'H1', 'H2', 'H3', 'H4', 'H5', 'H6']);
+    const walkDOM = node => {
+      if (node.nodeType === 3) {
+        append(node.nodeValue || '', n => ({ node, offset: n }));
+        return;
+      }
+      if (node.tagName === 'BR') {
+        const parent = node.parentNode;
+        const index = Array.prototype.indexOf.call(parent.childNodes, node);
+        append('\n', n => ({ node: parent, offset: index + n }));
+        return;
+      }
+      const isBlock = node !== editableEl && blocks.has(node.tagName);
+      if (isBlock && snapshot.text && !snapshot.text.endsWith('\n')) snapshot.text += '\n';
+      const start = snapshot.text.length;
+      if (!node.childNodes.length) snapshot.points[start] = { node, offset: 0 };
+      for (const child of node.childNodes) walkDOM(child);
+      if (isBlock) snapshot.blocks.push({ start, end: snapshot.text.length, element: node });
+    };
+    walkDOM(editableEl);
     try {
-      const steps = Math.max(1, count || 1);
-      const preserveLineStart = (keyStr === 'j' || keyStr === 'k')
-        ? this._noteIsCaretAtLineStart(editableEl)
-        : false;
-      for (let i = 0; i < steps; i += 1) {
-        sel.modify('move', spec[0], spec[1]);
-        if (preserveLineStart && (keyStr === 'j' || keyStr === 'k')) {
-          sel.modify('move', 'backward', 'lineboundary');
+      const range = doc.createRange();
+      range.selectNodeContents(editableEl);
+      range.setEnd(sel.anchorNode, sel.anchorOffset);
+      // Points are authoritative even when Range.toString() omits paragraph breaks.
+      for (let i = 0; i < snapshot.points.length; i += 1) {
+        const p = snapshot.points[i];
+        if (p?.node === sel.anchorNode && p.offset === sel.anchorOffset) {
+          snapshot.caret = i;
+          return snapshot;
         }
       }
+      snapshot.caret = Math.min(snapshot.text.length, range.toString().length);
+    } catch (_) {}
+    return snapshot;
+  },
+
+  _noteLineBounds(text, caret) {
+    const start = caret > 0 ? text.lastIndexOf('\n', caret - 1) + 1 : 0;
+    const next = text.indexOf('\n', caret);
+    return { start, end: next < 0 ? text.length : next };
+  },
+
+  _noteSelectOffsets(snapshot, from, to = from) {
+    if (!snapshot) return false;
+    from = Math.max(0, Math.min(from, snapshot.text.length));
+    to = Math.max(0, Math.min(to, snapshot.text.length));
+    const el = snapshot.editableEl;
+    try {
+      if (snapshot.control) {
+        el.setSelectionRange(from, to);
+      } else if (snapshot.ctx) {
+        const ctx = snapshot.ctx;
+        const tr = this._noteNativeSelection(
+          ctx, ctx.view.state.tr, snapshot.points[from], snapshot.points[to]);
+        ctx.view.dispatch(tr);
+        ctx.view.focus();
+      } else {
+        const a = snapshot.points[from];
+        const b = snapshot.points[to];
+        if (!a || !b) return false;
+        const range = el.ownerDocument.createRange();
+        range.setStart(a.node, a.offset);
+        range.setEnd(b.node, b.offset);
+        const sel = el.ownerDocument.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+        el.focus();
+      }
+      return true;
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] note selection: ' + e);
+      return false;
+    }
+  },
+
+  _noteControlReplace(el, from, to, text) {
+    try {
+      el.setRangeText(text, from, to, 'end');
+      const win = el.ownerDocument.defaultView;
+      const options = Components.utils.cloneInto({ bubbles: true }, win);
+      el.dispatchEvent(new win.Event('input', options));
       return true;
     } catch (_) {
       return false;
     }
   },
 
-  _noteIsCaretAtLineStart(editableEl) {
-    const doc = editableEl?.ownerDocument;
-    const sel = doc?.getSelection?.();
-    if (!sel || !sel.modify || !sel.rangeCount) return false;
-
-    let bookmark = null;
-    try {
-      if (!sel.isCollapsed) sel.collapseToStart();
-      bookmark = sel.getRangeAt(0).cloneRange();
-      sel.modify('extend', 'backward', 'lineboundary');
-      const atStart = sel.isCollapsed || String(sel.toString() || '').length === 0;
-      sel.removeAllRanges();
-      sel.addRange(bookmark);
-      return atStart;
-    } catch (_) {
+  _noteReplaceOffsets(snapshot, from, to, text = '') {
+    if (!snapshot) return false;
+    const el = snapshot.editableEl;
+    if (snapshot.control) return this._noteControlReplace(el, from, to, text);
+    if (snapshot.ctx) {
+      const ctx = snapshot.ctx;
+      if (ctx.core.readOnly || ctx.view.editable === false) return false;
       try {
-        if (bookmark) {
-          sel.removeAllRanges();
-          sel.addRange(bookmark);
-        }
-      } catch (_) {}
+        let tr = ctx.view.state.tr;
+        const a = snapshot.points[from];
+        const b = snapshot.points[to];
+        tr = this._noteNativeSelection(ctx, tr, a, b);
+        tr = text ? tr.insertText(text, a, b) : tr.delete(a, b);
+        tr = this._noteNativeSelection(ctx, tr, a + text.length);
+        ctx.view.dispatch(tr.scrollIntoView());
+        ctx.view.focus();
+        return true;
+      } catch (e) {
+        Zotero.debug('[ZoteroVim] note edit: ' + e);
+        return false;
+      }
+    }
+    if (!this._noteSelectOffsets(snapshot, from, to)) return false;
+    // Native editing commands retain the browser's undo history on older editors.
+    try {
+      return !!el.ownerDocument.execCommand(text ? 'insertText' : 'delete', false, text);
+    } catch (_) {
       return false;
     }
+  },
+
+  _noteWordKind(char, big = false) {
+    if (!char || /\s/u.test(char)) return 0;
+    if (big) return 1;
+    return /[\p{L}\p{N}_]/u.test(char) ? 1 : 2;
+  },
+
+  _noteCharAt(text, pos) {
+    const code = text.codePointAt(pos);
+    return code === undefined ? '' : String.fromCodePoint(code);
+  },
+
+  _noteNextChar(text, pos) {
+    return Math.min(text.length, pos + (text.codePointAt(pos) > 0xFFFF ? 2 : 1));
+  },
+
+  _notePrevChar(text, pos) {
+    let previous = Math.max(0, pos - 1);
+    const code = text.charCodeAt(previous);
+    if (previous > 0 && code >= 0xDC00 && code <= 0xDFFF
+        && text.charCodeAt(previous - 1) >= 0xD800
+        && text.charCodeAt(previous - 1) <= 0xDBFF) previous -= 1;
+    return previous;
+  },
+
+  _noteMotionOffset(snapshot, key, count = 1) {
+    const text = snapshot.text;
+    let pos = snapshot.caret;
+    const n = Math.max(1, Math.min(count || 1, text.length + 1));
+    const bounds = this._noteLineBounds(text, pos);
+    if (key === '0') return bounds.start;
+    if (key === '^') {
+      const leading = text.slice(bounds.start, bounds.end).match(/^\s*/u)[0].length;
+      return Math.min(bounds.end, bounds.start + leading);
+    }
+    if (key === '$') {
+      let line = bounds;
+      for (let i = 1; i < n && line.end < text.length; i += 1) {
+        line = this._noteLineBounds(text, line.end + 1);
+      }
+      return line.end;
+    }
+    if (key === 'h' || key === 'l') {
+      for (let i = 0; i < n; i += 1) {
+        pos = key === 'h' ? Math.max(bounds.start, this._notePrevChar(text, pos))
+          : Math.min(bounds.end, this._noteNextChar(text, pos));
+      }
+      return pos;
+    }
+    if (key === 'j' || key === 'k') {
+      const column = pos - bounds.start;
+      let line = bounds;
+      for (let i = 0; i < n; i += 1) {
+        if (key === 'j' && line.end < text.length) {
+          line = this._noteLineBounds(text, line.end + 1);
+        } else if (key === 'k' && line.start > 0) {
+          line = this._noteLineBounds(text, line.start - 1);
+        } else break;
+      }
+      const target = Math.min(line.end, line.start + column);
+      const code = text.charCodeAt(target);
+      return code >= 0xDC00 && code <= 0xDFFF ? target - 1 : target;
+    }
+    const big = key === key.toUpperCase();
+    const kind = p => this._noteWordKind(this._noteCharAt(text, p), big);
+    for (let i = 0; i < n; i += 1) {
+      if (key === 'w' || key === 'W') {
+        const current = kind(pos);
+        while (pos < text.length && kind(pos) === current) pos = this._noteNextChar(text, pos);
+        while (pos < text.length && !kind(pos)) pos = this._noteNextChar(text, pos);
+      } else if (key === 'b' || key === 'B') {
+        pos = this._notePrevChar(text, pos);
+        while (pos > 0 && !kind(pos)) pos = this._notePrevChar(text, pos);
+        const current = kind(pos);
+        while (pos > 0 && kind(this._notePrevChar(text, pos)) === current) {
+          pos = this._notePrevChar(text, pos);
+        }
+      } else if (key === 'e' || key === 'E') {
+        pos = this._noteNextChar(text, pos);
+        while (pos < text.length && !kind(pos)) pos = this._noteNextChar(text, pos);
+        const current = kind(pos);
+        while (this._noteNextChar(text, pos) < text.length
+            && kind(this._noteNextChar(text, pos)) === current) {
+          pos = this._noteNextChar(text, pos);
+        }
+      }
+    }
+    return pos;
+  },
+
+  _moveNoteCaretByKey(editableEl, keyStr, count = 1) {
+    const snapshot = this._noteTextSnapshot(editableEl);
+    if (!snapshot) return false;
+    return this._noteSelectOffsets(snapshot, this._noteMotionOffset(snapshot, keyStr, count));
   },
 
   _noteGoToLine(editableEl, lineNumber) {
-    const doc = editableEl.ownerDocument;
-    const sel = doc?.getSelection?.();
-    if (!sel || !sel.modify) return false;
-    if (doc.activeElement !== editableEl) {
-      try { editableEl.focus({ preventScroll: true }); } catch (_) { try { editableEl.focus(); } catch (_) {} }
+    const snapshot = this._noteTextSnapshot(editableEl);
+    if (!snapshot) return false;
+    let pos = 0;
+    for (let i = 1; i < lineNumber && pos < snapshot.text.length; i += 1) {
+      const end = snapshot.text.indexOf('\n', pos);
+      if (end < 0) break;
+      pos = end + 1;
     }
-    try {
-      sel.selectAllChildren(editableEl);
-      sel.collapseToStart();
-      const target = Math.max(1, lineNumber || 1);
-      for (let i = 1; i < target; i += 1) {
-        sel.modify('move', 'forward', 'line');
-      }
-      sel.modify('move', 'backward', 'lineboundary');
-      return true;
-    } catch (_) {
-      return false;
-    }
+    return this._noteSelectOffsets(snapshot, pos);
   },
 
   _noteGoToLastLine(editableEl) {
-    const doc = editableEl.ownerDocument;
-    const sel = doc?.getSelection?.();
-    if (!sel) return false;
-    if (doc.activeElement !== editableEl) {
-      try { editableEl.focus({ preventScroll: true }); } catch (_) { try { editableEl.focus(); } catch (_) {} }
-    }
+    const snapshot = this._noteTextSnapshot(editableEl);
+    return snapshot ? this._noteSelectOffsets(
+      snapshot, this._noteLineBounds(snapshot.text, snapshot.text.length).start) : false;
+  },
+
+  _noteSetRegister(winState, text, type = 'character') {
+    if (!winState) return;
+    winState._contextNoteLastYank = text;
+    winState._contextNoteRegisterType = type;
+  },
+
+  _noteCopyText(text) {
     try {
-      sel.selectAllChildren(editableEl);
-      sel.collapseToEnd();
+      Components.classes['@mozilla.org/widget/clipboardhelper;1']
+        .getService(Components.interfaces.nsIClipboardHelper).copyString(text);
       return true;
     } catch (_) {
       return false;
     }
   },
 
-  _noteDeleteChar(editableEl, count = 1) {
-    const doc = editableEl.ownerDocument;
-    const sel = doc?.getSelection?.();
-    if (!sel || !sel.modify || !sel.deleteFromDocument) return false;
-    if (doc.activeElement !== editableEl) {
-      try { editableEl.focus({ preventScroll: true }); } catch (_) { try { editableEl.focus(); } catch (_) {} }
-    }
-    try {
-      if (sel.isCollapsed) {
-        const steps = Math.max(1, count || 1);
-        for (let i = 0; i < steps; i += 1) {
-          sel.modify('extend', 'forward', 'character');
-        }
-      }
-      sel.deleteFromDocument();
-      return true;
-    } catch (_) {
-      return false;
-    }
+  _noteDeleteChar(editableEl, count = 1, winState = null) {
+    const snapshot = this._noteTextSnapshot(editableEl);
+    if (!snapshot) return false;
+    const end = this._noteMotionOffset(snapshot, 'l', count);
+    if (end === snapshot.caret) return false;
+    const text = snapshot.text.slice(snapshot.caret, end);
+    if (!this._noteReplaceOffsets(snapshot, snapshot.caret, end)) return false;
+    this._noteSetRegister(winState, text);
+    return true;
   },
 
-  _noteSelectRangeByMotion(editableEl, motion, count = 1) {
-    const doc = editableEl.ownerDocument;
-    const sel = doc?.getSelection?.();
-    if (!sel || !sel.modify) return null;
-    if (doc.activeElement !== editableEl) {
-      try { editableEl.focus({ preventScroll: true }); } catch (_) { try { editableEl.focus(); } catch (_) {} }
-    }
-
-    try {
-      if (!sel.isCollapsed) sel.collapseToStart();
-    } catch (_) {}
-
-    try {
-      const steps = Math.max(1, count || 1);
+  _noteOperateByMotion(editableEl, operator, motion, count, win, winState, hasCount = false) {
+    if (motion === 'j' || motion === 'k' || motion === 'G') {
+      const snapshot = this._noteTextSnapshot(editableEl);
+      if (!snapshot) return false;
+      const here = this._noteLineBounds(snapshot.text, snapshot.caret);
+      let target;
       if (motion === 'G') {
-        for (let i = 0; i < steps; i += 1) {
-          sel.modify('extend', 'forward', 'documentboundary');
-        }
-        return sel;
+        const lines = snapshot.text.split('\n');
+        const targetLine = hasCount ? Math.min(lines.length, count) : lines.length;
+        target = lines.slice(0, targetLine - 1).reduce((n, s) => n + s.length + 1, 0);
+      } else {
+        target = this._noteMotionOffset(snapshot, motion, count);
       }
-
-      const map = {
-        h: ['backward', 'character'],
-        l: ['forward', 'character'],
-        j: ['forward', 'line'],
-        k: ['backward', 'line'],
-        w: ['forward', 'word'],
-        W: ['forward', 'word'],
-        e: ['forward', 'word'],
-        E: ['forward', 'word'],
-        b: ['backward', 'word'],
-        B: ['backward', 'word'],
-        '0': ['backward', 'lineboundary'],
-        '^': ['backward', 'lineboundary'],
-        '$': ['forward', 'lineboundary'],
-      };
-
-      const spec = map[motion];
-      if (!spec) return null;
-      for (let i = 0; i < steps; i += 1) {
-        sel.modify('extend', spec[0], spec[1]);
-      }
-      return sel;
-    } catch (_) {
-      return null;
+      const start = Math.min(here.start, this._noteLineBounds(snapshot.text, target).start);
+      const end = Math.max(here.end, this._noteLineBounds(snapshot.text, target).end);
+      return this._noteOperateRange(snapshot, operator, start, end, win, winState, true);
     }
+    const snapshot = this._noteTextSnapshot(editableEl);
+    if (!snapshot) return false;
+    let end = this._noteMotionOffset(snapshot, motion, count);
+    // e is inclusive; cw on a nonblank word does not delete the following space.
+    if (motion === 'e' || motion === 'E') end = this._noteNextChar(snapshot.text, end);
+    if (operator === 'c' && (motion === 'w' || motion === 'W')
+        && this._noteWordKind(this._noteCharAt(snapshot.text, snapshot.caret))) {
+      const big = motion === 'W';
+      const kind = this._noteWordKind(this._noteCharAt(snapshot.text, snapshot.caret), big);
+      end = snapshot.caret;
+      while (end < snapshot.text.length
+          && this._noteWordKind(this._noteCharAt(snapshot.text, end), big) === kind) {
+        end = this._noteNextChar(snapshot.text, end);
+      }
+      if (count > 1 && end < snapshot.text.length) {
+        const caret = this._notePrevChar(snapshot.text, end);
+        end = this._noteNextChar(snapshot.text, this._noteMotionOffset(
+          Object.assign({}, snapshot, { caret }), big ? 'E' : 'e', count - 1));
+      }
+    }
+    return this._noteOperateRange(snapshot, operator,
+      Math.min(snapshot.caret, end), Math.max(snapshot.caret, end), win, winState);
   },
 
-  _noteOperateByMotion(editableEl, operator, motion, count, win, winState) {
-    const sel = this._noteSelectRangeByMotion(editableEl, motion, count);
-    if (!sel || sel.isCollapsed) return false;
-
-    const text = String(sel.toString() || '');
-    if (!text) return false;
-
+  _noteOperateRange(snapshot, operator, from, to, win, winState, linewise = false) {
+    let text = snapshot.text.slice(from, to);
+    if (linewise) text += '\n';
+    if (!text && operator !== 'c') return false;
     if (operator === 'y') {
-      try {
-        Components.classes['@mozilla.org/widget/clipboardhelper;1']
-          .getService(Components.interfaces.nsIClipboardHelper)
-          .copyString(text);
-        if (winState) winState._contextNoteLastYank = text;
-        try { sel.collapseToStart(); } catch (_) {}
-        this._mainShowStatus(win, '✓ y' + motion, 900);
-        return true;
-      } catch (_) {
-        return false;
+      if (!this._noteCopyText(text)) return false;
+      this._noteSelectOffsets(snapshot, from);
+    } else if (operator === 'd' || operator === 'c') {
+      if (linewise && operator === 'd') {
+        if (!this._noteDeleteLineRange(snapshot, from, to)) return false;
+      } else if (!this._noteReplaceOffsets(snapshot, from, to)) return false;
+      if (operator === 'c') {
+        winState._contextNoteMode = 'insert';
+        this._syncNoteCursorVisualState(snapshot.editableEl.ownerDocument, 'insert',
+          snapshot.editableEl);
       }
-    }
-
-    if (operator === 'd') {
-      if (!sel.deleteFromDocument) return false;
-      try {
-        sel.deleteFromDocument();
-        if (winState) winState._contextNoteLastYank = text;
-        this._mainShowStatus(win, '▶ d' + motion, 800);
-        return true;
-      } catch (_) {
-        return false;
-      }
-    }
-
-    if (operator === 'c') {
-      if (!sel.deleteFromDocument) return false;
-      try {
-        sel.deleteFromDocument();
-        if (winState) winState._contextNoteLastYank = text;
-        if (winState) winState._contextNoteMode = 'insert';
-        this._mainShowStatus(win, '-- NOTE INSERT --', 900);
-        return true;
-      } catch (_) {
-        return false;
-      }
-    }
-
-    return false;
+    } else return false;
+    this._noteSetRegister(winState, text, linewise ? 'line' : 'character');
+    this._mainShowStatus(win, operator === 'c' ? '-- NOTE INSERT --' : '✓ ' + operator, 900);
+    return true;
   },
 
-  _noteSelectInnerWord(editableEl, count = 1) {
-    const doc = editableEl.ownerDocument;
-    const sel = doc?.getSelection?.();
-    if (!sel || !sel.modify) return null;
-    if (doc.activeElement !== editableEl) {
-      try { editableEl.focus({ preventScroll: true }); } catch (_) { try { editableEl.focus(); } catch (_) {} }
+  _noteOperateTextObject(editableEl, operator, textObject, count, win, winState) {
+    if (textObject !== 'iw') return false;
+    const snapshot = this._noteTextSnapshot(editableEl);
+    if (!snapshot || !snapshot.text) return false;
+    const kind = p => this._noteWordKind(this._noteCharAt(snapshot.text, p));
+    let from = Math.min(snapshot.caret, snapshot.text.length - 1);
+    const current = kind(from);
+    while (from > 0 && kind(this._notePrevChar(snapshot.text, from)) === current) {
+      from = this._notePrevChar(snapshot.text, from);
     }
-    try {
-      if (!sel.isCollapsed) sel.collapseToStart();
-      sel.modify('move', 'backward', 'word');
-      sel.modify('extend', 'forward', 'word');
-      const steps = Math.max(1, count || 1);
-      for (let i = 1; i < steps; i += 1) {
-        sel.modify('extend', 'forward', 'word');
-      }
-      return sel;
-    } catch (_) {
-      return null;
+    let to = Math.min(snapshot.caret, snapshot.text.length - 1);
+    while (to < snapshot.text.length && kind(to) === current) {
+      to = this._noteNextChar(snapshot.text, to);
     }
+    for (let i = 1; i < count && to < snapshot.text.length; i += 1) {
+      while (to < snapshot.text.length && !kind(to)) to = this._noteNextChar(snapshot.text, to);
+      const next = kind(to);
+      while (to < snapshot.text.length && kind(to) === next) to = this._noteNextChar(snapshot.text, to);
+    }
+    return this._noteOperateRange(snapshot, operator, from, to, win, winState);
   },
 
   _noteNormalizeCaretForNormalOps(editableEl) {
-    const doc = editableEl?.ownerDocument;
-    const sel = doc?.getSelection?.();
+    if (editableEl.tagName === 'TEXTAREA' || editableEl.tagName === 'INPUT') {
+      editableEl.setSelectionRange(editableEl.selectionStart, editableEl.selectionStart);
+      return;
+    }
+    const sel = editableEl.ownerDocument?.getSelection?.();
     if (!sel) return;
     try {
       if (!sel.rangeCount) {
         sel.selectAllChildren(editableEl);
         sel.collapseToStart();
-        return;
-      }
-      if (!sel.isCollapsed) sel.collapseToStart();
+      } else if (!sel.isCollapsed) sel.collapseToStart();
     } catch (_) {}
-  },
-
-  _noteOperateTextObject(editableEl, operator, textObject, count, win, winState) {
-    if (textObject !== 'iw') return false;
-    const sel = this._noteSelectInnerWord(editableEl, count);
-    if (!sel || sel.isCollapsed) return false;
-
-    const text = String(sel.toString() || '');
-    if (!text) return false;
-
-    if (operator === 'y') {
-      try {
-        Components.classes['@mozilla.org/widget/clipboardhelper;1']
-          .getService(Components.interfaces.nsIClipboardHelper)
-          .copyString(text);
-        if (winState) winState._contextNoteLastYank = text;
-        try { sel.collapseToStart(); } catch (_) {}
-        this._mainShowStatus(win, '✓ yiw', 900);
-        return true;
-      } catch (_) {
-        return false;
-      }
-    }
-
-    if (operator === 'd' || operator === 'c') {
-      if (!sel.deleteFromDocument) return false;
-      try {
-        sel.deleteFromDocument();
-        if (winState) winState._contextNoteLastYank = text;
-        if (operator === 'c') {
-          if (winState) winState._contextNoteMode = 'insert';
-          this._mainShowStatus(win, '-- NOTE INSERT --', 900);
-        } else {
-          this._mainShowStatus(win, '▶ diw', 800);
-        }
-        return true;
-      } catch (_) {
-        return false;
-      }
-    }
-
-    return false;
   },
 
   _noteUndoRedo(editableEl, redo = false) {
     const doc = editableEl.ownerDocument;
-    if (doc.activeElement !== editableEl) {
-      try { editableEl.focus({ preventScroll: true }); } catch (_) { try { editableEl.focus(); } catch (_) {} }
-    }
-
     try {
-      const cmd = redo ? 'redo' : 'undo';
-      if (!doc.queryCommandSupported || doc.queryCommandSupported(cmd)) {
-        if (doc.execCommand(cmd)) return true;
+      const win = doc.defaultView?.wrappedJSObject || doc.defaultView;
+      const method = redo ? 'doRedo' : 'doUndo';
+      if (typeof win?.[method] === 'function') return !!win[method]();
+      const command = redo ? 'cmd_redo' : 'cmd_undo';
+      const controller = doc.defaultView?.controllers?.getControllerForCommand(command);
+      if (controller?.isCommandEnabled(command)) {
+        controller.doCommand(command);
+        return true;
       }
-    } catch (_) {}
-
-    try {
-      const winObj = doc.defaultView;
-      if (!winObj || !winObj.KeyboardEvent) return false;
-      const ev = new winObj.KeyboardEvent('keydown', {
-        key: redo ? 'z' : 'z',
-        ctrlKey: true,
-        shiftKey: !!redo,
-        bubbles: true,
-        cancelable: true,
-      });
-      editableEl.dispatchEvent(ev);
-      return true;
-    } catch (_) {
+      editableEl.focus();
+      if (doc.execCommand(redo ? 'redo' : 'undo')) return true;
+      // Older Zotero editors expose history through ProseMirror's keymap only.
+      // Bypass our own capture handlers, and report success only if the editor
+      // actually consumed the command (not merely because dispatch succeeded).
+      if (!win?.KeyboardEvent) return false;
+      const mac = /Mac/i.test(win.navigator?.platform || '');
+      const options = Components.utils.cloneInto({
+        key: 'z', code: 'KeyZ', ctrlKey: !mac, metaKey: mac, shiftKey: !!redo,
+        bubbles: true, cancelable: true,
+      }, win);
+      const event = new win.KeyboardEvent('keydown', options);
+      event._zvNoteEditorCommand = true;
+      editableEl.dispatchEvent(event);
+      return event.defaultPrevented;
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] note undo/redo: ' + e);
       return false;
     }
   },
 
-  _selectNoteLines(editableEl, count = 1) {
-    const doc = editableEl.ownerDocument;
-    const sel = doc?.getSelection?.();
-    if (!sel || !sel.modify) return null;
-    if (doc.activeElement !== editableEl) {
-      try { editableEl.focus({ preventScroll: true }); } catch (_) { try { editableEl.focus(); } catch (_) {} }
+  _noteLineSpan(snapshot, count = 1) {
+    const first = this._noteLineBounds(snapshot.text, snapshot.caret);
+    let last = first;
+    for (let i = 1; i < count && last.end < snapshot.text.length; i += 1) {
+      last = this._noteLineBounds(snapshot.text, last.end + 1);
     }
-    try {
-      if (!sel.isCollapsed) sel.collapseToStart();
-      sel.modify('move', 'backward', 'lineboundary');
-      sel.modify('extend', 'forward', 'lineboundary');
-      const steps = Math.max(1, count || 1);
-      for (let i = 1; i < steps; i += 1) {
-        sel.modify('extend', 'forward', 'line');
-        sel.modify('extend', 'forward', 'lineboundary');
+    return { from: first.start, to: last.end };
+  },
+
+  _noteLineUnit(block) {
+    if (!block) return null;
+    const ancestors = block.ancestors || [];
+    const parent = ancestors[ancestors.length - 1];
+    // A list item's only paragraph represents the entire list line.
+    if (/^(listItem|list_item)$/.test(parent?.node.type.name || '')
+        && parent.node.childCount === 1) {
+      return { node: parent.node, from: parent.pos, to: parent.pos + parent.node.nodeSize };
+    }
+    return { node: block.node, from: block.from, to: block.to };
+  },
+
+  _noteDeleteLineRange(snapshot, from, to) {
+    if (snapshot.ctx) {
+      const first = snapshot.blocks.find(b => b.start === from);
+      const last = snapshot.blocks.find(b => b.end === to);
+      if (first && last) {
+        const a = this._noteLineUnit(first);
+        const b = this._noteLineUnit(last);
+        const ctx = snapshot.ctx;
+        if (ctx.core.readOnly || ctx.view.editable === false) return false;
+        try {
+          const tr = ctx.view.state.tr.delete(a.from, b.to);
+          const pos = Math.min(a.from, tr.doc.content.size);
+          const selection = ctx.view.state.selection.constructor.near(tr.doc.resolve(pos), 1);
+          ctx.view.dispatch(tr.setSelection(selection).scrollIntoView());
+          ctx.view.focus();
+          return true;
+        } catch (e) {
+          Zotero.debug('[ZoteroVim] note delete line: ' + e);
+          return false;
+        }
       }
-      return sel;
-    } catch (_) {
-      return null;
     }
+    if (to < snapshot.text.length) to += 1;
+    else if (from > 0) from -= 1;
+    return this._noteReplaceOffsets(snapshot, from, to);
   },
 
   _noteDeleteLines(editableEl, count = 1) {
-    const sel = this._selectNoteLines(editableEl, count);
-    if (!sel || !sel.deleteFromDocument || sel.isCollapsed) return false;
-    const text = String(sel.toString() || '');
-    if (!text) return false;
-    try {
-      sel.deleteFromDocument();
-      return text;
-    } catch (_) {
-      return '';
-    }
+    const snapshot = this._noteTextSnapshot(editableEl);
+    if (!snapshot) return false;
+    const { from, to } = this._noteLineSpan(snapshot, count);
+    const text = snapshot.text.slice(from, to) + '\n';
+    return this._noteDeleteLineRange(snapshot, from, to) ? text : false;
   },
 
   _noteYankLines(editableEl, count = 1) {
-    const sel = this._selectNoteLines(editableEl, count);
-    if (!sel || sel.isCollapsed) return '';
-    const text = String(sel.toString() || '');
-    if (!text) return '';
-    try {
-      Components.classes['@mozilla.org/widget/clipboardhelper;1']
-        .getService(Components.interfaces.nsIClipboardHelper)
-        .copyString(text);
-      sel.collapseToStart();
-      return text;
-    } catch (_) {
-      return '';
-    }
+    const snapshot = this._noteTextSnapshot(editableEl);
+    if (!snapshot) return '';
+    const { from, to } = this._noteLineSpan(snapshot, count);
+    const text = snapshot.text.slice(from, to) + '\n';
+    if (!this._noteCopyText(text)) return '';
+    this._noteSelectOffsets(snapshot, from);
+    return text;
   },
 
   _noteEnterInsertAt(editableEl, placement) {
-    const doc = editableEl.ownerDocument;
-    const sel = doc?.getSelection?.();
-    if (!sel || !sel.modify) return false;
-    if (doc.activeElement !== editableEl) {
-      try { editableEl.focus({ preventScroll: true }); } catch (_) { try { editableEl.focus(); } catch (_) {} }
-    }
-    try {
-      if (!sel.isCollapsed) sel.collapseToEnd();
-      if (placement === 'append-char') {
-        sel.modify('move', 'forward', 'character');
-      } else if (placement === 'append-line') {
-        sel.modify('move', 'forward', 'lineboundary');
-      } else if (placement === 'insert-line-start') {
-        sel.modify('move', 'backward', 'lineboundary');
-      }
-      return true;
-    } catch (_) {
-      return false;
-    }
+    const snapshot = this._noteTextSnapshot(editableEl);
+    if (!snapshot) return false;
+    const motion = placement === 'append-char' ? 'l'
+      : placement === 'append-line' ? '$' : '^';
+    return this._noteSelectOffsets(snapshot, this._noteMotionOffset(snapshot, motion));
   },
 
   _noteSwitchToInsert(editableEl, placement) {
@@ -1548,225 +1736,147 @@ Object.assign(ZoteroVim, {
     return this._noteEnterInsertAt(editableEl, placement);
   },
 
-  _noteOpenLine(editableEl, above = false) {
-    const doc = editableEl.ownerDocument;
-    if (doc.activeElement !== editableEl) {
-      try { editableEl.focus({ preventScroll: true }); } catch (_) { try { editableEl.focus(); } catch (_) {} }
-    }
-
-    const tag = String(editableEl.tagName || '').toUpperCase();
-    if (tag === 'TEXTAREA' || tag === 'INPUT') {
-      return this._noteOpenLineInTextControl(editableEl, above);
-    }
-
-    if (editableEl.isContentEditable) {
-      return this._noteOpenLineInContentEditable(editableEl, above);
-    }
-
-    const sel = doc?.getSelection?.();
-    if (!sel || !sel.modify) return false;
-    try {
-      if (!sel.isCollapsed) sel.collapseToEnd();
-      sel.modify('move', above ? 'backward' : 'forward', 'lineboundary');
-      return this._noteInsertTextAtCaret(editableEl, '\n');
-    } catch (_) {
-      return false;
-    }
-  },
-
-  _noteOpenLineInTextControl(editableEl, above = false) {
-    try {
-      const el = editableEl;
-      const value = String(el.value || '');
-      const caret = Number(el.selectionStart || 0);
-      const lineStart = value.lastIndexOf('\n', Math.max(0, caret - 1)) + 1;
-      let lineEnd = value.indexOf('\n', caret);
-      if (lineEnd < 0) lineEnd = value.length;
-
-      const insertPos = above ? lineStart : lineEnd;
-      el.value = value.slice(0, insertPos) + '\n' + value.slice(insertPos);
-
-      const nextCaret = above ? insertPos : (insertPos + 1);
-      el.selectionStart = nextCaret;
-      el.selectionEnd = nextCaret;
-      return true;
-    } catch (_) {
-      return false;
-    }
-  },
-
-  _noteOpenLineInContentEditable(editableEl, above = false) {
-    const doc = editableEl?.ownerDocument;
-    const sel = doc?.getSelection?.();
-    if (!doc || !sel) return false;
-
-    try {
-      const lineEl = this._noteGetTopLevelLineNode(editableEl, sel);
-      const preferredTag = String(lineEl?.tagName || '').toUpperCase();
-      const newLine = this._noteCreateEmptyLineElement(doc, preferredTag);
-
-      if (lineEl && lineEl.parentNode === editableEl) {
-        if (above) {
-          editableEl.insertBefore(newLine, lineEl);
-        } else {
-          editableEl.insertBefore(newLine, lineEl.nextSibling);
-        }
-      } else if (above) {
-        editableEl.insertBefore(newLine, editableEl.firstChild);
-      } else {
-        editableEl.appendChild(newLine);
-      }
-
-      const range = doc.createRange();
-      range.selectNodeContents(newLine);
-      range.collapse(true);
-      sel.removeAllRanges();
-      sel.addRange(range);
-      return true;
-    } catch (_) {
-      return false;
-    }
-  },
-
-  _noteGetTopLevelLineNode(editableEl, sel) {
-    if (!editableEl || !sel) return null;
-
-    let node = sel.focusNode || sel.anchorNode || null;
-    if (node && node.nodeType !== 1) node = node.parentElement;
-
-    while (node && node !== editableEl) {
-      if (node.parentNode === editableEl) return node;
-      node = node.parentNode;
-    }
-
-    if (sel.rangeCount) {
-      const range = sel.getRangeAt(0);
-      const container = range.startContainer;
-      if (container === editableEl) {
-        const offset = Math.max(0, Math.min(range.startOffset, editableEl.childNodes.length));
-        if (offset < editableEl.childNodes.length) return editableEl.childNodes[offset];
-        if (offset > 0) return editableEl.childNodes[offset - 1];
-      }
-    }
-
-    return null;
-  },
-
-  _noteCreateEmptyLineElement(doc, preferredTag = '') {
-    const allowedTags = new Set([
-      'P', 'DIV', 'LI', 'BLOCKQUOTE', 'PRE',
-      'H1', 'H2', 'H3', 'H4', 'H5', 'H6',
-    ]);
-    const tag = allowedTags.has(preferredTag) ? preferredTag.toLowerCase() : 'p';
-    const newLine = doc.createElement(tag);
-    newLine.appendChild(doc.createElement('br'));
-    return newLine;
-  },
-
-  _noteInsertParagraphAtCaret(editableEl) {
-    const doc = editableEl?.ownerDocument;
-    if (!doc) return false;
-    if (doc.activeElement !== editableEl) {
-      try { editableEl.focus({ preventScroll: true }); } catch (_) { try { editableEl.focus(); } catch (_) {} }
-    }
-
-    try {
-      if (!doc.queryCommandSupported || doc.queryCommandSupported('insertParagraph')) {
-        if (doc.execCommand('insertParagraph')) return true;
-      }
-    } catch (_) {}
-
-    try {
-      const winObj = doc.defaultView;
-      if (!winObj || !winObj.KeyboardEvent) return false;
-      const keyDown = new winObj.KeyboardEvent('keydown', {
-        key: 'Enter',
-        code: 'Enter',
-        bubbles: true,
-        cancelable: true,
-      });
-      const keyPress = new winObj.KeyboardEvent('keypress', {
-        key: 'Enter',
-        code: 'Enter',
-        bubbles: true,
-        cancelable: true,
-      });
-      const keyUp = new winObj.KeyboardEvent('keyup', {
-        key: 'Enter',
-        code: 'Enter',
-        bubbles: true,
-        cancelable: true,
-      });
-      editableEl.dispatchEvent(keyDown);
-      editableEl.dispatchEvent(keyPress);
-      editableEl.dispatchEvent(keyUp);
-      return true;
-    } catch (_) {
-      return false;
-    }
-  },
-
-  _notePasteRegister(editableEl, winState, before = false) {
-    const text = String(winState?._contextNoteLastYank || '');
-    if (!text) return false;
-    if (!before) this._moveNoteCaretByKey(editableEl, 'l', 1);
-    return this._noteInsertTextAtCaret(editableEl, text);
-  },
-
-  _noteInsertTextAtCaret(editableEl, text) {
-    if (!editableEl || !text) return false;
-    const tag = String(editableEl.tagName || '').toUpperCase();
-    if (tag === 'TEXTAREA' || tag === 'INPUT') {
+  /**
+   * Insert whole empty blocks at explicit model positions. No simulated Enter
+   * and no splitting at the old caret: O and o differ solely by insertion side.
+   */
+  _noteInsertNativeLines(snapshot, lines, above) {
+    const ctx = snapshot.ctx;
+    if (!ctx || ctx.core.readOnly || ctx.view.editable === false) return false;
+    const block = snapshot.blocks.find(b => snapshot.caret >= b.start
+      && snapshot.caret <= b.end);
+    if (!block) return false;
+    const line = this._noteLineBounds(snapshot.text, snapshot.caret);
+    const isCode = /^(codeBlock|code_block)$/.test(block.node.type.name);
+    if (isCode || line.start > block.start || line.end < block.end) {
+      const pos = snapshot.points[above ? line.start : line.end];
       try {
-        const el = editableEl;
-        const start = Number(el.selectionStart || 0);
-        const end = Number(el.selectionEnd || start);
-        const value = String(el.value || '');
-        el.value = value.slice(0, start) + text + value.slice(end);
-        const pos = start + text.length;
-        el.selectionStart = pos;
-        el.selectionEnd = pos;
+        let tr = ctx.view.state.tr;
+        if (isCode) {
+          const text = lines.join('\n');
+          tr = tr.insertText(above ? text + '\n' : '\n' + text, pos);
+        } else {
+          const type = ctx.view.state.schema.nodes.hardBreak
+            || ctx.view.state.schema.nodes.hard_break;
+          let cursor = pos;
+          if (!above) { tr = tr.insert(cursor, type.create()); cursor += 1; }
+          for (let i = 0; i < lines.length; i += 1) {
+            if (lines[i]) {
+              tr = tr.insertText(lines[i], cursor);
+              cursor += lines[i].length;
+            }
+            if (above || i < lines.length - 1) {
+              tr = tr.insert(cursor, type.create());
+              cursor += 1;
+            }
+          }
+        }
+        tr = this._noteNativeSelection(ctx, tr, pos + (above ? 0 : 1));
+        ctx.view.dispatch(tr.scrollIntoView());
+        ctx.view.focus();
         return true;
-      } catch (_) {
+      } catch (e) {
+        Zotero.debug('[ZoteroVim] note insert logical line: ' + e);
         return false;
       }
     }
-
-    const doc = editableEl.ownerDocument;
-    const sel = doc?.getSelection?.();
-    if (!sel) return false;
-    if (doc.activeElement !== editableEl) {
-      try { editableEl.focus({ preventScroll: true }); } catch (_) { try { editableEl.focus(); } catch (_) {} }
-    }
+    const unit = this._noteLineUnit(block);
     try {
-      if (sel.rangeCount === 0) {
-        const r = doc.createRange();
-        r.selectNodeContents(editableEl);
-        r.collapse(false);
-        sel.removeAllRanges();
-        sel.addRange(r);
+      let pos = above ? unit.from : unit.to;
+      let tr = ctx.view.state.tr;
+      const firstPos = pos;
+      let firstCaret = pos + 1;
+      for (let i = 0; i < lines.length; i += 1) {
+        const paragraph = ctx.view.state.schema.nodes.paragraph;
+        let node = lines[i]
+          ? paragraph.create(null, ctx.view.state.schema.text(lines[i]))
+          : paragraph.createAndFill();
+        if (/^(listItem|list_item)$/.test(unit.node.type.name)) {
+          node = unit.node.type.createAndFill(null, node);
+          if (i === 0) firstCaret = firstPos + 2;
+        }
+        tr = tr.insert(pos, node);
+        pos += node.nodeSize;
       }
-      const range = sel.getRangeAt(0);
-      range.deleteContents();
-      const node = doc.createTextNode(text);
-      range.insertNode(node);
-      range.setStartAfter(node);
+      tr = this._noteNativeSelection(ctx, tr, firstCaret);
+      ctx.view.dispatch(tr.scrollIntoView());
+      ctx.view.focus();
+      return true;
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] note insert line: ' + e);
+      return false;
+    }
+  },
+
+  _noteOpenLine(editableEl, above = false) {
+    const snapshot = this._noteTextSnapshot(editableEl);
+    if (!snapshot) return false;
+    const line = this._noteLineBounds(snapshot.text, snapshot.caret);
+    if (snapshot.ctx) {
+      return this._noteInsertNativeLines(snapshot, [''], above);
+    }
+    if (snapshot.control) {
+      const pos = above ? line.start : line.end;
+      if (!this._noteControlReplace(editableEl, pos, pos, '\n')) return false;
+      return this._noteSelectOffsets(
+        this._noteTextSnapshot(editableEl), pos + (above ? 0 : 1));
+    }
+    // Non-ProseMirror contenteditable fallback: resolve the nearest real block,
+    // not the inherited isContentEditable descendant under the caret.
+    try {
+      const doc = editableEl.ownerDocument;
+      const sel = doc.getSelection();
+      let block = sel.anchorNode;
+      if (block?.nodeType === 3) block = block.parentElement;
+      while (block && block !== editableEl
+          && !/^(P|DIV|LI|PRE|H[1-6])$/.test(block.tagName)) block = block.parentElement;
+      if (!block || block === editableEl) return false;
+      const node = doc.createElement(block.tagName === 'LI' ? 'li' : 'p');
+      node.appendChild(doc.createElement('br'));
+      block.parentNode.insertBefore(node, above ? block : block.nextSibling);
+      const range = doc.createRange();
+      range.selectNodeContents(node);
       range.collapse(true);
       sel.removeAllRanges();
       sel.addRange(range);
+      const options = Components.utils.cloneInto({ bubbles: true }, doc.defaultView);
+      editableEl.dispatchEvent(new doc.defaultView.Event('input', options));
       return true;
     } catch (_) {
       return false;
     }
+  },
+
+  _notePasteRegister(editableEl, winState, before = false, count = 1) {
+    const text = String(winState?._contextNoteLastYank || '');
+    if (!text) return false;
+    const snapshot = this._noteTextSnapshot(editableEl);
+    if (!snapshot) return false;
+    const n = Math.max(1, Math.min(count || 1, 10000));
+    if (winState._contextNoteRegisterType === 'line') {
+      const lines = text.replace(/\n$/, '').split('\n');
+      const repeated = [];
+      for (let i = 0; i < n; i += 1) repeated.push(...lines);
+      if (snapshot.ctx) return this._noteInsertNativeLines(snapshot, repeated, before);
+      const line = this._noteLineBounds(snapshot.text, snapshot.caret);
+      const pos = before ? line.start : line.end;
+      const inserted = before ? repeated.join('\n') + '\n' : '\n' + repeated.join('\n');
+      return this._noteReplaceOffsets(snapshot, pos, pos, inserted);
+    }
+    const pos = before ? snapshot.caret : this._noteMotionOffset(snapshot, 'l');
+    return this._noteReplaceOffsets(snapshot, pos, pos, text.repeat(n));
   },
 
   _resolveEditableFromTarget(target) {
     if (!target) return null;
     let el = target.nodeType === 1 ? target : target.parentElement;
     while (el) {
-      if (el.isContentEditable) return el;
       const tag = String(el.tagName || '').toUpperCase();
       if (tag === 'TEXTAREA' || tag === 'INPUT') return el;
+      if (el.isContentEditable) {
+        while (el.parentElement?.isContentEditable) el = el.parentElement;
+        return el;
+      }
       el = el.parentElement;
     }
     return null;

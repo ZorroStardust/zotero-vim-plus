@@ -13,8 +13,8 @@ the README / CHANGELOG once implemented, and mark them done below.
 | 4 | `V` toggle reader sidebar | `_readerSetSidebarOpen` / `_readerIsSidebarOpen` already exist (used by the outline explorer) |
 | 5 | Page number / progress in the mode indicator | Read `pdfWin.PDFViewerApplication.pdfViewer.currentPageNumber` and `pdfDocument.numPages`; display like `12/34 · 35%` |
 | 6 | ~~Fuzzy picker: open the selected item's PDF~~ | **Done (commit e5ffea4+)** — `Ctrl+o` in the items picker selects the item and opens its PDF (`_pickerSelectItem` + `_mainOpenPDF`); bare `o` always types into the search box, and `Ctrl+o` in the tab picker does nothing ('o' stays a hint letter) |
-| 7 | `gv` re-select the last Visual selection | Store `state.lastVisualRange` on exit; restore it on re-entering Visual mode |
-| 8 | `*` / `#` search the word under the caret | Reuse the `_searchSelection` pattern (open find popup, inject `input` value + dispatch `input` event). Cursor mode: word at caret; Normal mode: word at viewport centre |
+| 7 | Reader `gv` re-select the last Visual selection | Note editor **done (unreleased)**; reader still needs `state.lastVisualRange` |
+| 8 | Reader `*` / `#` search the word under the caret | Note editor **done (unreleased)**; reader can reuse `_searchSelection` (word at caret in Cursor mode, viewport centre in Normal mode) |
 | 9 | Import / export keybindings as JSON + search box in the Preferences panel | Preferences UX only, no runtime risk |
 | 10 | Auto-enter Insert mode when an annotation comment field gains focus | Removes the manual `i` step when clicking into a comment |
 
@@ -34,7 +34,11 @@ the README / CHANGELOG once implemented, and mark them done below.
 - **Visual-mode text objects `vi"` / `vi(` / `vi[`** — only word / sentence /
   paragraph exist today.
 - **`.` repeat last action** — record the last `(action, count)` and replay.
-- **Note editor: `/` search and `i"` / `i(` text objects.**
+- **~~Note editor: precise motions, search, Visual mode and text objects.~~**
+  **Done (unreleased)** — `f/F/t/T`, `;`/`,`, `%`; literal `/`/`?`, `n/N`,
+  `*`/`#`; character/line Visual mode and safe `gv`; inner/around words,
+  quotes, brackets, sentences, paragraphs and literal tags. Vim regex syntax,
+  substitution, block Visual mode and configurable object rules remain deferred.
 - **Jump between annotations by colour / author** (`[c` / `]c`).
 
 ## Tier 3 — Large projects (stretch)

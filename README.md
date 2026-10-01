@@ -317,7 +317,7 @@ Notes:
 #### Note editor (context pane and standalone note tab)
 
 When a Zotero note editor has focus (right-side context pane or a standalone
-note tab), the plugin provides a minimal Vim-like layer.
+note tab), the plugin provides Vim-like navigation, search and editing.
 
 | Key | Action |
 |-----|--------|
@@ -334,13 +334,23 @@ note tab), the plugin provides a minimal Vim-like layer.
 | `G` | Jump to last line |
 | `3j` (example) | Count prefix for motions (repeat 3 times) |
 | `3G` / `12gg` | Count prefix to jump to a specific line number |
+| `f{char}` / `F{char}` | Find the next / previous occurrence of a character on this logical line |
+| `t{char}` / `T{char}` | Move just before / after the next / previous occurrence |
+| `;` / `,` | Repeat the last character find in the same / opposite direction |
+| `%` | Jump between matching `()` / `[]` / `{}`; first look for a bracket at or after the caret on this line |
+| `50%` (example) | Jump to the line at 50% of the document |
+| `/` / `?` | Open forward / backward note search; Enter confirms, Escape cancels |
+| `n` / `N` | Next / previous result in the remembered search direction (wraps) |
+| `*` / `#` | Search the word under the caret forward / backward |
+| `v` / `V` | Enter characterwise / logical-line Visual mode |
+| `gv` | Restore the last Visual selection if the note text has not changed |
 | `x` | Delete character at caret |
 | `dd` | Delete current line |
 | `yy` | Yank current line to clipboard |
 | `dw` / `de` / `db` / `d$` | Delete by motion (word/word-end/back-word/to line end) |
 | `yw` / `ye` / `yb` / `y$` | Yank by motion |
 | `cw` / `ce` / `c$` | Change by motion (delete range and enter Insert mode) |
-| `diw` / `yiw` / `ciw` | Inner-word text object (delete/yank/change) |
+| `d{object}` / `y{object}` / `c{object}` | Delete / yank / change a text object (see below) |
 | `p` / `P` | Paste characterwise text after / before caret, or whole lines below / above |
 | `u` / `Ctrl+r` | Undo / redo bridge |
 | `<space>...` | Main-window leader bindings are available in note Normal mode (for example `<space>n`, `<space>ff`) |
@@ -352,6 +362,59 @@ Counts before and after the operator multiply: `2d3w` deletes six words.
 `1G` goes to the first line; bare `G` goes to the last line.
 `p` and `P` support counts (for example `3p`) and use the internal note register,
 updated by yank/delete/change operations including `x`.
+
+Precise motions work with operators and counts: `2fa` finds the second `a`,
+`dt)` deletes up to but not including `)`, `df)` includes it, and `d%` includes
+both bracket endpoints. `;` / `,` do not change the original remembered find
+direction. A failed find leaves the text and caret unchanged. Character finds
+stay on a logical line; matching pairs can span paragraphs. Pair matching is
+text-based, skips escaped delimiters and one-line quoted strings, and is not
+a language-aware parser.
+
+Pending commands show a compact, non-interactive hint at the bottom of the note.
+For example, `f` shows the direction and asks for a character, while `2d3f`
+shows the typed command and the sixth occurrence. Counts, operators and pending
+text objects also show their next expected input, in English or Chinese using
+the plugin's language setting (or Zotero's locale). The hint stays visible
+until completion or Escape; leaving the editor cancels it. It does not move
+the selection, enter saved HTML or undo history, and is hidden when printing.
+
+Search is case-sensitive **literal text**, not Vim regular expressions. It
+supports Chinese and other Unicode text, live result counts, a highlighted
+preview of the next match, and wraparound. Type the query in the small bottom search bar;
+Enter returns focus to the note, while Escape or focusing elsewhere cancels
+and restores the original position/selection. Empty Enter repeats the previous
+query. `3n` jumps three matches; `d/search` or `c?search` combines an interactive
+search with an operator. `*` / `#` match whole words rather than substrings.
+This search bar is outside the managed note content and is hidden when printing.
+Replacement, Vim regex syntax and a command-line interface are not implemented.
+
+In Visual mode, motions, counts, character finds, `%`, search and text objects
+extend the selection. `o` swaps its active end, `y` copies, `d` / `x` delete,
+and `c` deletes and enters Insert mode. `v` / `V` switch selection types;
+pressing the current type again or Escape returns to Normal mode. `J` / `K`
+do not switch tabs in Visual mode. Rectangular/block Visual mode is not included.
+`gv` intentionally refuses old offsets after the note text changes.
+
+Text objects work after `d` / `y` / `c` and inside Visual mode:
+
+| Inner / around | Object |
+|----------------|--------|
+| `iw` / `aw`, `iW` / `aW` | Word / whitespace-separated WORD; around includes adjacent spacing |
+| `is` / `as` | Sentence, with English or Chinese ending punctuation |
+| `ip` / `ap` | Paragraph; around includes adjacent empty paragraphs/lines |
+| `i"` / `a"`, `i'` / `a'`, `` i` `` / `` a` `` | One-line quoted text; escaped quotes are skipped |
+| `i(` / `a(`, `ib` / `ab` | Parentheses |
+| `i[` / `a[`, `i{` / `a{`, `iB` / `aB`, `i<` / `a<` | Brackets / braces / angle brackets |
+| `it` / `at` | Literal paired HTML/XML tags in note text, not the editor's formatting markup |
+
+Closing bracket keys are aliases (`i)` equals `i(`, etc.). Counts select outer
+nested pairs (`2ci(`); repeated objects in Visual mode also expand outward.
+Try `ci"` to change quoted text, `da(` to remove a parenthesised section, or
+`viw` then `y` to copy a word. Rich-text paragraph objects use the editor's
+actual paragraph/heading/list-item blocks; plain-text fallback paragraphs are
+groups of nonblank lines. These are practical text objects, not a full emulation
+of Vim's configurable sentence/paragraph rules or syntax-aware tag parsing.
 
 In rich-text notes, a line means a logical paragraph or an explicit hard-break
 line, not a visually wrapped screen line. `o` / `O` insert a clean empty line

@@ -16,10 +16,13 @@ if command -v node >/dev/null 2>&1; then
   node --check content/zoteroVim.js
   node --check content/zoteroVimReader.js
   node --check content/zoteroVimMain.js
+  node --check content/zoteroVimNoteDiagnostics.js
   node --check content/prefs.js
   node tools/check-sync.js
+  node tools/check-plugin-manifest.js
   node tools/check-note-editor-routing.js
   node tools/check-note-native-input.js
+  node tools/check-note-diagnostics.js
   node tools/check-note-editing.js
   node tools/check-note-advanced.js
   node tools/check-note-line-numbers.js

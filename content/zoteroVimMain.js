@@ -86,6 +86,7 @@ Object.assign(ZoteroVim, {
     mainWinState.executeAction = (action, count) =>
       this._executeMainAction(action, win, mainWinState, count);
     this._mainWindowState.set(win, mainWinState);
+    this._initNoteDiagnostics?.(win, mainWinState);
 
     const readerScanHandler = () => {
       this._rescanSelectedReader(win);
@@ -115,6 +116,7 @@ Object.assign(ZoteroVim, {
 
     mainWinState.cleanup = () => {
       win.clearInterval(readerScanTimer);
+      this._clearNoteDiagnostics?.(mainWinState);
       win.removeEventListener('keydown', pickerWindowKeyHandler, true);
       win.document.removeEventListener('keydown', keyHandler, true);
       this._closeFuzzyPicker(win, mainWinState);
@@ -822,6 +824,10 @@ Object.assign(ZoteroVim, {
   },
 
   _syncMainContextNoteListener(win, winState) {
+    // Diagnostic observers must precede Vim's capture listener and also work
+    // with note Vim disabled. They have their own independent cleanup.
+    this._syncNoteDiagnosticsEditor?.(win, winState,
+      this._getActiveMainNoteEditorWindow(win));
     if (!this.isNoteEditorVimEnabled()) {
       this._clearMainContextNoteListener(winState);
       return;

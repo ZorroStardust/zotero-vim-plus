@@ -18,14 +18,17 @@ if (Get-Command node -ErrorAction SilentlyContinue) {
     try {
         foreach ($source in @(
             'bootstrap.js', 'content/i18n.js', 'content/zoteroVim.js',
-            'content/zoteroVimReader.js', 'content/zoteroVimMain.js', 'content/prefs.js'
+            'content/zoteroVimReader.js', 'content/zoteroVimMain.js',
+            'content/zoteroVimNoteDiagnostics.js', 'content/prefs.js'
         )) {
             node --check $source
             if ($LASTEXITCODE -ne 0) { throw "Syntax check failed: $source" }
         }
         foreach ($check in @(
-            'tools/check-sync.js', 'tools/check-note-editor-routing.js',
+            'tools/check-sync.js', 'tools/check-plugin-manifest.js',
+            'tools/check-note-editor-routing.js',
             'tools/check-note-native-input.js',
+            'tools/check-note-diagnostics.js',
             'tools/check-note-editing.js', 'tools/check-note-line-numbers.js',
             'tools/check-note-advanced.js',
             'tools/check-insert-mode-shifts.js',

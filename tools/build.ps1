@@ -25,7 +25,8 @@ if (Get-Command node -ErrorAction SilentlyContinue) {
         }
         foreach ($check in @(
             'tools/check-sync.js', 'tools/check-note-editor-routing.js',
-            'tools/check-note-editing.js', 'tools/check-insert-mode-shifts.js',
+            'tools/check-note-editing.js', 'tools/check-note-line-numbers.js',
+            'tools/check-insert-mode-shifts.js',
             'tools/check-count-digit-guard.js', 'tools/check-reader-listeners.js'
         )) {
             node $check

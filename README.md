@@ -362,6 +362,20 @@ Insert mode passes `Ctrl+Backspace` through to the editor; `Ctrl+h` / `Ctrl+l`
 remain explicit pane-focus shortcuts. `<space>bj` is also available in Normal
 mode to choose a tab directly.
 
+Absolute line numbers are shown by default in the active note editor, with the
+current line number highlighted. They use the same logical lines as `12G`,
+`12gg` and `j` / `k`: empty paragraphs and explicit breaks count, but soft
+wrapping does not add numbers. Numbers reuse the compact left margin. When a
+heading-level badge is present, its number is a small, flat label below the
+badge instead of taking an extra column. Only these headings reserve a little
+vertical clearance if needed. In tables, each cell has a small local gutter;
+numbers still follow the global document order. The gutter is UI-only and is
+not part of saved notes, copied note text, exports or undo history; it is also
+hidden when printing. Toggle **Show absolute line numbers in note editors**
+under Settings → Zotero Vim Plus → Modes. Changes apply without restarting.
+Numbering requires note Vim mode and Zotero's native editor view; older editor
+fallbacks without that view keep working without a gutter.
+
 #### Library tree navigation (left pane)
 
 These bindings act on Zotero's native left pane (collection tree and item
@@ -794,6 +808,7 @@ failures are reported to `zv-startup.log` in the profile directory with
 | Enable Cursor mode | on | Allow entering Cursor mode with `c` |
 | Enable Insert mode | on | Allow entering Insert mode with `i` |
 | Note editor Vim mode | on | Enable Vim-style editing in note editors (context pane and note tabs) |
+| Note editor line numbers | on | Absolute logical line numbers with the current number highlighted; requires note Vim mode |
 | Scroll mode | Constant-speed scrolling | Step / Constant-speed / Accelerating — only the active mode's parameters are shown |
 | Scroll step | 60 px | Pixels scrolled per `j`/`k`/`H`/`L` keypress (step mode; count prefixes like `3j` always use this) |
 | Scroll speed | 2000 px/s | Constant hold-scroll speed (constant-speed mode) |

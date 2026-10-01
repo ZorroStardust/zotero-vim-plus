@@ -86,6 +86,15 @@
         data-i18n="zv.mode.noteEditor"
         label="Enable Vim-style editing in note editors (context pane and note tabs)" />
     </hbox>
+    <hbox align="center" style="margin-top: 4px;">
+      <checkbox id="zv-note-line-numbers"
+        data-i18n="zv.note.lineNumbers"
+        label="Show absolute line numbers in note editors" />
+    </hbox>
+    <html:p data-i18n="zv.note.lineNumbers.help"
+      style="margin: 4px 0; font-size: 0.9em; color: #666;">
+      Numbers match 12G / 12gg; wrapped text keeps the same number. Requires note Vim mode.
+    </html:p>
     <hbox style="margin-top: 6px; justify-content: flex-end; align-items: center;">
       <html:span id="zv-modes-status"
         style="font-size: 0.9em; color: #5FB236;"></html:span>

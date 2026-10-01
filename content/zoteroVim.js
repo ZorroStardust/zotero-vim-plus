@@ -349,6 +349,10 @@ var ZoteroVim = {
     return this.getPref('noteEditor.enabled', true);
   },
 
+  isNoteLineNumbersEnabled() {
+    return this.isNoteEditorVimEnabled() && this.getPref('noteEditor.lineNumbers', true);
+  },
+
   isModeEnabled(mode) {
     if (mode === 'normal') return true;
     return this.getPref('mode.' + mode + '.enabled', true);

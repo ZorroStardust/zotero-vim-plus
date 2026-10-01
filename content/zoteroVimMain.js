@@ -65,6 +65,7 @@ Object.assign(ZoteroVim, {
       _contextNoteEditorWin: null,
       _contextNoteEditorDoc: null,
       _contextNoteEditorKeyHandler: null,
+      _contextNoteLineNumbers: null,
       _contextNoteMode: 'normal',
       _contextNoteKeyBuffer: '',
       _contextNoteMainBuffer: '',
@@ -733,6 +734,7 @@ Object.assign(ZoteroVim, {
   },
 
   _clearMainContextNoteListener(winState) {
+    this._clearNoteLineNumbers(winState);
     this._clearMainContextNoteKeyState(winState);
     const noteWin = winState?._contextNoteEditorWin;
     const noteDoc = winState?._contextNoteEditorDoc;
@@ -758,7 +760,10 @@ Object.assign(ZoteroVim, {
 
     const noteWin = this._getActiveMainNoteEditorWindow(win);
     const noteDoc = noteWin?.document || null;
-    if (noteWin === winState?._contextNoteEditorWin && noteDoc === winState?._contextNoteEditorDoc) return;
+    if (noteWin === winState?._contextNoteEditorWin && noteDoc === winState?._contextNoteEditorDoc) {
+      this._syncNoteLineNumbers(winState);
+      return;
+    }
 
     this._clearMainContextNoteListener(winState);
 
@@ -771,6 +776,7 @@ Object.assign(ZoteroVim, {
     winState._contextNoteEditorKeyHandler = handler;
     if (!winState._contextNoteMode) winState._contextNoteMode = 'normal';
     this._syncNoteCursorVisualState(noteDoc, winState._contextNoteMode || 'normal');
+    this._syncNoteLineNumbers(winState);
     this._mainShowStatus(win, '-- NOTE ' + String(winState._contextNoteMode || 'normal').toUpperCase() + ' --', 1200);
   },
 
@@ -932,6 +938,423 @@ Object.assign(ZoteroVim, {
         '}',
       ].join('\n');
     } catch (_) {}
+  },
+
+  // ── Note line-number gutter ──────────────────────────────────────────────
+
+  /** Remove UI-only numbering, observers and pending paint when an editor is detached. */
+  _clearNoteLineNumbers(winState) {
+    const state = winState?._contextNoteLineNumbers;
+    if (!state) return;
+    winState._contextNoteLineNumbers = null;
+    state.disposed = true;
+    try { state.win.cancelAnimationFrame(state.frame); } catch (_) {}
+    try { state.mutations?.disconnect(); } catch (_) {}
+    try { state.resize?.disconnect(); } catch (_) {}
+    for (const [target, type, handler] of state.listeners) {
+      try { target.removeEventListener(type, handler, true); } catch (_) {}
+    }
+    try { state.editable.classList.remove('zv-note-numbered-editor'); } catch (_) {}
+    try { state.layer.remove(); } catch (_) {}
+    try { state.style.remove(); } catch (_) {}
+  },
+
+  /**
+   * Attach to the native view only. The gutter is outside ProseMirror's managed
+   * DOM, so numbering never enters saved HTML, clipboard text or undo history.
+   * The existing editor scan also detects preference changes and view replacement.
+   */
+  _syncNoteLineNumbers(winState) {
+    const doc = winState?._contextNoteEditorDoc;
+    if (!doc || !this.isNoteLineNumbersEnabled()) {
+      this._clearNoteLineNumbers(winState);
+      return;
+    }
+    try {
+      const win = doc.defaultView;
+      const nativeWin = win.wrappedJSObject || win;
+      const editable = nativeWin._currentEditorInstance?._editorCore?.view?.dom;
+      const ctx = this._noteEditorContext(editable);
+      if (!ctx || !ctx.view.coordsAtPos || !editable.isConnected) {
+        this._clearNoteLineNumbers(winState);
+        return;
+      }
+      const existing = winState._contextNoteLineNumbers;
+      if (existing?.editable === editable && existing.view === ctx.view) {
+        // Native selection-only transactions need not change the DOM.
+        if (existing.model?.doc !== ctx.view.state.doc
+            || existing.selection !== ctx.view.state.selection) {
+          this._queueNoteLineNumbers(existing);
+        }
+        return;
+      }
+      this._clearNoteLineNumbers(winState);
+
+      const layer = doc.createElement('div');
+      layer.className = 'zv-note-line-numbers';
+      layer.setAttribute('aria-hidden', 'true');
+      layer.setAttribute('contenteditable', 'false');
+      const style = doc.createElement('style');
+      style.id = 'zv-note-line-number-style';
+      const state = {
+        win, doc, editable, view: ctx.view, layer, style, listeners: [],
+        basePadding: parseFloat(win.getComputedStyle(editable).paddingLeft) || 0,
+        headingMargins: new WeakMap(), headingGaps: new WeakMap(),
+        width: 0, frame: null, model: null, selection: null, disposed: false,
+      };
+      winState._contextNoteLineNumbers = state;
+      (doc.head || doc.documentElement).appendChild(style);
+      (doc.body || doc.documentElement).appendChild(layer);
+      editable.classList.add('zv-note-numbered-editor');
+      const queue = () => this._queueNoteLineNumbers(state);
+      const listen = (target, type) => {
+        target.addEventListener(type, queue, true);
+        state.listeners.push([target, type, queue]);
+      };
+      for (const type of ['selectionchange', 'input', 'scroll', 'load']) listen(doc, type);
+      listen(win, 'resize');
+      if (doc.fonts?.addEventListener) listen(doc.fonts, 'loadingdone');
+
+      if (typeof win.MutationObserver === 'function') {
+        state.mutations = new win.MutationObserver(queue);
+        state.mutations.observe(editable, Components.utils.cloneInto({
+          childList: true, characterData: true, subtree: true, attributes: true,
+        }, win));
+      }
+      if (typeof win.ResizeObserver === 'function') {
+        state.resize = new win.ResizeObserver(queue);
+        state.resize.observe(editable);
+        // Includes the scroller and centered editor container, not just content height.
+        for (let el = editable.parentElement; el; el = el.parentElement) {
+          state.resize.observe(el);
+        }
+      }
+      queue();
+    } catch (e) {
+      this._clearNoteLineNumbers(winState);
+      Zotero.debug('[ZoteroVim] note line-number setup: ' + e);
+    }
+  },
+
+  _queueNoteLineNumbers(state) {
+    if (state.disposed || state.frame !== null) return;
+    state.frame = state.win.requestAnimationFrame(() => {
+      state.frame = null;
+      if (state.disposed) return;
+      try { this._paintNoteLineNumbers(state); } catch (e) {
+        state.layer.replaceChildren();
+        Zotero.debug('[ZoteroVim] note line-number paint: ' + e);
+      }
+    });
+  },
+
+  /** Cache logical line starts per immutable document, not per scroll or selection. */
+  _noteLineNumberModel(editable, previous = null) {
+    const ctx = this._noteEditorContext(editable);
+    if (!ctx) return null;
+    if (previous?.doc === ctx.view.state.doc && previous.view === ctx.view) return previous;
+    const snapshot = this._noteTextSnapshot(editable);
+    if (!snapshot?.ctx) return null;
+    const model = { doc: ctx.view.state.doc, view: ctx.view, snapshot, groups: [], starts: [] };
+    for (const block of snapshot.blocks) {
+      let cell = null;
+      for (let i = block.ancestors.length - 1; i >= 0; i -= 1) {
+        const ancestor = block.ancestors[i];
+        if (/^(table_cell|table_header|tableCell|tableHeader)$/.test(ancestor.node.type.name)) {
+          cell = ancestor;
+          break;
+        }
+      }
+      const group = {
+        from: block.from, cellPos: cell?.pos,
+        heading: block.node.type.name === 'heading', lines: [],
+      };
+      let offset = block.start;
+      while (offset <= block.end) {
+        model.starts.push(offset);
+        group.lines.push({ number: model.starts.length, pos: snapshot.points[offset] });
+        const next = snapshot.text.indexOf('\n', offset);
+        if (next < 0 || next >= block.end) break;
+        offset = next + 1;
+      }
+      model.groups.push(group);
+    }
+    return model;
+  },
+
+  _noteLineNumberCurrent(model) {
+    const offset = this._noteNativeCaretOffset(model.snapshot);
+    let low = 0;
+    let high = model.starts.length;
+    while (low < high) {
+      const mid = (low + high) >> 1;
+      if (model.starts[mid] <= offset) low = mid + 1;
+      else high = mid;
+    }
+    return Math.max(1, low);
+  },
+
+  /** Intersect with scroll/overflow ancestors so labels cannot cover the toolbar. */
+  _noteLineNumberViewport(editable) {
+    const win = editable.ownerDocument.defaultView;
+    const rect = editable.getBoundingClientRect();
+    const clip = {
+      left: Math.max(0, rect.left), top: Math.max(0, rect.top),
+      right: Math.min(win.innerWidth, rect.right),
+      bottom: Math.min(win.innerHeight, rect.bottom),
+    };
+    for (let el = editable.parentElement; el; el = el.parentElement) {
+      const css = win.getComputedStyle(el);
+      const bounds = el.getBoundingClientRect();
+      const left = bounds.left + el.clientLeft;
+      const top = bounds.top + el.clientTop;
+      if (/auto|scroll|hidden|clip/.test(css.overflowX)) {
+        clip.left = Math.max(clip.left, left);
+        clip.right = Math.min(clip.right, left + el.clientWidth);
+      }
+      if (/auto|scroll|hidden|clip/.test(css.overflowY)) {
+        clip.top = Math.max(clip.top, top);
+        clip.bottom = Math.min(clip.bottom, top + el.clientHeight);
+      }
+    }
+    return clip;
+  },
+
+  _noteLineNumberElementSelector(editable, el) {
+    const path = [];
+    while (el && el !== editable) {
+      let index = 1;
+      for (let sibling = el.previousElementSibling; sibling;
+        sibling = sibling.previousElementSibling) {
+        index += 1;
+      }
+      path.unshift(el.tagName.toLowerCase() + ':nth-child(' + index + ')');
+      el = el.parentElement;
+    }
+    return el === editable && path.length
+      ? '.zv-note-numbered-editor > ' + path.join(' > ') : '';
+  },
+
+  /**
+   * Read a visible H1–H6 pseudo-element badge without changing its native style.
+   * Ignore Zotero's empty, wide click-target pseudo-elements. Transparent wide
+   * labels and inline SVG icons are measured inside the click target's padding.
+   */
+  _noteHeadingMarkerBox(state, block, coords = null) {
+    const bounds = block.getBoundingClientRect();
+    const px = value => parseFloat(value) || 0;
+    for (const pseudo of ['::before', '::after']) {
+      const css = state.win.getComputedStyle(block, pseudo);
+      const imageMarker = /url\(/i.test(css.content || '')
+        || /url\(/i.test(css.backgroundImage || '');
+      if ((!/\bH[1-6]\b/i.test(css.content || '') && !imageMarker)
+          || css.display === 'none' || css.visibility === 'hidden') continue;
+      const fontSize = px(css.fontSize) || 10;
+      const textWidth = fontSize * 1.4;
+      const width = px(css.width) || textWidth;
+      // Better Notes puts an 18px SVG inside a padded 64px click target.
+      // Its visible center is not the center of that pseudo-element's box.
+      let imageWidth = 0;
+      const svgURL = /url\(["']?(data:image\/svg\+xml[^"')]+)["']?\)/i
+        .exec(css.content || '');
+      if (svgURL) {
+        try {
+          const comma = svgURL[1].indexOf(',');
+          const data = svgURL[1].slice(comma + 1);
+          const svg = /;base64/i.test(svgURL[1].slice(0, comma))
+            ? state.win.atob(data) : decodeURIComponent(data);
+          const tag = /<svg\b[^>]*>/i.exec(svg)?.[0] || '';
+          imageWidth = px(/\bwidth\s*=\s*["'](\d+(?:\.\d+)?)(?:px)?["']/i
+            .exec(tag)?.[1]);
+        } catch (_) {}
+      }
+      const borderX = px(css.borderLeftWidth) + px(css.borderRightWidth);
+      const borderY = px(css.borderTopWidth) + px(css.borderBottomWidth);
+      const boxWidth = width + (css.boxSizing === 'border-box' ? 0
+        : borderX + px(css.paddingLeft) + px(css.paddingRight));
+      const boxHeight = (px(css.height) || px(css.lineHeight) || fontSize * 1.2)
+        + (css.boxSizing === 'border-box' ? 0
+          : borderY + px(css.paddingTop) + px(css.paddingBottom));
+      let left = bounds.left + px(css.marginLeft);
+      if (css.left && css.left !== 'auto') left += px(css.left);
+      else if (css.right && css.right !== 'auto') {
+        left = bounds.right - px(css.right) - px(css.marginRight) - boxWidth;
+      } else if (coords) left = coords.left + px(css.marginLeft);
+      let top = (coords?.top ?? bounds.top) + px(css.marginTop);
+      if (css.top && css.top !== 'auto') top = bounds.top + px(css.top) + px(css.marginTop);
+      else if (css.bottom && css.bottom !== 'auto') {
+        top = bounds.bottom - px(css.bottom) - px(css.marginBottom) - boxHeight;
+      }
+      const matrix = /^matrix\(([^)]+)\)$/.exec(css.transform || '');
+      if (matrix) {
+        const values = matrix[1].split(',').map(Number);
+        left += values[4] || 0;
+        top += values[5] || 0;
+      }
+      const hasBox = imageMarker || borderX || borderY
+        || (css.backgroundColor && !/^(transparent|rgba\(0, 0, 0, 0\))$/.test(css.backgroundColor));
+      const labelWidth = imageWidth || (hasBox ? boxWidth : Math.min(width, textWidth));
+      const innerWidth = imageWidth ? boxWidth - borderX
+        - px(css.paddingLeft) - px(css.paddingRight) : boxWidth;
+      const alignedInset = css.textAlign === 'right' || css.textAlign === 'end'
+        ? innerWidth - labelWidth : css.textAlign === 'center'
+          ? (innerWidth - labelWidth) / 2 : 0;
+      const inset = imageWidth ? px(css.borderLeftWidth) + px(css.paddingLeft) + alignedInset
+        : hasBox ? 0 : alignedInset;
+      return {
+        center: left + inset + labelWidth / 2,
+        bottom: top + (hasBox ? boxHeight : px(css.lineHeight) || fontSize * 1.2),
+      };
+    }
+    return null;
+  },
+
+  /** Only badged headings need vertical clearance; preserve native em-based margins. */
+  _noteLineNumberHeadingRules(state) {
+    const rules = [];
+    for (const group of state.model?.groups || []) {
+      if (!group.heading) continue;
+      const block = state.view.nodeDOM(group.from);
+      if (!block?.getBoundingClientRect || !this._noteHeadingMarkerBox(state, block)) continue;
+      const selector = this._noteLineNumberElementSelector(state.editable, block);
+      if (!selector) continue;
+      if (!state.headingMargins.has(block)) {
+        const css = state.win.getComputedStyle(block);
+        const fontSize = parseFloat(css.fontSize) || 16;
+        state.headingMargins.set(block,
+          Math.max(0, parseFloat(css.marginBottom) || 0) / fontSize);
+      }
+      const em = state.headingMargins.get(block).toFixed(4);
+      const gap = state.headingGaps.get(block) || 0;
+      rules.push('  ' + selector + ' { margin-bottom: max('
+        + gap + 'px, ' + em + 'em) !important; }');
+    }
+    return rules.join('\n');
+  },
+
+  _noteLineNumberStyle(state, count) {
+    const width = Math.max(24, String(count).length * 8 + 8);
+    const headingRules = this._noteLineNumberHeadingRules(state);
+    if (state.width === width && state.headingRules === headingRules) return false;
+    state.width = width;
+    state.headingRules = headingRules;
+    // Reuse the original compact margin. Heading badges and numbers share it
+    // vertically instead of making every paragraph surrender an extra column.
+    state.padding = Math.max(state.basePadding, width + 8);
+    state.style.textContent = [
+      // Limit spacing changes to screen: printing keeps Zotero's original layout.
+      '@media screen {',
+      '  .zv-note-numbered-editor { padding-left: ' + state.padding + 'px !important; }',
+      '  .zv-note-numbered-editor td, .zv-note-numbered-editor th {',
+      '    padding-left: ' + (width + 10) + 'px !important;',
+      '  }',
+      headingRules,
+      '}',
+      '.zv-note-line-numbers {',
+      '  position: fixed; overflow: hidden; z-index: 1; pointer-events: none;',
+      '  user-select: none; -moz-user-select: none;',
+      '}',
+      '.zv-note-line-numbers > span {',
+      '  position: absolute; box-sizing: border-box; text-align: right; padding-right: 4px;',
+      '  font: 12px monospace; color: var(--fill-tertiary, #777); border-radius: 3px;',
+      '}',
+      '.zv-note-line-numbers > .zv-note-current-line {',
+      '  color: var(--accent-blue, #3975d5); background: var(--accent-blue10, #e5efff);',
+      '  font-weight: bold;',
+      '}',
+      '.zv-note-line-numbers > .zv-note-heading-line {',
+      '  font-size: 9px; text-align: center; padding: 0 1px; border-radius: 2px;',
+      '}',
+      '@media (prefers-color-scheme: dark) {',
+      '  .zv-note-line-numbers > span { color: var(--fill-tertiary, #aaa); }',
+      '  .zv-note-line-numbers > .zv-note-current-line {',
+      '    color: var(--accent-blue, #b4ceff); background: var(--accent-blue10, #263b57);',
+      '  }',
+      '}',
+      '@media print { .zv-note-line-numbers { display: none !important; } }',
+    ].join('\n');
+    return true;
+  },
+
+  /**
+   * Skip offscreen text blocks before measuring individual lines. Binary-search
+   * very long code/hard-break blocks. Table cells get their own reserved gutter,
+   * but keep global document-order numbers matching G and j/k.
+   */
+  _paintNoteLineNumbers(state) {
+    if (!state.editable.isConnected) { state.layer.replaceChildren(); return; }
+    const model = this._noteLineNumberModel(state.editable, state.model);
+    if (!model) { state.layer.replaceChildren(); return; }
+    state.model = model;
+    state.selection = state.view.state.selection;
+    this._noteLineNumberStyle(state, model.starts.length);
+    const clip = this._noteLineNumberViewport(state.editable);
+    const width = Math.max(0, clip.right - clip.left);
+    const height = Math.max(0, clip.bottom - clip.top);
+    const style = state.layer.style;
+    style.left = clip.left + 'px';
+    style.top = clip.top + 'px';
+    style.width = width + 'px';
+    style.height = height + 'px';
+    if (!width || !height) { state.layer.replaceChildren(); return; }
+    const current = this._noteLineNumberCurrent(model);
+    const rootRect = state.editable.getBoundingClientRect();
+    const left = rootRect.left + state.padding - state.width - 8;
+    const fragment = state.doc.createDocumentFragment();
+    for (const group of model.groups) {
+      const block = state.view.nodeDOM(group.from);
+      if (!block?.getBoundingClientRect) continue;
+      const bounds = block.getBoundingClientRect();
+      const headingGap = group.heading ? Math.max(14, state.headingGaps.get(block) || 0) : 0;
+      if (bounds.bottom + headingGap < clip.top || bounds.top > clip.bottom) continue;
+      const cell = group.cellPos === undefined ? null : state.view.nodeDOM(group.cellPos);
+      const cellRect = cell?.getBoundingClientRect();
+      const x = cellRect ? cellRect.left + 5 : left;
+      const marker = group.heading ? this._noteHeadingMarkerBox(state, block) : null;
+      let low = 0;
+      let high = group.lines.length;
+      // A compact heading number may still be visible after its text has scrolled out.
+      while (!marker && low < high) {
+        const mid = (low + high) >> 1;
+        const coords = state.view.coordsAtPos(group.lines[mid].pos, 1);
+        if (coords.bottom < clip.top) low = mid + 1;
+        else high = mid;
+      }
+      let lastHeadingBottom = -Infinity;
+      for (let i = low; i < group.lines.length; i += 1) {
+        const line = group.lines[i];
+        const coords = state.view.coordsAtPos(line.pos, 1);
+        if (coords.top > clip.bottom) break;
+        let rowX = x;
+        let rowTop = coords.top;
+        let rowWidth = state.width;
+        let rowHeight = Math.max(14, coords.bottom - coords.top);
+        if (marker) {
+          rowWidth = Math.ceil(Math.max(18, String(line.number).length * 5.4 + 4));
+          rowHeight = 10;
+          rowX = Math.max(clip.left,
+            Math.min(marker.center - rowWidth / 2, coords.left - rowWidth - 2));
+          rowTop = Math.max(i === 0 ? marker.bottom + 1 : coords.bottom + 1,
+            lastHeadingBottom + 1);
+          lastHeadingBottom = rowTop + rowHeight;
+        }
+        if (rowTop > clip.bottom || rowTop + rowHeight < clip.top
+            || rowX + rowWidth < clip.left || rowX > clip.right) continue;
+        const row = state.doc.createElement('span');
+        row.textContent = String(line.number);
+        row.className = [line.number === current ? 'zv-note-current-line' : '',
+          marker ? 'zv-note-heading-line' : ''].filter(Boolean).join(' ');
+        row.style.cssText = 'left:' + (rowX - clip.left) + 'px;top:'
+          + (rowTop - clip.top) + 'px;width:' + rowWidth + 'px;height:'
+          + rowHeight + 'px;line-height:' + rowHeight + 'px;';
+        fragment.appendChild(row);
+      }
+      if (marker && Number.isFinite(lastHeadingBottom)) {
+        state.headingGaps.set(block, Math.max(0, Math.ceil(lastHeadingBottom - bounds.bottom + 2)));
+      }
+    }
+    state.layer.replaceChildren(fragment);
+    if (this._noteLineNumberStyle(state, model.starts.length)) this._queueNoteLineNumbers(state);
   },
 
   _findEditableInDocument(doc) {
@@ -1185,6 +1608,28 @@ Object.assign(ZoteroVim, {
     return tr.setSelection(selection);
   },
 
+  /** Map the live native/DOM caret into a cached snapshot without rescanning text. */
+  _noteNativeCaretOffset(snapshot) {
+    const { ctx, editableEl, points } = snapshot;
+    let caret = ctx.view.state.selection.from;
+    try {
+      const sel = editableEl.ownerDocument.getSelection();
+      if (sel?.rangeCount && ctx.view.dom.contains(sel.anchorNode)) {
+        caret = ctx.view.posAtDOM(sel.anchorNode, sel.anchorOffset);
+      }
+    } catch (_) {}
+    let low = 0;
+    let high = points.length;
+    while (low < high) {
+      const mid = (low + high) >> 1;
+      if (points[mid] < caret) low = mid + 1;
+      else high = mid;
+    }
+    if (!low) return 0;
+    if (low === points.length) return Math.max(0, low - 1);
+    return caret - points[low - 1] <= points[low] - caret ? low - 1 : low;
+  },
+
   /**
    * Build a text/position map without losing the editor's rich-text structure.
    * Paragraph boundaries and hard breaks are logical newlines; soft wrapping
@@ -1249,17 +1694,7 @@ Object.assign(ZoteroVim, {
         }
       };
       walk(ctx.view.state.doc, 0, []);
-      let caret = ctx.view.state.selection.from;
-      try {
-        if (sel?.rangeCount && ctx.view.dom.contains(sel.anchorNode)) {
-          caret = ctx.view.posAtDOM(sel.anchorNode, sel.anchorOffset);
-        }
-      } catch (_) {}
-      let best = Infinity;
-      for (let i = 0; i < snapshot.points.length; i += 1) {
-        const distance = Math.abs(snapshot.points[i] - caret);
-        if (distance < best) { snapshot.caret = i; best = distance; }
-      }
+      snapshot.caret = this._noteNativeCaretOffset(snapshot);
       return snapshot;
     }
 

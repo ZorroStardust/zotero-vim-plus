@@ -1,3 +1,5 @@
+/* global Zotero, Components, Services, document, window, MutationObserver, dump,
+  ZV_I18N_CURRENT_LANG, ZV_I18N_APPLY, ZV_I18N_STR, ZV_I18N_ACTION */
 "use strict";
 
 // ── Pref helpers ─────────────────────────────────────────────────────────────
@@ -458,6 +460,7 @@ function _zvInit() {
     const visualCb = document.getElementById("zv-visual-enabled");
     const insertCb = document.getElementById("zv-insert-enabled");
     const noteEditorCb = document.getElementById("zv-note-editor-enabled");
+    const noteNumbersCb = document.getElementById("zv-note-line-numbers");
     const modesStatus = document.getElementById("zv-modes-status");
 
     if (visualCb) {
@@ -471,6 +474,10 @@ function _zvInit() {
     if (noteEditorCb) {
       noteEditorCb.checked = _zvGet("noteEditor.enabled", true);
       _zvSaveCheckbox(noteEditorCb, "noteEditor.enabled", modesStatus);
+    }
+    if (noteNumbersCb) {
+      noteNumbersCb.checked = _zvGet("noteEditor.lineNumbers", true);
+      _zvSaveCheckbox(noteNumbersCb, "noteEditor.lineNumbers", modesStatus);
     }
   });
 

@@ -20,6 +20,7 @@ if command -v node >/dev/null 2>&1; then
   node tools/check-sync.js
   node tools/check-note-editor-routing.js
   node tools/check-note-editing.js
+  node tools/check-note-line-numbers.js
   node tools/check-insert-mode-shifts.js
   node tools/check-count-digit-guard.js
   node tools/check-reader-listeners.js

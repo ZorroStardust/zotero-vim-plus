@@ -362,6 +362,10 @@ Insert mode passes `Ctrl+Backspace` through to the editor; `Ctrl+h` / `Ctrl+l`
 remain explicit pane-focus shortcuts. `<space>bj` is also available in Normal
 mode to choose a tab directly.
 
+Turning off note editor Vim mode restores native note input. Main-window
+navigation shortcuts, including Backspace (parent collection), do not intercept
+keys while typing in a note tab or the side-panel note editor.
+
 Absolute line numbers are shown by default in the active note editor, with the
 current line number highlighted. They use the same logical lines as `12G`,
 `12gg` and `j` / `k`: empty paragraphs and explicit breaks count, but soft

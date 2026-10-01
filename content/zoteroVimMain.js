@@ -142,7 +142,16 @@ Object.assign(ZoteroVim, {
     // This prevents main item-list handlers from stealing hjkl/backspace.
     // The editor's original event handles tab switching in Normal mode;
     // forwarded copies must not execute it again (issue #6).
-    if (this.isNoteEditorVimEnabled() && this._isStandaloneNoteTabSelected(win)) {
+    const active = win?.document?.activeElement;
+    const noteTabSelected = this._isStandaloneNoteTabSelected(win);
+    const noteVimEnabled = this.isNoteEditorVimEnabled();
+    if (noteTabSelected && !noteVimEnabled) {
+      // Disabling note Vim must leave native note keys alone, including while
+      // its iframe is loading. Explicit library/search focus still works.
+      if (!active || /^(browser|iframe)$/i.test(active.localName || active.tagName || '')
+          || this._isMainNoteTextEditing(win, e)) return;
+    }
+    if (noteVimEnabled && noteTabSelected) {
       const noteMode = String(winState?._contextNoteMode || 'normal');
 
       // Zotero also exposes note-tab key events at the main-window boundary.
@@ -169,7 +178,6 @@ Object.assign(ZoteroVim, {
     // Zotero 7's HTML conversion, but we also guard 'textbox' and 'search'
     // for safety.  Without this guard the space leader key is swallowed and
     // can't be typed in search fields.
-    const active = win.document.activeElement;
     if (active) {
       const tag = active.tagName  || '';
       const loc = active.localName || '';
@@ -186,6 +194,10 @@ Object.assign(ZoteroVim, {
         return;
       }
     }
+
+    // A note iframe is not an editable element in the chrome document.
+    // Protect every native note key, not just J/K, even with note Vim disabled.
+    if (this._isMainNoteTextEditing(win, e)) return;
 
     const keyStr = this._keyString(e);
     if (!keyStr) return;
@@ -261,7 +273,48 @@ Object.assign(ZoteroVim, {
     this._processBuffer(newBuffer, exact, possible, modePrefix, bindings, winState);
   },
 
-/**
+  /**
+   * Detect native note focus independently of the optional Vim listener.
+   * Iframes retain their activeElement after focus returns to the library, so
+   * require the original event, Gecko focus, or the main document's focus chain.
+   */
+  _isMainNoteTextEditing(win, event = null) {
+    try {
+      const isEditing = frameWin => {
+        const doc = frameWin?.document;
+        return !!doc && (this._isEditableElement(doc.activeElement)
+          || String(doc.designMode || '').toLowerCase() === 'on');
+      };
+      const noteWin = this._getActiveMainNoteEditorWindow(win);
+      const noteDoc = noteWin?.document;
+      if (noteDoc && isEditing(noteWin)) {
+        if (event?.target?.ownerDocument === noteDoc || event?.view === noteWin) return true;
+        if (Services.focus?.focusedWindow === noteWin) return true;
+      }
+      // Older library note editors may not be exposed by ZoteroContextPane.
+      const eventWin = event?.target?.ownerDocument?.defaultView || event?.view;
+      if (this._isLikelyMainNoteEditorWindow(eventWin, win) && isEditing(eventWin)) return true;
+
+      // The chrome activeElement may be a browser/iframe wrapper, with another
+      // wrapper inside it. Do not confuse an unfocused side-panel editor with
+      // the currently focused collection tree.
+      let active = win?.document?.activeElement;
+      for (let depth = 0; active && depth < 10; depth += 1) {
+        if (active.shadowRoot?.activeElement) {
+          active = active.shadowRoot.activeElement;
+          continue;
+        }
+        const frameWin = active.contentWindow;
+        if (!frameWin) break;
+        if ((frameWin === noteWin || this._isLikelyMainNoteEditorWindow(frameWin, win))
+            && isEditing(frameWin)) return true;
+        active = frameWin.document?.activeElement;
+      }
+    } catch (_) {}
+    return false;
+  },
+
+  /**
    * True when the user is actually editing text somewhere the keystroke should
    * reach the editor rather than trigger a main-mode binding.  Covers the
    * side-panel / standalone note editor and the PDF reader's annotation-
@@ -277,7 +330,8 @@ Object.assign(ZoteroVim, {
   _isMainTextEditing(win, winState) {
     if (!win || !winState) return false;
     // (a) Plugin-tracked insert mode in the note editor.
-    if (winState._contextNoteMode === 'insert') return true;
+    if (this.isNoteEditorVimEnabled() && winState._contextNoteMode === 'insert') return true;
+    if (this._isMainNoteTextEditing(win)) return true;
     // (b) Native focus on an editable inside the context note editor
     //     (side panel) — even when mode is still 'normal' the user is typing.
     try {

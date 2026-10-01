@@ -141,9 +141,18 @@ Object.assign(ZoteroVim, {
     // Shift+J/K to insert characters, not switch tabs (see issue #5).
     if (this.isNoteEditorVimEnabled() && this._isStandaloneNoteTabSelected(win)) {
       const noteMode = String(winState?._contextNoteMode || 'normal');
-      const keyStr = this._keyString(e);
 
-      this._onMainContextNoteKeyDown(e, win, winState);
+      // Zotero also exposes note-tab key events at the main-window boundary.
+      // When the real editor iframe listener is installed, handling that
+      // forwarded event here would execute the motion a second time without
+      // cancelling the iframe's native text input (issue #6).
+      this._syncMainContextNoteListener(win, winState);
+      const noteWin = winState?._contextNoteEditorWin || null;
+      const eventWin = e.view || e.target?.ownerDocument?.defaultView || null;
+      const hasDirectNoteAPI = typeof Zotero.Notes?.getByTabID === 'function';
+      if ((!noteWin && !hasDirectNoteAPI) || eventWin === noteWin) {
+        this._onMainContextNoteKeyDown(e, win, winState);
+      }
       if (!e.defaultPrevented && noteMode === 'normal') {
         e.preventDefault();
         e.stopPropagation();
@@ -570,6 +579,9 @@ Object.assign(ZoteroVim, {
 
   _isStandaloneNoteTabSelected(win) {
     try {
+      const selectedType = String(win?.Zotero_Tabs?.selectedType || '').toLowerCase();
+      if (selectedType) return /^note(?:-|$)/.test(selectedType);
+
       const tab = this._getSelectedMainTab(win);
       if (!tab) return false;
       const text = [
@@ -645,13 +657,31 @@ Object.assign(ZoteroVim, {
     try {
       const tab = this._getSelectedMainTab(win);
       const maybeNoteTab = this._isStandaloneNoteTabSelected(win);
+      if (!maybeNoteTab) return null;
+
+      // Zotero 10 exposes the selected note tab's EditorInstance directly.
+      // Its _iframeWindow is the window that owns the original keydown and
+      // therefore the only place where preventDefault() can suppress text
+      // insertion reliably. Keep the DOM scan below for older Zotero builds.
+      const tabID = win?.Zotero_Tabs?.selectedID || tab?.id || tab?.tabID || null;
+      const getEditorByTabID = Zotero.Notes?.getByTabID;
+      if (typeof getEditorByTabID === 'function') {
+        const editorInstance = tabID
+          ? getEditorByTabID.call(Zotero.Notes, tabID)
+          : null;
+        const editorWin = editorInstance?._iframeWindow || null;
+        if (this._isLikelyMainNoteEditorWindow(editorWin, win)) {
+          return editorWin;
+        }
+        // The selected note may still be loading. Do not attach to another
+        // visible note editor while Zotero's direct lookup is authoritative.
+        return null;
+      }
 
       const focusedWin = Services.focus?.focusedWindow || null;
       if (this._isLikelyMainNoteEditorWindow(focusedWin, win)) {
         return focusedWin;
       }
-
-      if (!maybeNoteTab) return null;
 
       const nestedCandidates = [
         tab?.browser?.contentWindow,
@@ -676,11 +706,17 @@ Object.assign(ZoteroVim, {
 
   _getActiveMainNoteEditorWindow(win) {
     try {
+      // A selected note tab must win over the context-pane editor. Otherwise
+      // the listener can be installed into a different note iframe while the
+      // main-window bridge still executes motions in the selected tab.
+      if (this._isStandaloneNoteTabSelected(win)) {
+        return this._getActiveStandaloneNoteEditorWindow(win);
+      }
+
       const contextEditor = this._getActiveContextNoteEditor(win);
       const contextWin = this._getContextNoteEditorWindow(contextEditor);
       if (this._isLikelyMainNoteEditorWindow(contextWin, win)) return contextWin;
-
-      return this._getActiveStandaloneNoteEditorWindow(win);
+      return null;
     } catch (_) {
       return null;
     }
@@ -740,7 +776,7 @@ Object.assign(ZoteroVim, {
     if (!winState) return;
     if (!this.isNoteEditorVimEnabled()) return;
     // The same handler is installed on both the note window and its document
-    // as a capture listener. stopPropagation() covers the handled branches,
+    // as a capture listener. stopImmediatePropagation() covers handled keys,
     // but insert-mode passthrough returns without stopping propagation; this
     // guard keeps that second invocation from becoming observable if the
     // handler ever does work in that branch.
@@ -756,7 +792,7 @@ Object.assign(ZoteroVim, {
     if (isCtrlH) {
       this._clearMainContextNoteKeyState(winState);
       event.preventDefault();
-      event.stopPropagation();
+      event.stopImmediatePropagation();
       void this._focusReaderContent(win);
       return;
     }
@@ -764,7 +800,7 @@ Object.assign(ZoteroVim, {
     if (keyStr === 'ctrl+l') {
       this._clearMainContextNoteKeyState(winState);
       event.preventDefault();
-      event.stopPropagation();
+      event.stopImmediatePropagation();
       void this._focusContextNoteEditor(win);
       this._mainShowStatus(win, '▶ note', 700);
       return;
@@ -775,7 +811,7 @@ Object.assign(ZoteroVim, {
     if (mode === 'insert') {
       if (keyStr === 'escape') {
         event.preventDefault();
-        event.stopPropagation();
+        event.stopImmediatePropagation();
         this._clearMainContextNoteKeyState(winState);
         winState._contextNoteMode = 'normal';
         this._syncNoteCursorVisualState(event.target?.ownerDocument || null, 'normal', event.target);
@@ -784,9 +820,13 @@ Object.assign(ZoteroVim, {
       return;
     }
 
+    // Normal mode consumes every key. Cancel the original editor event before
+    // changing the selection so ProseMirror cannot turn a motion into text if
+    // command execution or cursor synchronisation later fails.
+    event.preventDefault();
+    event.stopImmediatePropagation();
+
     if (keyStr === 'i') {
-      event.preventDefault();
-      event.stopPropagation();
       this._clearMainContextNoteKeyState(winState);
       winState._contextNoteMode = 'insert';
       this._syncNoteCursorVisualState(event.target?.ownerDocument || null, 'insert', event.target);
@@ -795,8 +835,6 @@ Object.assign(ZoteroVim, {
     }
 
     if (keyStr === 'escape') {
-      event.preventDefault();
-      event.stopPropagation();
       this._clearMainContextNoteKeyState(winState);
       winState._contextNoteMode = 'normal';
       this._syncNoteCursorVisualState(event.target?.ownerDocument || null, 'normal', event.target);
@@ -809,14 +847,8 @@ Object.assign(ZoteroVim, {
       if (String(winState._contextNoteMode || 'normal') === 'normal') {
         this._syncNoteCursorVisualState(event.target?.ownerDocument || null, 'normal', event.target);
       }
-      event.preventDefault();
-      event.stopPropagation();
       return;
     }
-
-    // In note Normal mode, unbound keys should not be typed into the editor.
-    event.preventDefault();
-    event.stopPropagation();
   },
 
   _clearMainContextNoteKeyState(winState) {

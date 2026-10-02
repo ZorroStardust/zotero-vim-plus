@@ -1,26 +1,29 @@
-# Issue #6: note input diagnostics
+# Issue #6: archived candidate fix and note input diagnostics
 
-This is a temporary **diagnostic build**, not a confirmed fix. It observes the
-existing behavior without blocking extra input events or changing Vim motions.
+The reporter [confirmed the fix in note tabs and side notes on October 2, 2026](https://github.com/ZorroStardust/zotero-vim-plus/issues/6#issuecomment-5947724456).
+The instructions below are retained only to document the investigation.
+
+`1.9.1pre3` was a temporary **candidate-fix build** sent for macOS testing. It adds
+editor-level character-input guards and library item-pane note detection. Its
+opt-in diagnostic observers only record events; they never modify notes or
+cancel events themselves. The guards are part of the regular plugin code too.
 
 ## Install
 
 1. Extract `zotero-vim-plus-issue-6-diagnostics.zip`.
 2. In Zotero, open **Tools → Plugins**, then the gear menu →
    **Install Plugin From File…**, and select
-   `zotero-vim-plus-1.9.1pre2-diagnostics.xpi`.
+   `zotero-vim-plus-1.9.1pre3-diagnostics.xpi`.
 3. Restart Zotero. In the plugin list, confirm the name is
-   **Zotero Vim Plus (Issue #6 Diagnostics)** and the version is **1.9.1pre2**.
+   **Zotero Vim Plus (Issue #6 Diagnostics)** and the version is **1.9.1pre3**.
 
-The diagnostic package replaces the existing plugin using the same add-on ID;
-you do not need to uninstall it or reset your settings. It retains the regular
-update URL because Zotero requires it for installation; the current regular
-release (1.9.0) is older and will not replace this test version automatically.
-You can turn off automatic updates in the plugin's details while testing.
-After testing, install the regular XPI again and restart Zotero.
+The diagnostic package uses the existing add-on ID and retains the regular
+update URL because Zotero requires it for installation. After testing, install
+the regular XPI again and restart Zotero.
 
 The earlier `1.9.1pre1` package omitted the mandatory update URL and was rejected
-by Zotero 10 as incompatible. Use `1.9.1pre2`, not that earlier XPI.
+by Zotero 10 as incompatible. `1.9.1pre2` collected the original problem reports;
+`1.9.1pre3` was the candidate fix subsequently confirmed by the reporter.
 
 ## Record the problem
 
@@ -43,6 +46,24 @@ by Zotero 10 as incompatible. Use `1.9.1pre2`, not that earlier XPI.
 6. If possible, repeat in the right-side note editor. Click **Start recording**
    again for a fresh report and save it as `side-panel-report.txt`. Say how you opened
    the side-panel editor. If this is unavailable, just send the note-tab result.
+
+Also check these without recording, or in separate short recordings to avoid
+the record limit:
+
+- `i`, `a`, `o` and `O` enter Insert without adding the command letter. Then type
+  a few characters and use Backspace; these should work normally.
+- Search with `/`, type a query, then Enter or Escape. The search field must
+  accept ordinary text without adding the opening `/` or an unwanted newline.
+- Try Visual selection, a simple edit, and `u` / Ctrl+r (undo/redo).
+- Test both a library note (select a note in the item list to show it on the
+  right) and a reader-sidebar note (open Notes beside a PDF). These are different
+  editor locations; say which one you tested.
+- Turn note Vim off temporarily. Ordinary typing and Backspace must stay native.
+
+Expected: Normal/Visual motions never alter the note text, except explicit Vim
+editing commands. If character events still appear in a report, the guard should
+cancel them before they result in `input` or a document change. An unrelated
+DOM mutation from UI decorations is not itself proof of a text change.
 
 Each recording stops automatically after 60 seconds or 450 records. Starting
 a new recording clears the previous one, so save each report before restarting.

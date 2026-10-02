@@ -28,8 +28,7 @@ try {
   manifest.name = 'Zotero Vim Plus (Issue #6 Diagnostics)';
   // Zotero 10 requires applications.zotero.update_url even for local test
   // packages. Preserve the stable URLs and ID rather than invalidating the
-  // manifest to disable updates. Stable 1.10.0+ can update this historical
-  // test version; disable automatic updates only when reproducing its trace.
+  // manifest to disable updates.
   const errors = checkPluginManifest(manifest);
   if (errors.length) throw new Error('Invalid diagnostic manifest: ' + errors.join('; '));
   fs.writeFileSync(path.join(stage, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n');

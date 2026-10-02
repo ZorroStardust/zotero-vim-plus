@@ -1,15 +1,29 @@
-Thanks for testing again and confirming that you're using macOS. I haven't
-reproduced this locally yet, so I don't want to assume that macOS itself is the
-cause. I've prepared a temporary diagnostic build to check where the motion
-keys are being handled and why they can still insert text. **This is a
-diagnostic build, not a confirmed fix.**
+# Archived issue #6 candidate-fix reply (1.9.1pre3)
+
+This reply was prepared before the reporter's macOS confirmation. The reporter
+[confirmed the fix in both note tabs and side notes](https://github.com/ZorroStardust/zotero-vim-plus/issues/6#issuecomment-5947724456).
+For current installation instructions, use the
+[stable release](https://github.com/ZorroStardust/zotero-vim-plus/releases/latest).
+
+---
+
+Thanks for the reports — they were very helpful. They show that the Vim motion
+handler ran and canceled `keydown`, but subsequent character-input events still
+inserted the same letter. The note-tab editor was correctly identified, so this
+is not just an installation or mode-selection problem.
+
+I've prepared **1.9.1pre3**, a candidate fix with the diagnostic panel retained.
+It guards the later character-input events, lets the original key reach the
+editor listener, and also recognizes the library's right-side note editor.
+**The local checks pass, but I still need your macOS test before calling this
+confirmed fixed.**
 
 Could you try the attached ZIP?
 
-1. Extract it and install `zotero-vim-plus-1.9.1pre2-diagnostics.xpi` through
+1. Extract it and install `zotero-vim-plus-1.9.1pre3-diagnostics.xpi` through
    **Tools → Plugins → gear menu → Install Plugin From File…**. Restart Zotero
    and confirm the plugin name is **Zotero Vim Plus (Issue #6 Diagnostics)**,
-   version **1.9.1pre2**. No uninstall or settings reset is needed.
+   version **1.9.1pre3**. No uninstall or settings reset is needed.
 2. Temporarily disable other third-party plugins and restart Zotero. Keep note
    Vim enabled and select an English keyboard input source, such as ABC or U.S.
 3. Create a disposable note with two lines: `abcdef` and `ghijkl`. Open it in
@@ -25,6 +39,15 @@ Could you try the attached ZIP?
 6. If possible, repeat in the right-side note editor, starting a fresh
    recording, and attach `side-panel-report.txt` too. Save the first report
    before starting another recording.
+
+Also try `i`, `a`, `o`, `O`, search with `/`, Visual selection, and undo/redo.
+The Insert-entry command letters should not appear in the note, while subsequent
+typing and Backspace should work normally. Turning note Vim off should leave
+ordinary typing and Backspace working too.
+
+The library's right-side note editor (select a note in the item list) is separate
+from the reader's Notes sidebar beside a PDF. If possible, test both and say
+which one you used. Keep recordings short to avoid the record limit.
 
 Please include your macOS and Zotero versions, usual keyboard input source,
 other plugins normally enabled, and whether Esc displayed **NOTE NORMAL**.

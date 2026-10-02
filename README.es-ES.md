@@ -6,8 +6,8 @@
 >
 > Este repositorio es una bifurcación del proyecto original Zotero Vim.
 
-Atajos de teclado al estilo Vim para el lector de PDF de Zotero 7/8. Navega, desplázate,
-anota y copia texto sin necesidad de usar el ratón.
+Atajos de teclado al estilo Vim para el lector de PDF y los editores de notas de
+Zotero 7–10. Navega, anota, busca y edita notas con formato sin usar el ratón.
 
 Programado con emoción por Claude Sonnet 4.5.
 
@@ -24,6 +24,7 @@ Programado con emoción por Claude Sonnet 4.5.
 - [Modos](#modos)
 - [Atajos de teclado predeterminados](#atajos-de-teclado-predeterminados)
   - [Modo normal](#modo-normal)
+  - [Editor Vim de notas](#editor-vim-de-notas)
     - [Modo cursor](#modo-cursor)
   - [Modo visual](#modo-visual)
   - [Modo inserción](#modo-inserción)
@@ -41,7 +42,8 @@ Programado con emoción por Claude Sonnet 4.5.
 - **Modo cursor**: mover un cursor de texto como los plugins Vim del navegador sin seleccionar texto (`hjkl`, `w/W`, `b/B`, `0/$`, y prefijos de conteo como `2w`).
 - **Modo visual**: construir selecciones de texto por línea, carácter, palabra, oración o párrafo; crear resaltados o notas de color; copiar la selección o todo el párrafo al portapapeles.
 - **Modo inserción**: pasar temporalmente todas las teclas a Zotero (útil al escribir en campos de formulario); también enfoca el campo de comentario de anotación cuando se selecciona una anotación.
-- **Totalmente remapable**: cada acción puede ser reasignada desde el panel de preferencias.
+- **Editor Vim de notas**: modos Normal, Insertar y Visual por carácter o línea en pestañas de notas, el panel de elementos y la barra lateral del lector; movimientos precisos, búsqueda literal, objetos de texto, operadores, indicaciones de comandos y números de línea compactos.
+- **Acciones del lector y de la ventana principal reasignables**: se configuran en preferencias; los comandos de edición de notas usan actualmente teclas Vim predefinidas.
 - **Sin colisiones de atajos**: las teclas consumidas por vim se interceptan antes del manejo de teclado del lector de Zotero, así `l` (página siguiente) no dispara la lectura en voz alta incorporada y `h`/`s`/`Ctrl+F` no alternan la herramienta de mano / herramienta de puntero / barra de búsqueda.
 - **Postprocesamiento de texto**: todas las operaciones de yank normalizan las ligaduras Unicode (`ﬁ` → `fi`, etc.) y colapsan los saltos de línea de separación de PDF en espacios.
 
@@ -49,18 +51,18 @@ Programado con emoción por Claude Sonnet 4.5.
 
 ## Requisitos
 
-- Zotero 7, 8 o 9 (el plugin utiliza la API de arranque de Zotero 7+).
+- Zotero 7–10 (el plugin utiliza la API de arranque de Zotero 7+).
 - macOS, Linux o Windows.
 
 ---
 
 ## Instalación
 
-1. Descarga `zotero-vim-plus.xpi` desde la página de lanzamientos (o compílalo tú mismo — ver más abajo).
+1. Descarga `zoetero-vim-plus.xpi` desde el [último lanzamiento](https://github.com/ZorroStardust/zotero-vim-plus/releases/latest) (o compílalo tú mismo — ver más abajo).
 2. Abre Zotero.
 3. Ve a **Herramientas → Plugins**.
 4. Haz clic en el **icono de engranaje (⚙)** en la esquina superior derecha de la ventana de Plugins.
-5. Elige **Instalar plugin desde archivo…** y selecciona `zotero-vim-plus.xpi`.
+5. Elige **Instalar plugin desde archivo…** y selecciona `zoetero-vim-plus.xpi`.
 6. Reinicia Zotero cuando se te solicite.
 
 Para actualizar, repite los mismos pasos con el nuevo `.xpi`. Zotero reemplazará la versión antigua automáticamente.
@@ -78,8 +80,9 @@ cd zotero-vim-plus
 `build.sh` comprime el código fuente del plugin en `zoetero-vim-plus.xpi`. No se
 necesitan herramientas de compilación ni gestores de paquetes — solo `zip`
 (disponible por defecto en macOS y la mayoría de distribuciones Linux). Si
-`node` está disponible, el script también verifica la sintaxis de los archivos
-JS y que las tablas de atajos (zoteroVim.js vs prefs.js) estén sincronizadas.
+`node` está disponible, el script también verifica la sintaxis JS, el manifiesto,
+la sincronización de atajos y las pruebas de regresión. Node.js no es necesario
+para ejecutar el plugin.
 
 ```
 zotero-vim-plus/
@@ -247,40 +250,149 @@ Si el número de elementos es pequeño, las pistas son caracteres simples; de lo
 | `Ctrl+k` | Enfocar el panel dividido encima (o alternar panel en división vertical) |
 | `Ctrl+l` | En división vertical, moverse al panel derecho del lector primero y luego al editor de notas lateral; de lo contrario, enfocar el panel dividido a la derecha |
 
-#### Editor de notas (panel de contexto y pestaña de nota independiente)
+#### Editor Vim de notas
 
-Cuando un editor de notas de Zotero tiene el foco (panel de contexto lateral o una pestaña de nota independiente), el plugin proporciona una capa mínima al estilo Vim.
+Cuando un editor de notas tiene el foco, el plugin permite navegar, buscar y
+editar con formato al estilo Vim. Funciona en el panel de elementos de la
+biblioteca, la barra lateral de notas del lector y las pestañas de notas.
+Es independiente de los modos del lector PDF y está activado por defecto en
+**Ajustes → Zotero Vim Plus → Modos**.
+
+Para empezar, haz clic en el texto de una nota y pulsa `Escape`; comprueba que
+aparece **NOTE NORMAL**. Usa `hjkl` para moverte, `i` para escribir y `Escape`
+para volver a Normal. Prueba `12G` para ir a la línea 12, `f,` para buscar una
+coma, `/` para buscar texto, `viw` para seleccionar una palabra o `ci"` para
+cambiar el contenido entre comillas. Una indicación inferior explica los
+comandos que esperan otra tecla, como `f`, `d` o `ci`.
 
 | Tecla | Acción |
 |-----|--------|
 | `i` | Entrar en modo Insertar de notas (pasar escritura) |
-| `a` / `A` / `I` | Entrar en modo Insertar en el siguiente carácter / final de línea / inicio de línea |
+| `a` / `A` / `I` | Entrar en Insertar en el siguiente carácter / final de línea / primer carácter no blanco |
 | `o` / `O` | Abrir línea debajo / encima y entrar en modo Insertar |
 | `Escape` | Volver al modo Normal de notas |
 | `h` / `l` | Mover cursor hacia la izquierda / derecha |
 | `j` / `k` | Mover cursor hacia abajo / arriba línea |
 | `w` / `e` / `b` | Mover por palabra (adelante inicio / adelante fin / atrás) |
 | `W` / `E` / `B` | Variantes de big-palabra |
-| `0` / `^` / `$` | Mover al inicio de línea / primer no-blanco (aproximado) / fin de línea |
+| `0` / `^` / `$` | Mover al inicio de línea / primer carácter no blanco / fin de línea |
 | `gg` | Saltar a la primera línea |
 | `G` | Saltar a la última línea |
 | `3j` (ejemplo) | Prefijo de conteo para movimientos (repetir 3 veces) |
 | `3G` / `12gg` | Prefijo de conteo para saltar a una línea específica |
+| `f{carácter}` / `F{carácter}` | Buscar la siguiente / anterior aparición en la línea lógica actual |
+| `t{carácter}` / `T{carácter}` | Moverse justo antes / después de la siguiente / anterior aparición |
+| `;` / `,` | Repetir la última búsqueda de carácter en la misma dirección / la opuesta |
+| `%` | Saltar entre pares `()` / `[]` / `{}`; primero buscar un delimitador desde el cursor en esta línea |
+| `50%` (ejemplo) | Saltar a la línea situada al 50% del documento |
+| `/` / `?` | Buscar hacia delante / atrás; Enter confirma y Escape cancela |
+| `n` / `N` | Resultado en la dirección recordada / la opuesta, con búsqueda circular |
+| `*` / `#` | Buscar la palabra completa bajo el cursor hacia delante / atrás |
+| `v` / `V` | Entrar en Visual por carácter / línea lógica |
+| `gv` | Restaurar la última selección Visual si el texto no ha cambiado |
 | `x` | Eliminar carácter en cursor |
 | `dd` | Eliminar línea actual |
 | `yy` | Copiar línea actual al portapapeles |
 | `dw` / `de` / `db` / `d$` | Eliminar por movimiento (palabra/palabra-fin/antes-palabra/hasta fin de línea) |
 | `yw` / `ye` / `yb` / `y$` | Copiar por movimiento |
 | `cw` / `ce` / `c$` | Cambiar por movimiento (eliminar rango y entrar en modo Insertar) |
-| `diw` / `yiw` / `ciw` | Texto interior de palabra (eliminar/copiar/cambiar) |
-| `p` / `P` | Pegar último texto copiado/eliminado después / antes del cursor |
+| `d{objeto}` / `y{objeto}` / `c{objeto}` | Eliminar / copiar / cambiar un objeto de texto (ver abajo) |
+| `p` / `P` | Pegar caracteres después / antes del cursor, o líneas enteras debajo / encima |
 | `u` / `Ctrl+r` | Puente de deshacer / rehacer |
 | `<space>...` | Los atajos de ventana principal están disponibles en modo Normal de notas (por ejemplo `<space>n`, `<space>ff`) |
-| `Shift+J` / `Shift+K` | Cambiar a la pestaña anterior / siguiente desde el modo Normal de notas |
+| `Shift+J` / `Shift+K` | Pestaña anterior / siguiente en Normal; escribir `J` / `K` en Insertar |
 
 `dd`, `yy` y `x` admiten prefijos de conteo (por ejemplo `3dd`, `5yy`, `4x`).
 Los combos de operador+movimiento también admiten conteos (por ejemplo `3dw`, `2y$`).
-`p` y `P` usan el registro interno de notas del plugin (actualizado por `yy` y `dd`).
+Los conteos antes y después del operador se multiplican: `2d3w` elimina seis
+palabras. `1G` va a la primera línea; `G` sin conteo va a la última.
+`p` / `P` admiten conteos como `3p` y usan el búfer interno de notas, actualizado
+por las operaciones de copia, eliminación y cambio, incluido `x`.
+
+Los movimientos precisos admiten operadores y conteos: `2fa` encuentra la
+segunda `a`, `dt)` elimina hasta antes de `)`, `df)` lo incluye y `d%` incluye
+ambos extremos del par. `;` / `,` no cambian la dirección originalmente
+recordada. Una búsqueda fallida no cambia el texto ni el cursor. Las búsquedas
+de caracteres no salen de la línea lógica; los pares pueden abarcar párrafos.
+El emparejamiento ignora delimitadores escapados y cadenas entre comillas de
+una línea, pero no analiza la sintaxis de un lenguaje.
+
+Los comandos pendientes muestran una indicación compacta no interactiva al
+pie de la nota. `f` indica la dirección y pide un carácter; `2d3f` muestra el
+comando y la sexta aparición. También hay indicaciones para conteos, operadores
+y objetos de texto, en inglés o chino según el idioma del plugin o de Zotero.
+Permanecen hasta completar o cancelar con Escape; salir del editor cancela el
+comando. No modifican la selección, el HTML guardado ni el historial de deshacer,
+y se ocultan al imprimir.
+
+La búsqueda distingue mayúsculas y minúsculas y usa **texto literal**, no
+expresiones regulares Vim. Admite Unicode, recuento de resultados en tiempo
+real, vista previa resaltada y búsqueda circular. Escribe en la barra inferior:
+Enter confirma y devuelve el foco al texto; Escape o cambiar de foco cancela y
+restaura la posición o selección original. Enter con una consulta vacía repite
+la búsqueda anterior. `3n` avanza tres coincidencias; `d/consulta` o `c?consulta`
+combinan búsqueda y operador. `*` / `#` buscan palabras completas.
+La barra no forma parte de la nota y se oculta al imprimir. No hay sustitución,
+expresiones regulares Vim ni línea de comandos.
+
+En Visual, los movimientos, conteos, búsquedas y objetos de texto amplían la
+selección. `o` intercambia el extremo activo, `y` copia, `d` / `x` eliminan y
+`c` elimina y entra en Insertar. `v` / `V` cambian el tipo de selección;
+repetir el tipo actual o pulsar Escape vuelve a Normal. `J` / `K` no cambian
+de pestaña en Visual. No hay selección rectangular o por bloques; `gv` rechaza
+las posiciones antiguas si el texto ha cambiado.
+
+Los objetos de texto funcionan después de `d` / `y` / `c` y dentro de Visual:
+
+| Interior / alrededor | Objeto |
+|----------------------|--------|
+| `iw` / `aw`, `iW` / `aW` | Palabra / WORD delimitada por espacios; alrededor incluye espacio adyacente |
+| `is` / `as` | Oración con puntuación final inglesa o china |
+| `ip` / `ap` | Párrafo; alrededor incluye párrafos o líneas vacías adyacentes |
+| `i"` / `a"`, `i'` / `a'`, `` i` `` / `` a` `` | Texto entre comillas en una línea; ignora comillas escapadas |
+| `i(` / `a(`, `ib` / `ab` | Paréntesis |
+| `i[` / `a[`, `i{` / `a{`, `iB` / `aB`, `i<` / `a<` | Corchetes / llaves / delimitadores angulares |
+| `it` / `at` | Etiquetas HTML/XML escritas literalmente, no el marcado de formato del editor |
+
+Los delimitadores de cierre también son alias (`i)` equivale a `i(`). Los
+conteos seleccionan pares anidados externos (`2ci(`); repetir un objeto en
+Visual también amplía hacia fuera. Prueba `ci"`, `da(` o `viw` seguido de `y`.
+En texto con formato se usan los bloques reales de párrafo, título y lista;
+en la alternativa de texto plano, grupos de líneas no vacías. No es una
+emulación completa de las reglas configurables de Vim ni un analizador de etiquetas.
+
+Una línea es un párrafo lógico o un salto explícito, no una línea ajustada
+visualmente. `o` / `O` insertan una línea vacía debajo / encima sin separar el
+texto restante; en listas sencillas crean un elemento hermano. Las
+transacciones nativas conservan el formato restante y permiten guardar y
+deshacer en Zotero. Insertar deja pasar `Ctrl+Backspace`; `Ctrl+h` / `Ctrl+l`
+siguen siendo atajos explícitos de foco. `<space>bj` selecciona una pestaña en Normal.
+
+Desactivar Vim de notas restaura la escritura nativa. Los atajos de navegación
+de la ventana principal, incluido Backspace para la colección padre, no
+interceptan la edición de notas.
+
+El editor activo muestra números de línea absolutos y resalta la línea actual.
+Coinciden con `12G`, `12gg` y `j` / `k`: cuentan párrafos vacíos y saltos
+explícitos, pero no el ajuste visual del texto. Reutilizan el margen izquierdo;
+en títulos con indicador H1/H2, un número pequeño y plano aparece debajo del
+indicador sin añadir otra columna. Solo esos títulos reservan un pequeño
+espacio vertical si hace falta. Las celdas de tabla usan márgenes locales,
+con numeración global. Los números no entran en notas guardadas, copias,
+exportaciones ni historial de deshacer, y se ocultan al imprimir. Se pueden
+activar o desactivar en **Ajustes → Zotero Vim Plus → Modos**, sin reiniciar.
+Requieren Vim de notas y la vista nativa del editor; las alternativas antiguas
+siguen funcionando sin números.
+
+**Corrección de entrada en macOS (v1.10.0):** los movimientos en Normal ya no
+insertan letras de comandos; `i` / `a` / `o` tampoco se escriben al entrar en Insertar.
+El [autor del informe #6 confirmó la corrección en pestañas y notas laterales](https://github.com/ZorroStardust/zotero-vim-plus/issues/6#issuecomment-5947724456).
+Backspace y la escritura siguen siendo nativos al desactivar Vim de notas.
+
+Es una capa práctica sobre el editor con formato de Zotero, no un motor Vim
+completo. Todavía no hay comandos `:`, sustitución, archivo de configuración
+Vim, sistema de registros con nombre, Visual por bloques ni reasignación de
+comandos de notas. El búfer de copia interno no es un sistema completo de registros Vim.
 
 #### Navegación por árbol de biblioteca (panel izquierdo)
 
@@ -640,7 +752,8 @@ Abrir **Editar → Preferencias** (macOS: **Zotero → Ajustes**) y navegar al p
 | Habilitar modo Visual | activado | Permitir entrar en modo Visual con `v` |
 | Habilitar modo Cursor | activado | Permitir entrar en modo Cursor con `c` |
 | Habilitar modo Insertar | activado | Permitir entrar en modo Insertar con `i` |
-| Modo Vim de editor de notas | activado | Habilitar edición estilo Vim en editores de notas (panel de contexto y pestañas de notas) |
+| Modo Vim de editor de notas | activado | Edición estilo Vim en notas de biblioteca, notas laterales del lector y pestañas de notas |
+| Números de línea en notas | activado | Líneas lógicas absolutas y línea actual resaltada; requiere Vim de notas |
 | Paso de desplazar | 60 px | Píxeles desplazados por pulsación de `j`/`k`/`H`/`L` |
 | Desplazamiento suave | activado | Habilitar comportamiento de desplazamiento suave en lector |
 | Velocidad inicial suave | 2000 px/s | Velocidad inicial para desplazamiento basado en mantenimiento de tecla |

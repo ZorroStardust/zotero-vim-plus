@@ -6,8 +6,8 @@
 >
 > This repository is forked from the original Zotero Vim project.
 
-Vim-style keybindings for the Zotero 7–10 PDF reader. Navigate, scroll,
-annotate, and copy text without touching the mouse.
+Vim-style keybindings for the Zotero 7–10 PDF reader and note editors. Navigate,
+annotate, search and edit rich-text notes without touching the mouse.
 
 Vibe coded with Claude Sonnet 4.5.
 
@@ -24,6 +24,7 @@ Vibe coded with Claude Sonnet 4.5.
 - [Modes](#modes)
 - [Default keybindings](#default-keybindings)
   - [Normal mode](#normal-mode)
+  - [Note Vim editor](#note-vim-editor)
   - [Cursor mode](#cursor-mode)
   - [Visual mode](#visual-mode)
   - [Insert mode](#insert-mode)
@@ -49,7 +50,12 @@ Vibe coded with Claude Sonnet 4.5.
 - **Insert mode** — temporarily pass all keys through to Zotero (useful when
   typing in form fields); also focuses the annotation comment field when an
   annotation is selected
-- **Fully remappable** — every action can be rebound from the Preferences panel
+- **Note Vim editor** — Normal, Insert and characterwise/linewise Visual modes
+  in note tabs, the library item pane and the reader's Notes sidebar; precise
+  character/pair motions, literal search, text objects, editing operators,
+  command hints and compact absolute line numbers
+- **Remappable reader and main-window actions** — rebind actions from the
+  Preferences panel; note editing commands currently use built-in Vim keys
 - **No shortcut collisions** — keys consumed by vim are intercepted before
   Zotero's reader key handling, so `l` (next page) doesn't trigger the
   built-in Read Aloud and `h`/`s`/`Ctrl+F` don't toggle the hand tool /
@@ -58,8 +64,8 @@ Vibe coded with Claude Sonnet 4.5.
   (`ﬁ` → `fi`, etc.) and collapse PDF line-break newlines into spaces
 - **Snapshot & EPUB support** — scrolling, search (`/` + `n`/`N`), `gg`/`G`
   (top/bottom) and `zt`/`zz`/`zb` work in web snapshots and EPUBs too
-  (snapshots have no pages, so `h`/`l` show a hint). Visual mode, cursor mode
-  and annotation commands remain PDF-specific
+  (snapshots have no pages, so `h`/`l` show a hint). Reader Visual mode, cursor
+  mode and annotation commands remain PDF-specific; notes have their own Visual mode
 - **Marks** — vim-style position marks (`m<x>` set, `` `<x> `` instant jump,
   `dm<x>`/`dM` delete, `<space>m` explorer overlay) with `a`–`z` or `0`–`9`
   characters (sioyek-style numbered tags); optionally persisted in the parent
@@ -76,7 +82,7 @@ Vibe coded with Claude Sonnet 4.5.
 
 ## Installation
 
-1. Download `zoetero-vim-plus.xpi` from the releases page (or build it yourself —
+1. Download `zoetero-vim-plus.xpi` from the [latest release](https://github.com/ZorroStardust/zotero-vim-plus/releases/latest) (or build it yourself —
    see below).
 2. Open Zotero.
 3. Go to **Tools → Plugins**.
@@ -107,8 +113,8 @@ On Windows, use the equivalent PowerShell script instead (no bash needed):
 powershell -ExecutionPolicy Bypass -File tools\build.ps1
 ```
 
-Both scripts run JS syntax and keybinding-table sync checks when `node` is
-available.
+Both scripts run JS syntax, manifest, keybinding-table sync and regression
+checks when `node` is available. Node.js is not a plugin runtime dependency.
 
 ```
 zotero-vim-plus/
@@ -314,15 +320,23 @@ Notes:
   previous annotation-tag scheme are migrated automatically.
 - Marks set with persistence disabled live for the current reader session only.
 
-#### Note editor (context pane and standalone note tab)
+#### Note Vim editor
 
-When a Zotero note editor has focus (right-side context pane or a standalone
-note tab), the plugin provides Vim-like navigation, search and editing.
+When a Zotero note editor has focus (library item pane, right-side reader context
+pane or a standalone note tab), the plugin provides Vim-like navigation, search
+and rich-text editing. Note Vim is independent of the PDF reader modes and is
+enabled by default under **Settings → Zotero Vim Plus → Modes**.
+
+Quick start: click inside a note, press `Escape` and check for **NOTE NORMAL**.
+Use `hjkl` to move, `i` to type and `Escape` to return to Normal. Try `12G`
+to jump to line 12, `f,` to find a comma, `/` to search, `viw` to select a word,
+or `ci"` to replace the text inside quotes. A bottom hint explains commands
+waiting for another key, such as `f`, `d` or `ci`.
 
 | Key | Action |
 |-----|--------|
 | `i` | Enter note Insert mode (pass through typing) |
-| `a` / `A` / `I` | Enter Insert mode at next char / line end / line start |
+| `a` / `A` / `I` | Enter Insert mode at next char / line end / first non-blank |
 | `o` / `O` | Open line below / above and enter Insert mode |
 | `Escape` | Return to note Normal mode |
 | `h` / `l` | Move caret left / right |
@@ -442,6 +456,17 @@ hidden when printing. Toggle **Show absolute line numbers in note editors**
 under Settings → Zotero Vim Plus → Modes. Changes apply without restarting.
 Numbering requires note Vim mode and Zotero's native editor view; older editor
 fallbacks without that view keep working without a gutter.
+
+**macOS input fix (v1.10.0):** Normal-mode motions no longer insert their command
+letters, and switching into Insert does not type the `i` / `a` / `o` command.
+The [issue #6 reporter confirmed the fix in note tabs and side notes](https://github.com/ZorroStardust/zotero-vim-plus/issues/6#issuecomment-5947724456).
+Disabling note Vim also leaves Backspace and ordinary typing native instead of
+triggering collection navigation.
+
+This is a practical Vim-style layer over Zotero's rich-text editor, not a full
+Vim engine. There is no `:` command line, substitution, Vim configuration file,
+named-register system, block Visual mode or custom note-command remapping yet.
+The internal yank buffer is not a full Vim register implementation.
 
 #### Library tree navigation (left pane)
 
@@ -874,7 +899,7 @@ failures are reported to `zv-startup.log` in the profile directory with
 | Enable Visual mode | on | Allow entering Visual mode with `v` |
 | Enable Cursor mode | on | Allow entering Cursor mode with `c` |
 | Enable Insert mode | on | Allow entering Insert mode with `i` |
-| Note editor Vim mode | on | Enable Vim-style editing in note editors (context pane and note tabs) |
+| Note editor Vim mode | on | Enable Vim-style editing in library notes, reader-side notes and note tabs |
 | Note editor line numbers | on | Absolute logical line numbers with the current number highlighted; requires note Vim mode |
 | Scroll mode | Constant-speed scrolling | Step / Constant-speed / Accelerating — only the active mode's parameters are shown |
 | Scroll step | 60 px | Pixels scrolled per `j`/`k`/`H`/`L` keypress (step mode; count prefixes like `3j` always use this) |
@@ -979,6 +1004,24 @@ overlay is being edited: Enter becomes a native newline, no popup opens,
 and no keys reach the KeyboardManager.  The insert-mode popup guard
 (`_armAnnotationPopupGuard`) closes a stray `.annotation-popup` with a
 synthetic Escape as a backstop.
+
+### Note input and native character events
+
+Gecko can capture an original note-iframe key event in the chrome main document
+before the editor window sees it. `_onMainKeyDown` must let that original event
+reach the note listener; forwarded chrome copies must not execute the command.
+
+The macOS issue #6 reports show `keypress` and cancelable `beforeinput` after
+Vim already canceled `keydown`. The note iframe therefore captures all three.
+Consumed-key state lasts until matching keyup, blur, editor replacement or the
+next keydown, so `i`, `a`, `o` and change commands cannot leak their command
+character after switching to Insert. Insert and search typing stay native.
+Synchronous Vim edits bypass the input guard to retain native editing/undo.
+These guards do not cancel noncancelable IME input or roll back document changes.
+
+Library notes use `ZoteroPane.itemPane` / `#zotero-note-editor`; reader-sidebar
+notes use `ZoteroContextPane`. A standalone tab's `Zotero.Notes.getByTabID`
+lookup remains authoritative, including while the selected note is loading.
 
 ### Annotation navigation
 

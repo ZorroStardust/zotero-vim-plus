@@ -1218,7 +1218,13 @@ Object.assign(ZoteroVim, {
         sel.removeAllRanges();
         sel.addRange(c);
       }
-      if (sel.rangeCount > 0 && sel.isCollapsed) return true;
+      if (sel.rangeCount > 0 && sel.isCollapsed && sel.focusNode?.nodeType === 3) {
+        state.visualCursor = {
+          textNode: sel.focusNode,
+          offset: sel.focusOffset,
+        };
+        return true;
+      }
 
       if (state.visualCursor?.textNode?.isConnected) {
         const r = pdfWin.document.createRange();
@@ -2026,7 +2032,11 @@ Object.assign(ZoteroVim, {
   },
 
   _beginCursorFind(state, motion, count = 0) {
-    state.cursorFindPending = { motion, count: Math.max(1, count || 1) };
+    state.cursorFindPending = {
+      motion,
+      count: Math.max(1, count || 1),
+      startedAt: Date.now(),
+    };
     this._updateIndicator(state, (count > 0 ? String(count) : '') + motion);
   },
 
@@ -2069,7 +2079,33 @@ Object.assign(ZoteroVim, {
         .map(item => item.span?.firstChild)
         .filter(node => node?.nodeType === 3);
     }
-    return [];
+
+    // The visible-line index intentionally filters headers, footers and
+    // spans just outside its look-ahead window.  A caret can still be there
+    // after a click or native movement, so recover the geometric line rather
+    // than making character-find silently fail.  Column matching prevents a
+    // same-height line in the neighbouring column from being joined.
+    try {
+      const layer = focusEl?.closest?.('.textLayer');
+      const focusRect = focusEl?.getBoundingClientRect?.();
+      if (layer && focusRect) {
+        const keys = this._readingOrderKeys(doc);
+        const pageIdx = keys.layerIdx.get(layer) ?? 0;
+        const colIdx = this._spanColIndex(focusRect, keys.columns);
+        const focusY = (focusRect.top + focusRect.bottom) / 2;
+        const tolerance = Math.max(2, Math.min(10, focusRect.height * 0.5));
+        const spans = Array.from(layer.querySelectorAll('span')).filter(span =>
+          span.firstChild?.nodeType === 3 && span.textContent.trim()
+        );
+        const nodes = this._orderSpanItems(doc, spans, keys)
+          .filter(item => item.pageIdx === pageIdx && item.colIdx === colIdx
+            && Math.abs((item.rect.top + item.rect.bottom) / 2 - focusY) <= tolerance)
+          .map(item => item.span.firstChild);
+        if (nodes.length) return nodes;
+      }
+    } catch (_) {}
+
+    return focusNode?.nodeType === 3 ? [focusNode] : [];
   },
 
   /** Resolve one f/F/t/T target on the current visual line. */
@@ -2437,11 +2473,9 @@ Object.assign(ZoteroVim, {
     }
     // Lowercase i starts Visual text objects (iw, i", i(, ...), so coarse
     // Visual hints must not advertise an unreachable I label.
-    const labels = this._hintLabelList(
-      starts.length,
-      null,
-      targetMode === 'visual' ? 'I' : ''
-    );
+    const excluded = targetMode === 'visual' ? 'I'
+      : targetMode === 'cursor' ? 'FT' : '';
+    const labels = this._hintLabelList(starts.length, null, excluded);
     const badges = [];
     for (let i = 0; i < starts.length; i++) {
       const b = this._createHintBadge(
@@ -2845,7 +2879,11 @@ Object.assign(ZoteroVim, {
       this._clearVisualHints(state, pdfWin);
       return;
     }
-    const labels = this._hintLabelList(words.length, coarseBadge.label);
+    const labels = this._hintLabelList(
+      words.length,
+      coarseBadge.label,
+      state.hintTargetMode === 'cursor' ? 'FT' : ''
+    );
     const badges = [];
     for (let i = 0; i < words.length; i++) {
       const b = this._createHintBadge(doc, labels[i], words[i].textNode, words[i].offset);

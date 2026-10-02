@@ -91,12 +91,37 @@ check('Cursor find consumes one literal argument and carries the count', () => {
   key('2'); key('f');
   assert.equal(state.cursorFindPending.motion, 'f');
   assert.equal(state.cursorFindPending.count, 2);
+  key('f');
+  assert.equal(state.cursorFindPending.motion, 'f');
   assert.equal(key('x').prevented, true);
   assert.deepEqual(found, { motion: 'f', char: 'x', count: 2 });
   key('F');
   assert.equal(z._readerConsumesKey(state, 'r'), true);
   key('Escape');
   assert.equal(state.cursorFindPending, null);
+});
+
+check('Cursor find takes priority while start-position hints are still open', () => {
+  z._nativeEditableFocused = () => false;
+  z._smoothHoldSpecForEvent = () => null;
+  z._updateIndicator = () => {};
+  z._clearVisualHints = state => { state.hintMode = false; };
+  z._placeCursorNearViewportCenter = () => true;
+  const state = { mode: 'cursor', keyBuffer: '', countBuffer: '', hintMode: true,
+    hintTargetMode: 'cursor', hintStage: 'coarse', cursorFindPending: null };
+  state.executeAction = (action, count) => z._executeAction(action, {}, state, {}, count);
+  z._onKeyDown({ key: 't', preventDefault() {}, stopImmediatePropagation() {} }, {}, state, {});
+  assert.equal(state.hintMode, false);
+  assert.equal(state.cursorFindPending.motion, 't');
+  assert.equal(z._hintLabelList(40, null, 'FT').some(label => /[FT]/.test(label)), false);
+});
+
+check('character find falls back to the caret text node outside the visible-line index', () => {
+  const originalVisibleLines = z._cursorVisibleLines;
+  z._cursorVisibleLines = () => ({ lines: [] });
+  const node = text('fallback target');
+  assert.deepEqual(Array.from(z._cursorLineTextNodes({}, node)), [node]);
+  z._cursorVisibleLines = originalVisibleLines;
 });
 
 check('viw leaves hint picking and resolves as a Visual text object', () => {

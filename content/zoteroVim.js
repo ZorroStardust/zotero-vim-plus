@@ -876,6 +876,13 @@ var ZoteroVim = {
         selection: () => {
           try {
             const sel = viewWin.getSelection?.();
+            if (state.mode === 'cursor' && sel?.isCollapsed
+                && sel.focusNode?.nodeType === 3) {
+              state.visualCursor = {
+                textNode: sel.focusNode,
+                offset: sel.focusOffset,
+              };
+            }
             if (!sel || sel.isCollapsed) state.selectionParams = null;
           } catch (_) {}
         },
@@ -1414,9 +1421,18 @@ var ZoteroVim = {
     // Typed prefixes dim the consumed letters and hide non-matching badges;
     // a full label or a uniquely matching prefix activates immediately.
     if (state.hintMode) {
+      const cursorFindPrefix = state.hintTargetMode === 'cursor'
+        && ['f', 'F', 't', 'T'].includes(event.key);
       const visualObjectPrefix = state.hintTargetMode === 'visual'
         && state.hintStage === 'coarse' && event.key === 'i';
-      if (visualObjectPrefix) {
+      if (cursorFindPrefix) {
+        if (state.hintStage === 'fine' && state.hintSelected) {
+          this._activateHint(state, pdfWin, state.hintSelected);
+        } else {
+          this._clearVisualHints(state, pdfWin);
+          this._placeCursorNearViewportCenter(state, pdfWin);
+        }
+      } else if (visualObjectPrefix) {
         this._clearVisualHints(state, pdfWin);
         this._placeCursorNearViewportCenter(state, pdfWin);
       } else {
@@ -1502,6 +1518,13 @@ var ZoteroVim = {
       event.preventDefault();
       event.stopImmediatePropagation();
       const pending = state.cursorFindPending;
+      // Zotero can deliver the command key twice through its reader
+      // forwarding path.  Do not mistake that second copy for the literal
+      // character argument (which made f/F/t/T appear to cancel at random).
+      if (event.key === pending.motion
+          && (event.repeat || Date.now() - pending.startedAt < 35)) {
+        return;
+      }
       state.cursorFindPending = null;
       if (keyStr !== 'escape' && !event.ctrlKey && !event.metaKey && !event.altKey
           && Array.from(event.key || '').length === 1) {

@@ -350,6 +350,18 @@ check('first Escape dismisses an editor palette natively; next exits Insert', ()
   plugin._onMainContextNoteInput({ type: 'blur', target: el }, state);
   assert.equal(magicOptions.enable, true);
 
+  // Leaving and re-entering Insert does not make the dismissed slash new.
+  assert.equal(key(el, state, 'Escape').defaultPrevented, true);
+  assert.equal(state._contextNoteMode, 'normal');
+  assert.equal(state._contextNoteDismissedSlashPalette, true);
+  key(el, state, 'i');
+  assert.equal(state._contextNoteMode, 'insert');
+  key(el, state, 'Backspace');
+  assert.equal(magicOptions.enable, false);
+  plugin._onMainContextNoteInput({ type: 'keyup', key: 'Backspace', target: el }, state);
+  assert.equal(magicOptions.enable, true);
+  assert.equal(open, false);
+
   // Older Better Notes versions without accessible plugin state use the
   // post-transaction Escape fallback.
   delete doc.defaultView._currentEditorInstance;

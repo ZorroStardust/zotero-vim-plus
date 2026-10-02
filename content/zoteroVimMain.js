@@ -1027,7 +1027,6 @@ Object.assign(ZoteroVim, {
         this._clearMainContextNoteKeyState(winState);
         winState._contextNoteMode = 'normal';
         this._restoreNoteSlashPalette(winState);
-        winState._contextNoteDismissedSlashPalette = false;
         this._syncNoteCursorVisualState(event.target?.ownerDocument || null, 'normal', event.target);
         this._mainShowStatus(win, '-- NOTE NORMAL --', 900);
       }

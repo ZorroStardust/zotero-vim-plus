@@ -61,7 +61,7 @@ function windowFixture() {
   return win;
 }
 
-function fixture(version = '1.9.1pre2') {
+function fixture(version = '1.9.1pre3') {
   const mainWin = windowFixture();
   const noteWin = windowFixture();
   const context = vm.createContext({
@@ -133,7 +133,7 @@ check('stable versions have no diagnostic UI or event observers', () => {
   const { state } = fixture('1.9.0');
   assert.equal(state._noteDiagnostics, undefined);
   const bootstrap = fs.readFileSync(path.join(root, 'bootstrap.js'), 'utf8');
-  assert.match(bootstrap, /if \(version === '1\.9\.1pre2'\)/);
+  assert.match(bootstrap, /if \(version === '1\.9\.1pre3'\)/);
 });
 
 check('recording is opt-in and has no mode/input side effects', () => {
@@ -178,7 +178,7 @@ check('main forwarded events are distinct and do not execute another motion', ()
   assert.equal(noteWin._currentEditorInstance._editorCore.view.state.selection.head, 3);
 });
 
-check('subsequent native input is observed, not blocked or rolled back', () => {
+check('observers record native input before the runtime guard cancels it', () => {
   const { plugin, mainWin, noteWin, state } = fixture();
   plugin._startNoteDiagnostics(state);
   dispatch(noteWin, event(noteWin));
@@ -186,8 +186,8 @@ check('subsequent native input is observed, not blocked or rolled back', () => {
     type: 'beforeinput', key: undefined, code: undefined, inputType: 'insertText', data: 'h',
   });
   dispatch(noteWin, input);
-  assert.equal(input.defaultPrevented, false);
-  assert.equal(input.cancelBubble, false);
+  assert.equal(input.defaultPrevented, true);
+  assert.equal(input.cancelBubble, true);
   noteWin._currentEditorInstance._editorCore.view.state.doc = {};
   mainWin.flush();
   const rows = state._noteDiagnostics.records;
@@ -265,7 +265,7 @@ check('Copy stops, flushes pending event flags and copies only the report', () =
   assert.equal(state._noteDiagnostics.pending.size, 0);
   assert.equal(mainWin.timers.size, 0);
   assert.ok(clipboard().includes('after-dispatch'));
-  assert.ok(clipboard().includes('"pluginVersion": "1.9.1pre2"'));
+  assert.ok(clipboard().includes('"pluginVersion": "1.9.1pre3"'));
 });
 
 check('clipboard failure provides a selectable local fallback', () => {

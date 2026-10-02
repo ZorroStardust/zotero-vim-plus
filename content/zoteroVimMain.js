@@ -65,6 +65,9 @@ Object.assign(ZoteroVim, {
       _contextNoteEditorWin: null,
       _contextNoteEditorDoc: null,
       _contextNoteEditorKeyHandler: null,
+      _contextNoteEditorInputHandler: null,
+      _contextNoteConsumedInput: null,
+      _contextNoteKeyHandling: false,
       _contextNoteLineNumbers: null,
       _contextNoteMode: 'normal',
       _contextNoteKeyBuffer: '',
@@ -162,15 +165,17 @@ Object.assign(ZoteroVim, {
     if (noteVimEnabled && noteTabSelected) {
       const noteMode = String(winState?._contextNoteMode || 'normal');
 
-      // Zotero also exposes note-tab key events at the main-window boundary.
-      // When the real editor iframe listener is installed, handling that
-      // forwarded event here would execute the motion a second time without
-      // cancelling the iframe's native text input (issue #6).
+      // Gecko can capture the ORIGINAL content event here before it reaches
+      // the note iframe. Let that iframe handle it instead of stopping the
+      // event in chrome. Forwarded chrome copies must never run a motion.
       this._syncMainContextNoteListener(win, winState);
       const noteWin = winState?._contextNoteEditorWin || null;
       const eventWin = e.view || e.target?.ownerDocument?.defaultView || null;
       const hasDirectNoteAPI = typeof Zotero.Notes?.getByTabID === 'function';
-      if ((!noteWin && !hasDirectNoteAPI) || eventWin === noteWin) {
+      if (noteWin && (eventWin === noteWin
+          || (winState._contextNoteEditorDoc
+            && e.target?.ownerDocument === winState._contextNoteEditorDoc))) return;
+      if (!noteWin && !hasDirectNoteAPI) {
         this._onMainContextNoteKeyDown(e, win, winState);
       }
       if (!e.defaultPrevented && noteMode !== 'insert' && !winState._contextNoteSearchUI) {
@@ -778,6 +783,8 @@ Object.assign(ZoteroVim, {
         return this._getActiveStandaloneNoteEditorWindow(win);
       }
 
+      const libraryWin = this._getActiveLibraryNoteEditorWindow(win);
+      if (libraryWin) return libraryWin;
       const contextEditor = this._getActiveContextNoteEditor(win);
       const contextWin = this._getContextNoteEditorWindow(contextEditor);
       if (this._isLikelyMainNoteEditorWindow(contextWin, win)) return contextWin;
@@ -785,6 +792,27 @@ Object.assign(ZoteroVim, {
     } catch (_) {
       return null;
     }
+  },
+
+  /** The library's item-pane note editor is separate from ZoteroContextPane. */
+  _getActiveLibraryNoteEditorWindow(win) {
+    try {
+      if (win?.Zotero_Tabs?.selectedType !== 'library') return null;
+      const doc = win.document;
+      const pane = win.ZoteroPane?.itemPane || doc?.getElementById?.('zotero-item-pane');
+      const noteMode = pane?.mode === 'note';
+      if (pane?.mode && !noteMode) return null;
+      const editor = doc?.getElementById?.('zotero-note-editor');
+      if (!editor || editor.hidden
+          || editor.closest?.('[hidden]:not([hidden="false"]), [collapsed="true"]')) return null;
+      const noteWin = this._getContextNoteEditorWindow(editor);
+      if (!this._isLikelyMainNoteEditorWindow(noteWin, win)) return null;
+      // Older builds may not expose itemPane.mode. Require real focus then,
+      // rather than binding an editor left hidden behind the library deck.
+      if (noteMode || Services.focus?.focusedWindow === noteWin
+          || doc.activeElement?.contentWindow === noteWin) return noteWin;
+    } catch (_) {}
+    return null;
   },
 
   _getContextNoteEditorWindow(noteEditor) {
@@ -809,6 +837,7 @@ Object.assign(ZoteroVim, {
     const noteWin = winState?._contextNoteEditorWin;
     const noteDoc = winState?._contextNoteEditorDoc;
     const handler = winState?._contextNoteEditorKeyHandler;
+    const inputHandler = winState?._contextNoteEditorInputHandler;
     try { noteDoc?.documentElement?.classList.remove('zv-note-visual-mode'); } catch (_) {}
     if (noteWin && handler) {
       try { noteWin.removeEventListener('keydown', handler, true); } catch (_) {}
@@ -816,10 +845,18 @@ Object.assign(ZoteroVim, {
     if (noteDoc && handler) {
       try { noteDoc.removeEventListener('keydown', handler, true); } catch (_) {}
     }
+    for (const target of [noteWin, noteDoc]) {
+      if (!target || !inputHandler) continue;
+      for (const type of ['keypress', 'beforeinput', 'keyup', 'blur']) {
+        try { target.removeEventListener(type, inputHandler, true); } catch (_) {}
+      }
+    }
     if (winState) {
       winState._contextNoteEditorWin = null;
       winState._contextNoteEditorDoc = null;
       winState._contextNoteEditorKeyHandler = null;
+      winState._contextNoteEditorInputHandler = null;
+      winState._contextNoteConsumedInput = null;
     }
   },
 
@@ -846,9 +883,17 @@ Object.assign(ZoteroVim, {
     const handler = (event) => this._onMainContextNoteKeyDown(event, win, winState);
     try { noteWin.addEventListener('keydown', handler, true); } catch (_) { return; }
     try { noteDoc?.addEventListener('keydown', handler, true); } catch (_) {}
+    const inputHandler = event => this._onMainContextNoteInput(event, winState);
+    for (const target of [noteWin, noteDoc]) {
+      if (!target) continue;
+      for (const type of ['keypress', 'beforeinput', 'keyup', 'blur']) {
+        try { target.addEventListener(type, inputHandler, true); } catch (_) {}
+      }
+    }
     winState._contextNoteEditorWin = noteWin;
     winState._contextNoteEditorDoc = noteDoc;
     winState._contextNoteEditorKeyHandler = handler;
+    winState._contextNoteEditorInputHandler = inputHandler;
     if (!winState._contextNoteMode) winState._contextNoteMode = 'normal';
     this._syncNoteCursorVisualState(noteDoc, winState._contextNoteMode || 'normal');
     this._syncNoteLineNumbers(winState);
@@ -866,6 +911,58 @@ Object.assign(ZoteroVim, {
     // handler ever does work in that branch.
     if (event._zvContextNoteHandled) return;
     try { event._zvContextNoteHandled = true; } catch (_) {}
+    // Keep consumption until keyup or the next real keydown, including when
+    // i/a/o/c changes the mode before macOS dispatches its character events.
+    winState._contextNoteConsumedInput = null;
+    const wasHandling = winState._contextNoteKeyHandling;
+    winState._contextNoteKeyHandling = true;
+    try {
+      this._handleMainContextNoteKeyDown(event, win, winState);
+    } finally {
+      winState._contextNoteKeyHandling = wasHandling;
+      if (event.defaultPrevented) {
+        winState._contextNoteConsumedInput = {
+          key: event.key, code: event.code, doc: event.target?.ownerDocument,
+        };
+      }
+    }
+  },
+
+  /** Block native character input, not Vim's own synchronous editing commands. */
+  _onMainContextNoteInput(event, winState) {
+    if (!winState || event._zvNoteEditorCommand) return;
+    const consumed = winState._contextNoteConsumedInput;
+    if (event.type === 'blur' || event.type === 'keyup') {
+      if (event.type === 'blur' || (consumed && (consumed.code && event.code
+          ? event.code === consumed.code : event.key === consumed.key))) {
+        winState._contextNoteConsumedInput = null;
+      }
+      return;
+    }
+    if (!this.isNoteEditorVimEnabled() || winState._contextNoteKeyHandling
+        || event.isTrusted === false || event.cancelable === false) return;
+    const target = event.target;
+    const doc = target?.ownerDocument;
+    if (!doc || doc !== winState._contextNoteEditorDoc) return;
+    let consumedInput = consumed?.doc === doc;
+    if (consumedInput && event.type === 'keypress') {
+      consumedInput = consumed.code && event.code
+        ? consumed.code === event.code : consumed.key === event.key;
+    }
+    if (!consumedInput) {
+      if (winState._contextNoteMode === 'insert' || winState._contextNoteSearchUI) return;
+      // Toolbars and the search input live in the same iframe, but are not
+      // managed note text. Do not intercept their native input.
+      const editable = doc.querySelector?.('.ProseMirror');
+      if (editable ? target !== editable && !editable.contains?.(target)
+        : !this._isEditableElement(target)) return;
+      if (/^(format|history)/.test(event.inputType || '')) return;
+    }
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  },
+
+  _handleMainContextNoteKeyDown(event, win, winState) {
     if (winState._contextNoteSearchUI) {
       this._noteSearchKeyDown(event, win, winState);
       return;

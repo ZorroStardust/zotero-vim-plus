@@ -93,6 +93,29 @@ check('context-pane editor remains active outside a note tab', () => {
   assert.equal(plugin._getActiveMainNoteEditorWindow(makeMainWindow('reader')), contextWin);
 });
 
+check('library item-pane notes are distinct from the reader context pane', () => {
+  const win = makeMainWindow('library');
+  win.ZoteroPane = { itemPane: { mode: 'note' } };
+  const editor = { _editorInstance: { _iframeWindow: selectedWin } };
+  win.document.getElementById = id => id === 'zotero-note-editor' ? editor : null;
+  assert.equal(plugin._getActiveMainNoteEditorWindow(win), selectedWin);
+  win.ZoteroPane.itemPane.mode = 'item';
+  assert.equal(plugin._getActiveLibraryNoteEditorWindow(win), null);
+  win.ZoteroPane.itemPane.mode = 'note';
+  editor.hidden = true;
+  assert.equal(plugin._getActiveLibraryNoteEditorWindow(win), null);
+});
+
+check('older library notes require real editor focus when pane mode is unavailable', () => {
+  const win = makeMainWindow('library');
+  const editor = { _iframe: { contentWindow: selectedWin } };
+  win.ZoteroPane = { itemPane: {} };
+  win.document.getElementById = id => id === 'zotero-note-editor' ? editor : null;
+  assert.equal(plugin._getActiveLibraryNoteEditorWindow(win), null);
+  win.document.activeElement = editor._iframe;
+  assert.equal(plugin._getActiveLibraryNoteEditorWindow(win), selectedWin);
+});
+
 check('main-window forwarding does not execute a note motion a second time', () => {
   const win = makeMainWindow();
   const state = {
@@ -123,6 +146,22 @@ check('main-window forwarding does not execute a note motion a second time', () 
   assert.equal(handled, 0);
   assert.equal(event.defaultPrevented, true);
   assert.equal(event.propagationStopped, true);
+});
+
+check('chrome capture lets original note events reach the editor without canceling them', () => {
+  const win = makeMainWindow();
+  const state = { _contextNoteMode: 'normal',
+    _contextNoteEditorWin: selectedWin, _contextNoteEditorDoc: selectedWin.document };
+  const event = {
+    key: 'h', view: selectedWin, target: { ownerDocument: selectedWin.document },
+    defaultPrevented: false,
+    preventDefault() { this.defaultPrevented = true; },
+    stopPropagation() { this.propagationStopped = true; },
+  };
+  plugin._onMainKeyDown(event, win, state);
+  assert.equal(event.defaultPrevented, false);
+  assert.equal(event.propagationStopped, undefined);
+  assert.equal(event._zvContextNoteHandled, undefined);
 });
 
 check('normal mode cancels the original event before executing a motion', () => {

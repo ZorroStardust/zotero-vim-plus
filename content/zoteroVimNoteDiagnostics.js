@@ -8,8 +8,8 @@
  * Never record note text, selection offsets, URLs, titles or element IDs.
  */
 Object.assign(ZoteroVim, {
-  NOTE_DIAGNOSTICS_VERSION: '1.9.1pre2',
-  NOTE_DIAGNOSTICS_BUILD: 'issue-6-input-events-2',
+  NOTE_DIAGNOSTICS_VERSION: '1.9.1pre3',
+  NOTE_DIAGNOSTICS_BUILD: 'issue-6-input-guard-3',
   NOTE_DIAGNOSTICS_SOURCE: '__NOTE_DIAGNOSTICS_SOURCE_SHA256__',
   NOTE_DIAGNOSTICS_LIMIT: 450,
 

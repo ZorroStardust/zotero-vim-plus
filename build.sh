@@ -22,6 +22,7 @@ if command -v node >/dev/null 2>&1; then
   node tools/check-plugin-manifest.js
   node tools/check-note-editor-routing.js
   node tools/check-note-native-input.js
+  node tools/check-note-input-guard.js
   node tools/check-note-diagnostics.js
   node tools/check-note-editing.js
   node tools/check-note-advanced.js

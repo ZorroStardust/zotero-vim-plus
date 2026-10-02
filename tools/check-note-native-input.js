@@ -85,6 +85,12 @@ function fixture(type = 'library', enabled = false) {
       stopImmediatePropagation() { this.immediatePropagationStopped = true; },
     };
     plugin._onMainKeyDown(event, win, state);
+    // Gecko first captures the original event in chrome, then lets it reach
+    // the note iframe. A main-window copy never enters the iframe handler.
+    if (original && !event.propagationStopped && !event.immediatePropagationStopped
+        && state._contextNoteEditorDoc === noteDoc) {
+      plugin._onMainContextNoteKeyDown(event, win, state);
+    }
     return event;
   }
   return { context, plugin, win, doc, noteWin, noteDoc, editable, frame,

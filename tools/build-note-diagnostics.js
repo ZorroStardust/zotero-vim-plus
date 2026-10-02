@@ -11,7 +11,7 @@ const { checkPluginManifest } = require('./check-plugin-manifest');
 const root = path.join(__dirname, '..');
 const output = path.join(root, 'dist', 'note-diagnostics');
 const stage = fs.mkdtempSync(path.join(os.tmpdir(), 'zv-note-diagnostics-'));
-const version = '1.9.1pre2';
+const version = '1.9.1pre3';
 const xpiName = 'zotero-vim-plus-' + version + '-diagnostics.xpi';
 const zipName = 'zotero-vim-plus-issue-6-diagnostics.zip';
 const files = ['bootstrap.js', 'content', 'icons'];
@@ -28,7 +28,8 @@ try {
   manifest.name = 'Zotero Vim Plus (Issue #6 Diagnostics)';
   // Zotero 10 requires applications.zotero.update_url even for local test
   // packages. Preserve the stable URLs and ID rather than invalidating the
-  // manifest to disable updates. The current stable version is older.
+  // manifest to disable updates. Stable 1.10.0+ can update this historical
+  // test version; disable automatic updates only when reproducing its trace.
   const errors = checkPluginManifest(manifest);
   if (errors.length) throw new Error('Invalid diagnostic manifest: ' + errors.join('; '));
   fs.writeFileSync(path.join(stage, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n');

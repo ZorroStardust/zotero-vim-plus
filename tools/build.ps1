@@ -28,6 +28,7 @@ if (Get-Command node -ErrorAction SilentlyContinue) {
             'tools/check-sync.js', 'tools/check-plugin-manifest.js',
             'tools/check-note-editor-routing.js',
             'tools/check-note-native-input.js',
+            'tools/check-note-input-guard.js',
             'tools/check-note-diagnostics.js',
             'tools/check-note-editing.js', 'tools/check-note-line-numbers.js',
             'tools/check-note-advanced.js',

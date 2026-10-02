@@ -52,7 +52,7 @@ if (require.main === module) {
     });
     check('diagnostic name/version are valid when the required URL is retained', () => {
       const test = copy();
-      test.version = '1.9.1pre2';
+      test.version = '1.9.1pre3';
       test.name += ' (Issue #6 Diagnostics)';
       assert.deepEqual(checkPluginManifest(test), []);
     });

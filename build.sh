@@ -21,6 +21,7 @@ if command -v node >/dev/null 2>&1; then
   node tools/check-sync.js
   node tools/check-bindings.js
   node tools/check-reader-history.js
+  node tools/check-reader-text.js
   node tools/check-plugin-manifest.js
   node tools/check-note-editor-routing.js
   node tools/check-note-native-input.js

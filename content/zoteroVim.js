@@ -51,8 +51,11 @@ var ZoteroVim = {
     'normal:ctrl+o':  'navigateBack',
     'normal:ctrl+i':  'navigateForward',
     'normal:/':       'openSearch',
+    'normal:*':       'searchWordForward',
+    'normal:#':       'searchWordBackward',
     'normal:n':       'findNext',
     'normal:N':       'findPrevious',
+    'normal:.':       'repeatLastChange',
     'normal:[':       'prevAnnotation',
     'normal:]':       'nextAnnotation',
     'normal:enter':   'editAnnotation',
@@ -108,6 +111,11 @@ var ZoteroVim = {
     'visual:{':       'extendParagraphBackward',
     'visual:w':       'extendWordForward',
     'visual:b':       'extendWordBackward',
+    'visual:iw':      'visualInnerWord',
+    'visual:i"':      'visualInnerDoubleQuote',
+    'visual:i(':      'visualInnerParen',
+    'visual:i[':      'visualInnerBracket',
+    'visual:i{':      'visualInnerBrace',
     'visual:0':       'extendLineStart',
     'visual:$':       'extendLineEnd',
     // Visual mode — annotation
@@ -124,6 +132,7 @@ var ZoteroVim = {
     'visual:#':       'searchSelection',
     // Visual mode — swap anchor/focus
     'visual:o':       'swapVisualEnds',
+    'visual:.':       'repeatLastChange',
     // Visual mode — exit
     'visual:v':       'exitMode',
     'visual:escape':  'exitMode',
@@ -139,6 +148,12 @@ var ZoteroVim = {
     'cursor:B':       'cursorBigWordBackward',
     'cursor:0':       'cursorLineStart',
     'cursor:$':       'cursorLineEnd',
+    'cursor:f':       'cursorFindForward',
+    'cursor:F':       'cursorFindBackward',
+    'cursor:t':       'cursorTillForward',
+    'cursor:T':       'cursorTillBackward',
+    'cursor:*':       'searchWordForward',
+    'cursor:#':       'searchWordBackward',
     'cursor:v':       'cursorToVisual',
     'cursor:escape':  'exitMode',
 
@@ -353,6 +368,11 @@ var ZoteroVim = {
   getDefaultHighlightColor() {
     const name = this.getPref('defaultHighlightColor', 'yellow');
     return this.COLORS[name] || this.COLORS.yellow;
+  },
+
+  getReaderProgressMode() {
+    const mode = this.getPref('reader.progress', 'transient');
+    return ['off', 'transient', 'always'].includes(mode) ? mode : 'transient';
   },
 
   isNoteEditorVimEnabled() {
@@ -577,6 +597,12 @@ var ZoteroVim = {
       cursorPreferredX: null,
       cursorLastKey: '',
       cursorLastKeyTS: 0,
+      cursorFindPending: null,
+      lastReaderChange: null,
+      _progressVisible: false,
+      _progressTimer: null,
+      _progressPreference: null,
+      _statusActive: false,
       filterColor: null,    // active colour filter hex string, or null for all
       marks: {},            // vim-style marks: char → { pageIndex, ratio, key, ts }
       marksExplorerOpen: false,
@@ -723,6 +749,8 @@ var ZoteroVim = {
       clearTimeout(state.keyTimeout);
       clearTimeout(state.insertWatchdog);
       clearTimeout(state._commentAutosaveTimer);
+      clearTimeout(state._progressTimer);
+      clearTimeout(state._statusTimer);
       // Best-effort save if the reader goes away while the overlay is open.
       try { this._saveAndCloseAnnotationCommentOverlay(state); } catch (_) {}
       if (reader.itemID && this._readerStateByItemID.get(reader.itemID) === state) {
@@ -838,7 +866,13 @@ var ZoteroVim = {
       const handlers = {
         keyDown: (e) => this._onKeyDown(e, reader, state, viewWin),
         keyUp: (e) => this._onKeyUp(e, state, viewWin),
-        blur: () => this._stopSmoothHoldScroll(state, viewWin),
+        blur: () => {
+          this._stopSmoothHoldScroll(state, viewWin);
+          if (state.cursorFindPending) {
+            state.cursorFindPending = null;
+            this._updateIndicator(state);
+          }
+        },
         selection: () => {
           try {
             const sel = viewWin.getSelection?.();
@@ -852,6 +886,7 @@ var ZoteroVim = {
           if (state.mode === 'visual' || state.mode === 'cursor') {
             this._updateVisualCursor(state, viewWin, { autoPan: false });
           }
+          this._showReaderProgress(state, viewWin);
         },
         resize: () => {
           if (state.hintMode) {
@@ -877,6 +912,17 @@ var ZoteroVim = {
 
     this._patchReaderKeyForwarding(reader, state);
     this._patchReaderTextAnnotationFocus(reader, state);
+    const progressMode = this.getReaderProgressMode();
+    if (state._progressPreference !== progressMode) {
+      state._progressPreference = progressMode;
+      state._progressVisible = false;
+      clearTimeout(state._progressTimer);
+      if (!state._statusActive) this._updateIndicator(state);
+    }
+    if (progressMode === 'always'
+        && !state._statusActive && state.indicatorEl?.style.display === 'none') {
+      this._updateIndicator(state);
+    }
   },
 
   /**
@@ -1088,6 +1134,8 @@ var ZoteroVim = {
     const el = state.indicatorEl;
     el.style.display = 'block';
     el.textContent = msg;
+    el.style.fontWeight = 'bold';
+    state._statusActive = true;
     el.style.background =
       msg.startsWith('✓') ? 'rgba(50,150,50,0.9)'    :  // green  — success
       msg.startsWith('→') ? 'rgba(60,100,180,0.9)'   :  // blue   — info/navigation
@@ -1095,8 +1143,9 @@ var ZoteroVim = {
                             'rgba(180,40,40,0.9)';       // red    — error (✗ / other)
     clearTimeout(state._statusTimer);
     state._statusTimer = setTimeout(() => {
+      state._statusActive = false;
       if (state.mode === 'normal') el.style.display = 'none';
-      else this._updateIndicator(state);  // restore mode colour
+      this._updateIndicator(state);  // restore mode/progress colour
     }, ms);
   },
 
@@ -1109,6 +1158,7 @@ var ZoteroVim = {
       state._insertSessionID = (state._insertSessionID || 0) + 1;
     }
     state.mode = mode;
+    if (mode !== 'cursor') state.cursorFindPending = null;
     // Stop the insert-mode focus watchdog when leaving insert mode.
     if (mode !== 'insert') {
       clearTimeout(state.insertWatchdog);
@@ -1133,18 +1183,69 @@ var ZoteroVim = {
     if (!state.indicatorEl) return;
     const mode   = state.mode;
     const buffer = bufferOverride !== undefined ? bufferOverride : state.keyBuffer;
+    const progressMode = this.getReaderProgressMode();
+    const progressText = progressMode === 'off' ? '' : this._readerProgressText(state);
+    const progress = progressText
+      && (progressMode === 'always'
+          || (progressMode === 'transient' && state._progressVisible))
+      ? progressText : '';
     if (mode === 'normal' && !buffer && !state.countBuffer) {
-      state.indicatorEl.style.display = 'none';
+      if (!progress) {
+        state.indicatorEl.style.display = 'none';
+        return;
+      }
+      state.indicatorEl.style.display = 'block';
+      state.indicatorEl.textContent = progress;
+      state.indicatorEl.style.background = 'rgba(0,0,0,0.42)';
+      state.indicatorEl.style.fontWeight = 'normal';
       return;
     }
     state.indicatorEl.style.display = 'block';
     const prefix = (state.countBuffer && mode === 'normal') ? state.countBuffer : '';
     state.indicatorEl.textContent =
-      '-- ' + mode.toUpperCase() + ' --' + (prefix || buffer ? '  ' + prefix + buffer : '');
+      '-- ' + mode.toUpperCase() + ' --' + (prefix || buffer ? '  ' + prefix + buffer : '')
+      + (progress ? '  ·  ' + progress : '');
+    state.indicatorEl.style.fontWeight = 'bold';
     state.indicatorEl.style.background =
       mode === 'visual' ? 'rgba(80,120,200,0.85)' :
       mode === 'cursor' ? 'rgba(180,120,40,0.9)'  :
       mode === 'insert' ? 'rgba(50,150,80,0.85)'  : 'rgba(0,0,0,0.65)';
+  },
+
+  _readerProgressText(state) {
+    try {
+      const app = state?.activePdfWin?.PDFViewerApplication
+        || state?.pdfWin?.PDFViewerApplication;
+      const current = Number(app?.pdfViewer?.currentPageNumber);
+      const total = Number(app?.pdfDocument?.numPages);
+      if (!Number.isFinite(current) || !Number.isFinite(total) || total < 1) return '';
+      const page = Math.max(1, Math.min(total, Math.round(current)));
+      return page + '/' + total + ' · ' + Math.round(page / total * 100) + '%';
+    } catch (_) {
+      return '';
+    }
+  },
+
+  /** Show unobtrusive progress after navigation; always mode stays visible. */
+  _showReaderProgress(state, pdfWin) {
+    const mode = this.getReaderProgressMode();
+    state._progressPreference = mode;
+    if (mode === 'off') {
+      state._progressVisible = false;
+      clearTimeout(state._progressTimer);
+      if (!state._statusActive) this._updateIndicator(state);
+      return;
+    }
+    state.activePdfWin = pdfWin || state.activePdfWin;
+    clearTimeout(state._progressTimer);
+    state._progressVisible = mode === 'transient';
+    if (!state._statusActive) this._updateIndicator(state);
+    if (mode === 'transient') {
+      state._progressTimer = setTimeout(() => {
+        state._progressVisible = false;
+        if (!state._statusActive) this._updateIndicator(state);
+      }, 1000);
+    }
   },
 
   // ── Key handling ──────────────────────────────────────────────────────────
@@ -1313,37 +1414,44 @@ var ZoteroVim = {
     // Typed prefixes dim the consumed letters and hide non-matching badges;
     // a full label or a uniquely matching prefix activates immediately.
     if (state.hintMode) {
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      const key = event.key;
-      if (key === 'Escape') {
-        if (state.hintStage === 'fine') {
-          // Fine → back to coarse sentence-start hints.
-          this._showVisualHints(state, pdfWin, state.hintTargetMode);
-        } else {
-          this._clearVisualHints(state, pdfWin);
-          this._setMode(state, 'normal');
-        }
-      } else if (key === 'Backspace') {
-        state.hintBuffer = state.hintBuffer.slice(0, -1);
-        this._refreshHintBadges(state, pdfWin);
-      } else if (/^[a-zA-Z]$/.test(key)) {
-        const next = state.hintBuffer + key.toUpperCase();
-        const matches = state.hintBadges.filter(b => b.label.startsWith(next));
-        if (!matches.length) {
-          state.hintBuffer = '';
+      const visualObjectPrefix = state.hintTargetMode === 'visual'
+        && state.hintStage === 'coarse' && event.key === 'i';
+      if (visualObjectPrefix) {
+        this._clearVisualHints(state, pdfWin);
+        this._placeCursorNearViewportCenter(state, pdfWin);
+      } else {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        const key = event.key;
+        if (key === 'Escape') {
+          if (state.hintStage === 'fine') {
+            // Fine → back to coarse sentence-start hints.
+            this._showVisualHints(state, pdfWin, state.hintTargetMode);
+          } else {
+            this._clearVisualHints(state, pdfWin);
+            this._setMode(state, 'normal');
+          }
+        } else if (key === 'Backspace') {
+          state.hintBuffer = state.hintBuffer.slice(0, -1);
           this._refreshHintBadges(state, pdfWin);
-          this._showStatus(state, '✗ no hint: ' + next, 900);
-          return;
+        } else if (/^[a-zA-Z]$/.test(key)) {
+          const next = state.hintBuffer + key.toUpperCase();
+          const matches = state.hintBadges.filter(b => b.label.startsWith(next));
+          if (!matches.length) {
+            state.hintBuffer = '';
+            this._refreshHintBadges(state, pdfWin);
+            this._showStatus(state, '✗ no hint: ' + next, 900);
+            return;
+          }
+          state.hintBuffer = next;
+          this._refreshHintBadges(state, pdfWin);
+          const exact = matches.find(b => b.label === next);
+          if (exact || matches.length === 1) {
+            this._activateHint(state, pdfWin, exact || matches[0]);
+          }
         }
-        state.hintBuffer = next;
-        this._refreshHintBadges(state, pdfWin);
-        const exact = matches.find(b => b.label === next);
-        if (exact || matches.length === 1) {
-          this._activateHint(state, pdfWin, exact || matches[0]);
-        }
+        return;
       }
-      return;
     }
 
     // Insert mode: pass through except explicitly bound single-key shortcuts.
@@ -1387,6 +1495,27 @@ var ZoteroVim = {
 
     const keyStr = this._keyString(event);
     if (!keyStr) return;
+
+    // Cursor f/F/t/T consumes the next literal character rather than looking
+    // it up as another binding. Escape cancels the pending find in place.
+    if (state.mode === 'cursor' && state.cursorFindPending) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      const pending = state.cursorFindPending;
+      state.cursorFindPending = null;
+      if (keyStr !== 'escape' && !event.ctrlKey && !event.metaKey && !event.altKey
+          && Array.from(event.key || '').length === 1) {
+        this._cursorFindChar(
+          state,
+          pdfWin,
+          pending.motion,
+          event.key,
+          pending.count
+        );
+      }
+      this._updateIndicator(state);
+      return;
+    }
 
     const bindings = this.getBindings();
     const modePrefix = state.mode + ':';
@@ -1641,6 +1770,9 @@ var ZoteroVim = {
     }
     // The marks explorer overlay consumes every key.
     if (state.marksExplorerOpen) return true;
+    // f/F/t/T owns exactly one following key, including keys Zotero would
+    // otherwise forward to its KeyboardManager (for example r/read-aloud).
+    if (state.mode === 'cursor' && state.cursorFindPending) return true;
     // A pending mark prefix ("m", "`", "dm") means the next alphanumeric key
     // is consumed as a mark character — do not forward it to Zotero (which
     // would e.g. toggle the pointer tool on "ms").
@@ -1676,6 +1808,29 @@ var ZoteroVim = {
 
       if (this._handleReaderSidebarAction(state, reader, pdfWin, action)) {
         return;
+      }
+
+      if (action === 'repeatLastChange') {
+        const last = state.lastReaderChange;
+        if (!last) {
+          this._showStatus(state, 'No change to repeat', 1200);
+          return;
+        }
+        this._executeAction(last.action, reader, state, pdfWin, count || last.count);
+        return;
+      }
+
+      if ([
+        'deleteAnnotation', 'recolorYellow', 'recolorRed', 'recolorGreen',
+        'recolorBlue', 'recolorPurple', 'highlightYellow', 'highlightRed',
+        'highlightGreen', 'highlightBlue', 'highlightPurple', 'addNote',
+      ].includes(action) && this._readerChangeTargetAvailable(
+        action,
+        reader,
+        state,
+        pdfWin
+      )) {
+        state.lastReaderChange = { action, count };
       }
 
       const step = this.getScrollStep();
@@ -1788,6 +1943,12 @@ var ZoteroVim = {
           break;
 
         case 'openSearch':      this._openSearch(reader, pdfWin);           break;
+        case 'searchWordForward':
+          this._searchWordUnderCursor(state, reader, pdfWin, false);
+          break;
+        case 'searchWordBackward':
+          this._searchWordUnderCursor(state, reader, pdfWin, true);
+          break;
         case 'prevAnnotation':  this._navigateAnnotation(state, reader, -1); break;
         case 'nextAnnotation':  this._navigateAnnotation(state, reader, +1); break;
         case 'editAnnotation':
@@ -1873,6 +2034,21 @@ var ZoteroVim = {
         case 'extendSentenceBackward':   this._extendBySentence(state, pdfWin, -1);             break;
         case 'extendParagraphForward':   this._extendByParagraph(state, pdfWin, +1);            break;
         case 'extendParagraphBackward':  this._extendByParagraph(state, pdfWin, -1);            break;
+        case 'visualInnerWord':
+          this._selectVisualTextObject(state, pdfWin, 'word');
+          break;
+        case 'visualInnerDoubleQuote':
+          this._selectVisualTextObject(state, pdfWin, '"');
+          break;
+        case 'visualInnerParen':
+          this._selectVisualTextObject(state, pdfWin, '(');
+          break;
+        case 'visualInnerBracket':
+          this._selectVisualTextObject(state, pdfWin, '[');
+          break;
+        case 'visualInnerBrace':
+          this._selectVisualTextObject(state, pdfWin, '{');
+          break;
 
         case 'highlightYellow':  this._highlight(state, reader, pdfWin, this.COLORS.yellow);  break;
         case 'highlightRed':     this._highlight(state, reader, pdfWin, this.COLORS.red);     break;
@@ -1895,6 +2071,10 @@ var ZoteroVim = {
         case 'cursorBigWordBackward': this._cursorMoveByGranularity(state, pdfWin, 'backward', 'bigword', count);   break;
         case 'cursorLineStart':       this._cursorMoveToLineBoundary(state, pdfWin, false);                          break;
         case 'cursorLineEnd':         this._cursorMoveToLineBoundary(state, pdfWin, true);                           break;
+        case 'cursorFindForward':     this._beginCursorFind(state, 'f', count); break;
+        case 'cursorFindBackward':    this._beginCursorFind(state, 'F', count); break;
+        case 'cursorTillForward':     this._beginCursorFind(state, 't', count); break;
+        case 'cursorTillBackward':    this._beginCursorFind(state, 'T', count); break;
         case 'cursorToVisual':        this._cursorToVisual(state, pdfWin);                      break;
 
       // Delegate main-window actions from reader context

@@ -60,8 +60,11 @@ const ZV_DEFAULT_BINDINGS = {
   "normal:ctrl+o":  "navigateBack",
   "normal:ctrl+i":  "navigateForward",
   "normal:/":       "openSearch",
+  "normal:*":       "searchWordForward",
+  "normal:#":       "searchWordBackward",
   "normal:n":       "findNext",
   "normal:N":       "findPrevious",
+  "normal:.":       "repeatLastChange",
   "normal:[":       "prevAnnotation",
   "normal:]":       "nextAnnotation",
   "normal:enter":   "editAnnotation",
@@ -116,6 +119,11 @@ const ZV_DEFAULT_BINDINGS = {
   "visual:{":       "extendParagraphBackward",
   "visual:w":       "extendWordForward",
   "visual:b":       "extendWordBackward",
+  "visual:iw":      "visualInnerWord",
+  "visual:i\u0022":  "visualInnerDoubleQuote",
+  "visual:i(":      "visualInnerParen",
+  "visual:i[":      "visualInnerBracket",
+  "visual:i{":      "visualInnerBrace",
   "visual:zy":      "highlightYellow",
   "visual:zr":      "highlightRed",
   "visual:zg":      "highlightGreen",
@@ -127,6 +135,7 @@ const ZV_DEFAULT_BINDINGS = {
   "visual:yy":      "yankParagraph",
   "visual:#":       "searchSelection",
   "visual:o":       "swapVisualEnds",
+  "visual:.":       "repeatLastChange",
   "visual:v":       "exitMode",
   "visual:escape":  "exitMode",
   "cursor:j":       "cursorDown",
@@ -139,6 +148,12 @@ const ZV_DEFAULT_BINDINGS = {
   "cursor:B":       "cursorBigWordBackward",
   "cursor:0":       "cursorLineStart",
   "cursor:$":       "cursorLineEnd",
+  "cursor:f":       "cursorFindForward",
+  "cursor:F":       "cursorFindBackward",
+  "cursor:t":       "cursorTillForward",
+  "cursor:T":       "cursorTillBackward",
+  "cursor:*":       "searchWordForward",
+  "cursor:#":       "searchWordBackward",
   "cursor:v":       "cursorToVisual",
   "cursor:escape":  "exitMode",
   "insert:escape":  "exitMode",
@@ -207,6 +222,9 @@ const ZV_ACTION_LABELS = {
   openSearch:              "Open find bar",
   findNext:                "Jump to next search match (n)",
   findPrevious:            "Jump to previous search match (N)",
+  searchWordForward:       "Search word under cursor forward (*)",
+  searchWordBackward:      "Search word under cursor backward (#)",
+  repeatLastChange:        "Repeat last annotation change (.)",
   prevAnnotation:          "Jump to previous annotation",
   nextAnnotation:          "Jump to next annotation",
   clearSearch:             "Clear / close search",
@@ -226,6 +244,11 @@ const ZV_ACTION_LABELS = {
   extendWordBackward:      "Extend selection — previous word",
   extendLineStart:         "Extend selection — start of current line (0)",
   extendLineEnd:           "Extend selection — end of current line ($)",
+  visualInnerWord:         "Select inner word (iw)",
+  visualInnerDoubleQuote:  "Select inside double quotes — i\"",
+  visualInnerParen:        "Select inside parentheses — i(",
+  visualInnerBracket:      "Select inside brackets — i[",
+  visualInnerBrace:        "Select inside braces — i{",
   // Cursor mode
   cursorDown:              "Move caret down one visual line (cursor mode)",
   cursorUp:                "Move caret up one visual line (cursor mode)",
@@ -237,6 +260,10 @@ const ZV_ACTION_LABELS = {
   cursorBigWordBackward:   "Move caret backward one WORD (cursor mode)",
   cursorLineStart:         "Move caret to start of line (cursor mode)",
   cursorLineEnd:           "Move caret to end of line (cursor mode)",
+  cursorFindForward:       "Find character forward on line (cursor f)",
+  cursorFindBackward:      "Find character backward on line (cursor F)",
+  cursorTillForward:       "Move before character forward on line (cursor t)",
+  cursorTillBackward:      "Move after character backward on line (cursor T)",
   cursorToVisual:          "Enter Visual mode from current caret (cursor mode)",
   highlightYellow:         "Highlight — Yellow",
   highlightRed:            "Highlight — Red",
@@ -476,6 +503,7 @@ function _zvInit() {
     const insertCb = document.getElementById("zv-insert-enabled");
     const noteEditorCb = document.getElementById("zv-note-editor-enabled");
     const noteNumbersCb = document.getElementById("zv-note-line-numbers");
+    const readerProgressSelect = document.getElementById("zv-reader-progress");
     const modesStatus = document.getElementById("zv-modes-status");
 
     if (visualCb) {
@@ -497,6 +525,19 @@ function _zvInit() {
     if (noteNumbersCb) {
       noteNumbersCb.checked = _zvGet("noteEditor.lineNumbers", true);
       _zvSaveCheckbox(noteNumbersCb, "noteEditor.lineNumbers", modesStatus);
+    }
+    if (readerProgressSelect) {
+      const progress = _zvGet("reader.progress", "transient");
+      readerProgressSelect.value = ["off", "transient", "always"].includes(progress)
+        ? progress : "transient";
+      readerProgressSelect.addEventListener("command", () => {
+        _zvSet("reader.progress", readerProgressSelect.value);
+        _zvFlashStatus(
+          modesStatus,
+          ZV_I18N_STR("zv.status.saved", ZV_I18N_CURRENT_LANG()),
+          "#5FB236"
+        );
+      });
     }
   });
 

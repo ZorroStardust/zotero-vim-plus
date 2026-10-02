@@ -533,6 +533,7 @@ whatever has focus:
 | Key | Action |
 |-----|--------|
 | `/` | Open the PDF find bar |
+| `*` / `#` | Search the word under the caret forward / backward |
 | `n` | Jump to the next search match |
 | `N` | Jump to the previous search match |
 | `Escape` | Clear / close search |
@@ -544,6 +545,11 @@ counter stays visible. Press `/` again to reopen the find bar with your
 previous query selected. `Escape` closes the find bar and clears the
 highlights. Pressing `n` / `N` without an active search shows a hint to
 search first.
+
+In Cursor mode, `*` / `#` use the word under the text caret. In Normal mode,
+where no caret is visible, they use the word nearest the centre of the PDF
+viewport. The command returns to Normal mode so `n` / `N` can continue the
+search.
 
 #### Sidebar filter by colour
 
@@ -577,6 +583,7 @@ highlighted in the PDF and scrolled to in the sidebar.
 | `zg` | Change annotation colour → Green |
 | `zb` | Change annotation colour → Blue |
 | `zp` | Change annotation colour → Purple |
+| `.` | Repeat the last annotation change (highlight/note, delete or recolour) |
 
 > **Tip:** `y` vs `yy` — the plugin waits up to 800 ms for the second `y`
 > before firing the single-`y` action. Typing `yy` quickly always wins.
@@ -621,7 +628,13 @@ sentence start, and every other label places the caret at that word.
 | `b` | Move caret backward by one word |
 | `B` | Move caret backward by one WORD (non-whitespace chunk) |
 | `0` / `$` | Move caret to line start / line end |
+| `f<char>` / `F<char>` | Find a character forward / backward on this visual line |
+| `t<char>` / `T<char>` | Move just before / after that character |
+| `*` / `#` | Search the word under the caret forward / backward |
 | `2w`, `3b`, ... | Count prefix repeats the motion |
+
+Character finds accept count prefixes (`2fa`) and any single Unicode
+character. `Escape` cancels a pending `f`/`F`/`t`/`T` without leaving Cursor.
 
 > **Multi-column papers:** text flows column by column — `j` at the bottom
 > of a column wraps to the next column's first line on the same page (`k`
@@ -665,6 +678,9 @@ sentence hints (then to Normal mode).
 | `0` / `$` | Extend selection to line start / line end |
 | `)` / `(` | Extend selection to next / previous sentence start |
 | `}` / `{` | Extend selection to paragraph end / start |
+| `iw` | Select the word under the active end (`viw` directly from Normal) |
+| `i"` | Select inside the surrounding double quotes |
+| `i(` / `i[` / `i{` | Select inside the nearest enclosing pair |
 | `o` | **Swap anchor and focus** — jump to the opposite end of the selection (like Vim's `o` in Visual mode); subsequent movement keys extend from the new end |
 
 #### Creating annotations
@@ -678,6 +694,7 @@ sentence hints (then to Normal mode).
 | `zp` | Create a **purple** highlight |
 | `za` | Add a **note** annotation (creates highlight + opens comment editor) |
 | `i` | Same as `za` (quick note + enter Insert on comment) |
+| `.` | Repeat the last annotation-changing action on the current target/selection |
 
 #### Copying text
 
@@ -820,6 +837,9 @@ failures are reported to `zv-startup.log` in the profile directory with
 | `openSearch` | Open find bar |
 | `findNext` | Jump to next search match |
 | `findPrevious` | Jump to previous search match |
+| `searchWordForward` | Search the word under the caret forward |
+| `searchWordBackward` | Search the word under the caret backward |
+| `repeatLastChange` | Repeat the last annotation-changing action |
 | `clearSearch` | Close / clear find bar |
 | `prevAnnotation` | Jump to previous annotation |
 | `nextAnnotation` | Jump to next annotation |
@@ -854,6 +874,11 @@ failures are reported to `zv-startup.log` in the profile directory with
 | `extendSentenceBackward` | Extend selection to previous sentence start |
 | `extendParagraphForward` | Extend selection to end of current paragraph |
 | `extendParagraphBackward` | Extend selection to start of current paragraph |
+| `visualInnerWord` | Select the inner word |
+| `visualInnerDoubleQuote` | Select inside double quotes |
+| `visualInnerParen` | Select inside parentheses |
+| `visualInnerBracket` | Select inside square brackets |
+| `visualInnerBrace` | Select inside braces |
 | `highlightYellow` | Create yellow highlight |
 | `highlightRed` | Create red highlight |
 | `highlightGreen` | Create green highlight |
@@ -874,6 +899,10 @@ failures are reported to `zv-startup.log` in the profile directory with
 | `cursorBigWordBackward` | Move caret backward one WORD (Cursor mode) |
 | `cursorLineStart` | Move caret to start of line (Cursor mode) |
 | `cursorLineEnd` | Move caret to end of line (Cursor mode) |
+| `cursorFindForward` | Find a character forward on the current line |
+| `cursorFindBackward` | Find a character backward on the current line |
+| `cursorTillForward` | Move before a character forward on the current line |
+| `cursorTillBackward` | Move after a character backward on the current line |
 | `cursorToVisual` | Enter Visual mode from current caret |
 | `mainTabPick` | Open tab picker for currently open Zotero tabs |
 | `mainNotesLayout` | Toggle notes layout overlay (left list + right preview) |
@@ -922,6 +951,7 @@ failures are reported to `zv-startup.log` in the profile directory with
 | Enable Insert mode | on | Allow entering Insert mode with `i` |
 | Note editor Vim mode | on | Enable Vim-style editing in library notes, reader-side notes and note tabs |
 | Note editor line numbers | on | Absolute logical line numbers with the current number highlighted; requires note Vim mode |
+| Reader page progress | Briefly after navigation | `12/34 · 35%` in the mode indicator; can be Off, transient, or always visible |
 | Scroll mode | Constant-speed scrolling | Step / Constant-speed / Accelerating — only the active mode's parameters are shown |
 | Scroll step | 60 px | Pixels scrolled per `j`/`k`/`H`/`L` keypress (step mode; count prefixes like `3j` always use this) |
 | Scroll speed | 2000 px/s | Constant hold-scroll speed (constant-speed mode) |

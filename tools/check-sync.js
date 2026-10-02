@@ -42,7 +42,7 @@ function extractTable(rel, startRe, endRe, pairRe) {
   const body = lines.slice(start, end).join('\n');
   const table = {};
   for (const m of body.matchAll(pairRe)) {
-    table[m[1]] = m[2];
+    table[m[1].replace(/\\u0022/g, '"')] = m[2];
   }
   return table;
 }
@@ -56,10 +56,11 @@ function reportDuplicateKeys(rel, startRe, endRe, pairRe, label) {
   const seen = new Map();
   for (let i = start; i <= end; i++) {
     for (const m of lines[i].matchAll(pairRe)) {
-      if (seen.has(m[1])) {
-        report(`${label} has duplicate key "${m[1]}" (first occurrence line ${seen.get(m[1]) + 1})`);
+      const key = m[1].replace(/\\u0022/g, '"');
+      if (seen.has(key)) {
+        report(`${label} has duplicate key "${key}" (first occurrence line ${seen.get(key) + 1})`);
       } else {
-        seen.set(m[1], i);
+        seen.set(key, i);
       }
     }
   }

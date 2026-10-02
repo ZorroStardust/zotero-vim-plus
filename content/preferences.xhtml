@@ -104,6 +104,23 @@
       style="margin: 4px 0; font-size: 0.9em; color: #666;">
       Numbers match 12G / 12gg; wrapped text keeps the same number. Requires note Vim mode.
     </html:p>
+    <hbox align="center" style="margin-top: 8px;">
+      <html:label for="zv-reader-progress"
+        data-i18n="zv.reader.progress"
+        style="font-weight: 600; margin-right: 12px;">Reader page progress</html:label>
+      <menulist id="zv-reader-progress">
+        <menupopup>
+          <menuitem value="off" data-i18n="zv.reader.progress.off" label="Off" />
+          <menuitem value="transient" data-i18n="zv.reader.progress.transient"
+            label="Briefly after navigation" />
+          <menuitem value="always" data-i18n="zv.reader.progress.always" label="Always visible" />
+        </menupopup>
+      </menulist>
+    </hbox>
+    <html:p data-i18n="zv.reader.progress.help"
+      style="margin: 4px 0; font-size: 0.9em; color: #666;">
+      Shows page/total and percentage in the small mode indicator.
+    </html:p>
     <hbox style="margin-top: 6px; justify-content: flex-end; align-items: center;">
       <html:span id="zv-modes-status"
         style="font-size: 0.9em; color: #5FB236;"></html:span>

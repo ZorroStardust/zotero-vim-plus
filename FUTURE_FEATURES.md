@@ -11,10 +11,10 @@ the README / CHANGELOG once implemented, and mark them done below.
 | 2 | ~~`Ctrl+o` / `Ctrl+i` reading history~~ | **Done (unreleased)** — uses the focused native reader view's back/forward stack for major jumps (`gg`/`G`, outline, marks, links and annotations), including split panes and count prefixes; independent of marks |
 | 3 | `+` / `-` (and `=`) zoom | Call `reader._internalReader.zoomIn() / zoomOut()` — zoom currently needs `Ctrl+=` / `Ctrl+-` |
 | 4 | `V` toggle reader sidebar | `_readerSetSidebarOpen` / `_readerIsSidebarOpen` already exist (used by the outline explorer) |
-| 5 | Page number / progress in the mode indicator | Read `pdfWin.PDFViewerApplication.pdfViewer.currentPageNumber` and `pdfDocument.numPages`; display like `12/34 · 35%` |
+| 5 | ~~Page number / progress in the mode indicator~~ | **Done (unreleased)** — compact `12/34 · 35%` display with Off / transient / always-visible settings; transient is the unobtrusive default |
 | 6 | ~~Fuzzy picker: open the selected item's PDF~~ | **Done (commit e5ffea4+)** — `Ctrl+o` in the items picker selects the item and opens its PDF (`_pickerSelectItem` + `_mainOpenPDF`); bare `o` always types into the search box, and `Ctrl+o` in the tab picker does nothing ('o' stays a hint letter) |
 | 7 | Reader `gv` re-select the last Visual selection | Note editor **done (unreleased)**; reader still needs `state.lastVisualRange` |
-| 8 | Reader `*` / `#` search the word under the caret | Note editor **done (unreleased)**; reader can reuse `_searchSelection` (word at caret in Cursor mode, viewport centre in Normal mode) |
+| 8 | ~~Reader `*` / `#` search the word under the caret~~ | **Done (unreleased)** — uses the Cursor caret, or the text nearest viewport centre in Normal mode; `#` starts in the reverse direction |
 | 9 | Import / export keybindings as JSON + search box in the Preferences panel | Preferences UX only, no runtime risk |
 | 10 | Auto-enter Insert mode when an annotation comment field gains focus | Removes the manual `i` step when clicking into a comment |
 
@@ -24,16 +24,19 @@ the README / CHANGELOG once implemented, and mark them done below.
   `:color red`, `:w` save annotation comments.  The reader currently has no
   command line; a `:`-driven overlay (like the outline explorer) would be the
   biggest vim-identity win.
-- **Cursor mode `f` / `F` / `t` / `T` character find** — reuse the existing
-  text-node scanning / keyword machinery from `_cursorMoveByGranularity`.
+- **~~Cursor mode `f` / `F` / `t` / `T` character find~~** — **Done
+  (unreleased)** — current visual line only, Unicode character arguments and
+  count prefixes.
 - **~~Marks `m` + `` ` ``~~** — **Done (unreleased)** — session marks (`m<x>`
   set, `` `<x> `` instant jump, `dm<x>` delete, `dM` delete all, `<space>m`
   explorer overlay; chars `a`–`z` and `0`–`9`), plus opt-in persistence as a
   child note under the PDF item (Preferences → Marks). Old annotation-tag
   marks migrate automatically.
-- **Visual-mode text objects `vi"` / `vi(` / `vi[`** — only word / sentence /
-  paragraph exist today.
-- **`.` repeat last action** — record the last `(action, count)` and replay.
+- **~~Visual-mode text objects `viw` / `vi"` / `vi(` / `vi[` / `vi{`~~** —
+  **Done (unreleased)** — direct `vi…` starts at the viewport-centre text when
+  no hint has been chosen yet.
+- **~~`.` repeat last action~~** — **Done (unreleased)** for annotation-changing
+  reader actions (highlight/note creation, deletion and recolouring).
 - **~~Note editor: precise motions, search, Visual mode and text objects.~~**
   **Done (unreleased)** — `f/F/t/T`, `;`/`,`, `%`; literal `/`/`?`, `n/N`,
   `*`/`#`; character/line Visual mode and safe `gv`; inner/around words,

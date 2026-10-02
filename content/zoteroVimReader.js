@@ -8,6 +8,22 @@
  */
 
 Object.assign(ZoteroVim, {
+  /** Record dot-repeat only when the requested mutation has a real target. */
+  _readerChangeTargetAvailable(action, reader, state, pdfWin) {
+    if (/^(highlight|addNote)/.test(action)) {
+      if (state?.selectionParams?.annotation) return true;
+      if (Date.now() - (this._lastSelectionTS || 0) < 10000
+          && this._lastSelectionParams?.annotation) return true;
+      try {
+        const selection = pdfWin?.getSelection?.();
+        return !!selection && !selection.isCollapsed && !!selection.toString();
+      } catch (_) {
+        return false;
+      }
+    }
+    return !!this._selectedAnnotationKey?.(state, reader);
+  },
+
   _readerHistoryView(reader, pdfWin) {
     const ir = reader?._internalReader;
     for (const [view, primary] of [[ir?._primaryView, true], [ir?._secondaryView, false]]) {
@@ -2009,6 +2025,117 @@ Object.assign(ZoteroVim, {
     }
   },
 
+  _beginCursorFind(state, motion, count = 0) {
+    state.cursorFindPending = { motion, count: Math.max(1, count || 1) };
+    this._updateIndicator(state, (count > 0 ? String(count) : '') + motion);
+  },
+
+  _readerTextSnapshot(nodes) {
+    const starts = new Map();
+    const points = [];
+    let text = '';
+    for (const node of nodes || []) {
+      if (!node || node.nodeType !== 3) continue;
+      starts.set(node, text.length);
+      const value = node.data || '';
+      for (let i = 0; i < value.length; i++) points.push({ node, offset: i });
+      text += value;
+    }
+    return { nodes: Array.from(starts.keys()), starts, points, text };
+  },
+
+  _readerSnapshotOffset(snapshot, node, offset) {
+    const start = snapshot?.starts?.get(node);
+    if (!Number.isFinite(start)) return -1;
+    return start + Math.max(0, Math.min(Number(offset) || 0, node.length));
+  },
+
+  _readerSnapshotPoint(snapshot, offset) {
+    if (!snapshot?.nodes?.length) return null;
+    const pos = Math.max(0, Math.min(Number(offset) || 0, snapshot.text.length));
+    if (pos < snapshot.points.length) return snapshot.points[pos];
+    const node = snapshot.nodes[snapshot.nodes.length - 1];
+    return { node, offset: node.length };
+  },
+
+  _cursorLineTextNodes(doc, focusNode) {
+    const focusEl = focusNode?.nodeType === 3 ? focusNode.parentElement : focusNode;
+    const { lines } = this._cursorVisibleLines(doc);
+    for (const line of lines) {
+      if (!line.spans?.some(item => item.span === focusEl || item.span.contains?.(focusEl))) {
+        continue;
+      }
+      return line.spans
+        .map(item => item.span?.firstChild)
+        .filter(node => node?.nodeType === 3);
+    }
+    return [];
+  },
+
+  /** Resolve one f/F/t/T target on the current visual line. */
+  _cursorFindTarget(nodes, focusNode, focusOffset, motion, char, count = 1) {
+    const snapshot = this._readerTextSnapshot(nodes);
+    const current = this._readerSnapshotOffset(snapshot, focusNode, focusOffset);
+    if (current < 0 || !char) return null;
+    const forward = motion === 'f' || motion === 't';
+    let match = -1;
+    let from = forward
+      ? current + (Array.from(snapshot.text.slice(current))[0]?.length || 1)
+      : current - 1;
+    for (let i = 0; i < Math.max(1, count || 1); i++) {
+      match = forward
+        ? snapshot.text.indexOf(char, Math.max(0, from))
+        : snapshot.text.lastIndexOf(char, from);
+      if (match < 0) return null;
+      from = forward ? match + char.length : match - 1;
+    }
+    let target = match;
+    if (motion === 't') {
+      const before = Array.from(snapshot.text.slice(0, match)).pop() || '';
+      target = Math.max(0, match - before.length);
+    } else if (motion === 'T') {
+      target = Math.min(snapshot.text.length, match + char.length);
+    }
+    return this._readerSnapshotPoint(snapshot, target);
+  },
+
+  _cursorFindChar(state, pdfWin, motion, char, count = 1) {
+    try {
+      if (!this._ensureCursorCaret(state, pdfWin)) return false;
+      const sel = pdfWin.getSelection();
+      if (!sel?.focusNode) return false;
+      const nodes = this._cursorLineTextNodes(pdfWin.document, sel.focusNode);
+      const target = this._cursorFindTarget(
+        nodes,
+        sel.focusNode,
+        sel.focusOffset,
+        motion,
+        char,
+        count
+      );
+      if (!target) {
+        this._showStatus(state, '✗ not found: ' + char, 900);
+        return false;
+      }
+      const range = pdfWin.document.createRange();
+      range.setStart(target.node, target.offset);
+      range.collapse(true);
+      sel.removeAllRanges();
+      sel.addRange(range);
+      state.visualCursor = { textNode: target.node, offset: target.offset };
+      state.cursorPreferredX = this._cursorCurrentX(
+        pdfWin.document,
+        sel,
+        state.cursorPreferredX
+      );
+      this._updateVisualCursor(state, pdfWin);
+      return true;
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] _cursorFindChar error: ' + e);
+      return false;
+    }
+  },
+
   _lineBoundaryTarget(doc, focusNode, focusOffset, toEnd) {
     const focusEl = focusNode?.nodeType === 3 ? focusNode.parentElement : focusNode;
     const focusRect = focusEl?.getBoundingClientRect?.();
@@ -2107,6 +2234,117 @@ Object.assign(ZoteroVim, {
     return pos;
   },
 
+  _readerWordRange(nodes, focusNode, focusOffset) {
+    const snapshot = this._readerTextSnapshot(nodes);
+    let pos = this._readerSnapshotOffset(snapshot, focusNode, focusOffset);
+    if (pos < 0) return null;
+    if (pos >= snapshot.text.length && pos > 0) pos--;
+    const re = /[\p{L}\p{N}\p{M}_]+/gu;
+    let firstAfter = null;
+    let match;
+    while ((match = re.exec(snapshot.text)) !== null) {
+      const end = match.index + match[0].length;
+      if (pos >= match.index && pos < end) {
+        return { snapshot, start: match.index, end, text: match[0] };
+      }
+      if (!firstAfter && match.index >= pos) {
+        firstAfter = { snapshot, start: match.index, end, text: match[0] };
+      }
+    }
+    return firstAfter;
+  },
+
+  _readerTextObjectRange(nodes, focusNode, focusOffset, object) {
+    if (object === 'word') return this._readerWordRange(nodes, focusNode, focusOffset);
+    const snapshot = this._readerTextSnapshot(nodes);
+    let pos = this._readerSnapshotOffset(snapshot, focusNode, focusOffset);
+    if (pos < 0 || !snapshot.text) return null;
+    pos = Math.min(pos, snapshot.text.length - 1);
+
+    if (object === '"') {
+      const quotes = [];
+      for (let i = 0; i < snapshot.text.length; i++) {
+        if (snapshot.text.charAt(i) !== '"') continue;
+        let slashes = 0;
+        for (let j = i - 1; j >= 0 && snapshot.text.charAt(j) === '\\'; j--) slashes++;
+        if (slashes % 2 === 0) quotes.push(i);
+      }
+      for (let i = 0; i + 1 < quotes.length; i += 2) {
+        if (pos >= quotes[i] && pos <= quotes[i + 1]) {
+          return { snapshot, start: quotes[i] + 1, end: quotes[i + 1] };
+        }
+      }
+      return null;
+    }
+
+    const pairs = { '(': ')', '[': ']', '{': '}' };
+    const close = pairs[object];
+    if (!close) return null;
+    let depth = 0;
+    let start = -1;
+    for (let i = pos; i >= 0; i--) {
+      const ch = snapshot.text.charAt(i);
+      if (ch === close) depth++;
+      else if (ch === object) {
+        if (depth === 0) { start = i; break; }
+        depth--;
+      }
+    }
+    if (start < 0) return null;
+    depth = 0;
+    for (let i = start; i < snapshot.text.length; i++) {
+      const ch = snapshot.text.charAt(i);
+      if (ch === object) depth++;
+      else if (ch === close) {
+        depth--;
+        if (depth === 0) {
+          return { snapshot, start: start + 1, end: i };
+        }
+      }
+    }
+    return null;
+  },
+
+  _selectVisualTextObject(state, pdfWin, object) {
+    try {
+      const sel = pdfWin.getSelection();
+      if (!sel?.focusNode) return false;
+      let nodes = this._cursorOrderedTextNodes(pdfWin.document);
+      if (object === '"') {
+        nodes = this._cursorLineTextNodes(pdfWin.document, sel.focusNode);
+      }
+      const objectRange = this._readerTextObjectRange(
+        nodes,
+        sel.focusNode,
+        sel.focusOffset,
+        object
+      );
+      if (!objectRange || objectRange.end <= objectRange.start) return false;
+      const start = this._readerSnapshotPoint(objectRange.snapshot, objectRange.start);
+      const end = this._readerSnapshotPoint(objectRange.snapshot, objectRange.end);
+      if (!start || !end) return false;
+      state.visualCursor = { textNode: start.node, offset: start.offset };
+      if (typeof sel.setBaseAndExtent === 'function') {
+        sel.setBaseAndExtent(start.node, start.offset, end.node, end.offset);
+      } else {
+        sel.removeAllRanges();
+        sel.collapse(start.node, start.offset);
+        sel.extend(end.node, end.offset);
+      }
+      state.visualPreferredX = this._cursorCurrentX(
+        pdfWin.document,
+        sel,
+        state.visualPreferredX
+      );
+      this._updateVisualCursor(state, pdfWin);
+      this._showStatus(state, '▶ ' + sel.toString().length + ' chars', 600);
+      return true;
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] _selectVisualTextObject error: ' + e);
+      return false;
+    }
+  },
+
   _extendByWord(state, pdfWin, direction, bigWord) {
     try {
       pdfWin.focus();
@@ -2146,14 +2384,18 @@ Object.assign(ZoteroVim, {
    * order.  count ≤ 26 → single letters; more → uniform two-letter labels
    * (26² = 676).  With `reserved` set (fine stage), the first label is the
    * reserved one and all following labels avoid its first character, so
-   * typing the reserved label is always an exact, unambiguous match.
+   * typing the reserved label is always an exact, unambiguous match.  The
+   * optional excluded string removes keys owned by the surrounding mode.
    */
   _hintAlphabet() {
     return 'ASDFJKLGHQWERTYUIOPZXCVBNM';
   },
 
-  _hintLabelList(count, reserved = null) {
-    const alphabet = this._hintAlphabet();
+  _hintLabelList(count, reserved = null, excluded = '') {
+    const alphabet = this._hintAlphabet()
+      .split('')
+      .filter(c => !excluded.includes(c))
+      .join('');
     const labels = [];
     if (reserved !== null) {
       labels.push(reserved);
@@ -2193,7 +2435,13 @@ Object.assign(ZoteroVim, {
       this._placeCursorAtFirstText(state, pdfWin);
       return;
     }
-    const labels = this._hintLabelList(starts.length);
+    // Lowercase i starts Visual text objects (iw, i", i(, ...), so coarse
+    // Visual hints must not advertise an unreachable I label.
+    const labels = this._hintLabelList(
+      starts.length,
+      null,
+      targetMode === 'visual' ? 'I' : ''
+    );
     const badges = [];
     for (let i = 0; i < starts.length; i++) {
       const b = this._createHintBadge(
@@ -2715,6 +2963,65 @@ Object.assign(ZoteroVim, {
       this._updateVisualCursor(state, pdfWin);
     } catch (e) {
       Zotero.debug('[ZoteroVim] _placeCursorAtFirstText error: ' + e);
+    }
+  },
+
+  /** Place a collapsed caret at the text nearest the viewport centre. */
+  _placeCursorNearViewportCenter(state, pdfWin) {
+    try {
+      const doc = pdfWin.document;
+      const container = this._getScrollContainer(pdfWin);
+      const rect = container?.getBoundingClientRect?.()
+        || { left: 0, right: pdfWin.innerWidth || 800, top: 0, bottom: pdfWin.innerHeight || 800 };
+      const x = (rect.left + rect.right) / 2;
+      const y = (rect.top + rect.bottom) / 2;
+      let node = null;
+      let offset = 0;
+      try {
+        const caret = doc.caretPositionFromPoint?.(x, y);
+        const candidate = caret?.offsetNode;
+        const owner = candidate?.nodeType === 3 ? candidate.parentElement : candidate;
+        if (candidate?.nodeType === 3 && owner?.closest?.('.textLayer')) {
+          node = candidate;
+          offset = caret.offset;
+        }
+      } catch (_) {}
+
+      if (!node) {
+        let best = null;
+        let bestDistance = Infinity;
+        for (const candidate of this._cursorOrderedTextNodes(doc)) {
+          const r = candidate.parentElement?.getBoundingClientRect?.();
+          if (!r) continue;
+          const dx = x < r.left ? r.left - x : x > r.right ? x - r.right : 0;
+          const dy = y < r.top ? r.top - y : y > r.bottom ? y - r.bottom : 0;
+          const distance = dx * dx + dy * dy;
+          if (distance < bestDistance) {
+            bestDistance = distance;
+            best = candidate;
+          }
+        }
+        node = best;
+        if (node) offset = this._offsetAtX(doc, node, x) ?? 0;
+      }
+      if (!node) return false;
+      const sel = pdfWin.getSelection();
+      const range = doc.createRange();
+      range.setStart(node, Math.max(0, Math.min(offset, node.length)));
+      range.collapse(true);
+      sel.removeAllRanges();
+      sel.addRange(range);
+      state.visualCursor = { textNode: node, offset };
+      if (state.mode === 'visual') {
+        state.visualPreferredX = this._cursorCurrentX(doc, sel, state.visualPreferredX);
+      } else {
+        state.cursorPreferredX = this._cursorCurrentX(doc, sel, state.cursorPreferredX);
+      }
+      this._updateVisualCursor(state, pdfWin);
+      return true;
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] _placeCursorNearViewportCenter error: ' + e);
+      return false;
     }
   },
 
@@ -3702,24 +4009,20 @@ Object.assign(ZoteroVim, {
     try { pdfWin.focus(); } catch (_) {}   // keep focus in PDF iframe
   },
 
-  _searchSelection(state, reader, pdfWin) {
+  _searchReaderText(state, reader, pdfWin, rawText, backward = false) {
     try {
-      const sel = pdfWin.getSelection?.();
-      if (!sel || sel.isCollapsed) return;
-
-      let text = sel.toString()
+      const text = String(rawText || '')
         .normalize('NFKC')
         .replace(/\n/g, ' ')
         .replace(/ {2,}/g, ' ')
         .trim();
-      if (!text) return;
-
+      if (!text) return false;
       const readerWin = reader._iframeWindow;
       const ir = reader._internalReader;
 
       // Open the find popup. Internally it focuses the input after 100 ms.
       if (typeof ir?.toggleFindPopup === 'function') {
-        ir.toggleFindPopup(Cu.cloneInto({ open: true }, readerWin));
+        ir.toggleFindPopup(Components.utils.cloneInto({ open: true }, readerWin));
       }
 
       // After the popup has rendered and focused the input (100 ms internally),
@@ -3731,18 +4034,55 @@ Object.assign(ZoteroVim, {
           if (!inp) { Zotero.debug('[ZoteroVim] find input not found'); return; }
           inp.value = text;
           inp.dispatchEvent(new readerWin.Event('input', { bubbles: true }));
+          if (backward) {
+            setTimeout(() => {
+              try { ir?.findPrevious?.(); } catch (_) {}
+            }, 80);
+          }
           Zotero.debug('[ZoteroVim] find input set: "' + text + '"');
         } catch (e2) {
           Zotero.debug('[ZoteroVim] fill find input error: ' + e2);
         }
       }, 200);
 
-      Zotero.debug('[ZoteroVim] searchSelection: "' + text + '"');
+      return true;
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] _searchReaderText error: ' + e);
+      return false;
+    }
+  },
+
+  _searchSelection(state, reader, pdfWin) {
+    try {
+      const sel = pdfWin.getSelection?.();
+      if (!sel || sel.isCollapsed) return;
+      this._searchReaderText(state, reader, pdfWin, sel.toString());
     } catch (e) {
       Zotero.debug('[ZoteroVim] _searchSelection error: ' + e);
     }
     this._setMode(state, 'normal');
     try { pdfWin.getSelection()?.removeAllRanges(); } catch (_) {}
+  },
+
+  _searchWordUnderCursor(state, reader, pdfWin, backward = false) {
+    try {
+      let sel = pdfWin.getSelection?.();
+      if (state.mode !== 'cursor' || !sel?.focusNode) {
+        if (!this._placeCursorNearViewportCenter(state, pdfWin)) return;
+        sel = pdfWin.getSelection?.();
+      }
+      const nodes = this._cursorOrderedTextNodes(pdfWin.document);
+      const word = this._readerWordRange(nodes, sel?.focusNode, sel?.focusOffset);
+      if (!word?.text) {
+        this._showStatus(state, '✗ no word under cursor', 1200);
+        return;
+      }
+      this._searchReaderText(state, reader, pdfWin, word.text, backward);
+      this._setMode(state, 'normal');
+      try { pdfWin.getSelection()?.removeAllRanges(); } catch (_) {}
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] _searchWordUnderCursor error: ' + e);
+    }
   },
 
   // ── Search helpers ────────────────────────────────────────────────────────
@@ -3754,7 +4094,10 @@ Object.assign(ZoteroVim, {
     try {
       const ir = reader._internalReader;
       if (typeof ir?.toggleFindPopup === 'function') {
-        ir.toggleFindPopup(Cu.cloneInto({ open: true }, reader._iframeWindow));
+        ir.toggleFindPopup(Components.utils.cloneInto(
+          { open: true },
+          reader._iframeWindow
+        ));
         Zotero.debug('[ZoteroVim] openSearch: toggleFindPopup OK');
         return;
       }
@@ -3809,7 +4152,10 @@ Object.assign(ZoteroVim, {
     try {
       const ir = reader?._internalReader;
       if (typeof ir?.toggleFindPopup === 'function') {
-        ir.toggleFindPopup(Cu.cloneInto({ open: false }, reader._iframeWindow));
+        ir.toggleFindPopup(Components.utils.cloneInto(
+          { open: false },
+          reader._iframeWindow
+        ));
         Zotero.debug('[ZoteroVim] clearSearch: toggleFindPopup(false) OK');
         return;
       }

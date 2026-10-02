@@ -302,6 +302,14 @@ check('Insert arrows remain native, including Shift/Ctrl-modified arrows', () =>
 check('first Escape dismisses an editor palette natively; next exits Insert', () => {
   const el = makeEditor('/');
   const doc = el.ownerDocument;
+  const magicOptions = { enable: true };
+  const magicPlugin = {
+    spec: { betterNotes: 'magicKey' },
+    getState: () => ({ options: magicOptions }),
+  };
+  doc.defaultView._currentEditorInstance = {
+    _editorCore: { view: { state: { plugins: [magicPlugin] } } },
+  };
   const popup = { hidden: false, visible: true, interactive: true,
     closest: () => null, matches: () => true, querySelector: () => ({}),
     getClientRects() { return this.visible ? [{}] : []; },
@@ -324,14 +332,31 @@ check('first Escape dismisses an editor palette natively; next exits Insert', ()
   assert.equal(state._contextNoteDismissedSlashPalette, true);
   open = false; // The editor's original listener closes its own popup.
 
-  // Better Notes reopens after Backspace reveals the same slash. Keyup closes
-  // that reopened palette through its own Escape handler, without leaving Insert.
+  // Disable the Better Notes magic-key plugin before its Backspace transaction,
+  // then restore it on keyup. Its update hook therefore never creates a popup.
+  key(el, state, 'Backspace');
+  assert.equal(magicOptions.enable, false);
+  if (magicOptions.enable) open = true;
+  plugin._onMainContextNoteInput({ type: 'keyup', key: 'Backspace', target: el }, state);
+  assert.equal(open, false);
+  assert.equal(magicOptions.enable, true);
+  assert.equal(state._contextNoteSlashPaletteSuspension, null);
+  assert.equal(state._contextNoteMode, 'insert');
+  assert.equal(state._contextNoteDismissedSlashPalette, true);
+
+  // Restore on blur too, in case the matching keyup occurs outside the editor.
+  key(el, state, 'a');
+  assert.equal(magicOptions.enable, false);
+  plugin._onMainContextNoteInput({ type: 'blur', target: el }, state);
+  assert.equal(magicOptions.enable, true);
+
+  // Older Better Notes versions without accessible plugin state use the
+  // post-transaction Escape fallback.
+  delete doc.defaultView._currentEditorInstance;
   key(el, state, 'Backspace');
   open = true;
   plugin._onMainContextNoteInput({ type: 'keyup', key: 'Backspace', target: el }, state);
   assert.equal(open, false);
-  assert.equal(state._contextNoteMode, 'insert');
-  assert.equal(state._contextNoteDismissedSlashPalette, true);
 
   // A newly typed slash (also Ctrl+/) deliberately opts back into the palette.
   key(el, state, '/', { ctrlKey: true });

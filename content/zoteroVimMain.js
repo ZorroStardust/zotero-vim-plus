@@ -69,6 +69,7 @@ Object.assign(ZoteroVim, {
       _contextNoteConsumedInput: null,
       _contextNoteKeyHandling: false,
       _contextNoteDismissedSlashPalette: false,
+      _contextNoteSlashPaletteSuspension: null,
       _contextNoteLineNumbers: null,
       _contextNoteMode: 'normal',
       _contextNoteKeyBuffer: '',
@@ -825,6 +826,7 @@ Object.assign(ZoteroVim, {
   },
 
   _clearMainContextNoteListener(winState) {
+    this._restoreNoteSlashPalette(winState);
     this._noteCloseSearch(winState);
     if (winState) {
       if (winState._contextNoteVisual) winState._contextNoteMode = 'normal';
@@ -935,6 +937,7 @@ Object.assign(ZoteroVim, {
     if (!winState || event._zvNoteEditorCommand) return;
     const consumed = winState._contextNoteConsumedInput;
     if (event.type === 'blur' || event.type === 'keyup') {
+      this._restoreNoteSlashPalette(winState);
       if (event.type === 'blur' || (consumed && (consumed.code && event.code
           ? event.code === consumed.code : event.key === consumed.key))) {
         winState._contextNoteConsumedInput = null;
@@ -1002,9 +1005,13 @@ Object.assign(ZoteroVim, {
     }
 
     if (mode === 'insert') {
+      this._restoreNoteSlashPalette(winState);
       // A newly typed slash is a fresh request for the palette. The dismissal
       // guard only covers editing back to the exact slash that was dismissed.
       if (event.key === '/') winState._contextNoteDismissedSlashPalette = false;
+      else if (keyStr !== 'escape' && winState._contextNoteDismissedSlashPalette) {
+        this._suspendNoteSlashPalette(winState, event.target?.ownerDocument);
+      }
       if (keyStr === 'escape') {
         // The editor (including Better Notes' slash palette) must receive the
         // original Escape. Do not synthesize events or remove its popup DOM.
@@ -1019,6 +1026,7 @@ Object.assign(ZoteroVim, {
         event.stopImmediatePropagation();
         this._clearMainContextNoteKeyState(winState);
         winState._contextNoteMode = 'normal';
+        this._restoreNoteSlashPalette(winState);
         winState._contextNoteDismissedSlashPalette = false;
         this._syncNoteCursorVisualState(event.target?.ownerDocument || null, 'normal', event.target);
         this._mainShowStatus(win, '-- NOTE NORMAL --', 900);
@@ -1114,7 +1122,40 @@ Object.assign(ZoteroVim, {
     }
   },
 
-  /** Close only an automatically reopened Better Notes slash palette. */
+  /**
+   * Prevent Better Notes from constructing the dismissed slash palette during
+   * this native editor transaction. The option is restored on keyup/blur.
+   */
+  _suspendNoteSlashPalette(winState, doc) {
+    if (!winState || winState._contextNoteSlashPaletteSuspension || !doc) return false;
+    try {
+      const editorWin = doc.defaultView?.wrappedJSObject || doc.defaultView;
+      const view = editorWin?._currentEditorInstance?._editorCore?.view;
+      const plugin = Array.from(view?.state?.plugins || [])
+        .find(item => item?.spec?.betterNotes === 'magicKey');
+      const pluginState = plugin?.getState?.(view.state);
+      const options = pluginState?.options;
+      if (!options || options.enable === false) return false;
+      winState._contextNoteSlashPaletteSuspension = {
+        options,
+        enabled: options.enable,
+      };
+      options.enable = false;
+      return true;
+    } catch (_) {
+      winState._contextNoteSlashPaletteSuspension = null;
+      return false;
+    }
+  },
+
+  _restoreNoteSlashPalette(winState) {
+    const suspension = winState?._contextNoteSlashPaletteSuspension;
+    if (!suspension) return;
+    try { suspension.options.enable = suspension.enabled; } catch (_) {}
+    winState._contextNoteSlashPaletteSuspension = null;
+  },
+
+  /** Fallback for Better Notes versions whose plugin state is inaccessible. */
   _dismissReopenedNoteSlashPalette(doc) {
     if (!this._noteBetterNotesSlashPaletteOpen(doc)) return false;
     try {

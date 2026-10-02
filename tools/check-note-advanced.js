@@ -288,6 +288,32 @@ check('Visual selection never splits an emoji, including at line end', () => {
   f.send('y'); assert.equal(copied, 'a😀');
 });
 
+check('Visual arrows extend/reverse selections and linewise arrows select lines', () => {
+  const f = fixture('abc\ndef\nghi', 1); f.send('v');
+  for (const [arrow, expected] of [
+    ['ArrowDown', 'bc\nde'], ['ArrowRight', 'bc\ndef'],
+    ['ArrowUp', 'bc'], ['ArrowLeft', 'b'],
+  ]) {
+    f.key(arrow); assert.equal(f.selected(), expected, arrow);
+    assert.equal(f.state._contextNoteMode, 'visual');
+  }
+  f.key('ArrowLeft'); assert.equal(f.selected(), 'ab');
+  assert.equal(f.el.selectionDirection, 'backward');
+  const lines = fixture('one\ntwo\nthree'); lines.send('V'); lines.key('ArrowDown');
+  assert.equal(lines.selected(), 'one\ntwo\n');
+  assert.equal(lines.state._contextNoteMode, 'visual-line');
+});
+
+check('arrows cancel pending character finds instead of becoming h/j/k/l arguments', () => {
+  for (const command of ['f', 'df', 'vf']) {
+    const f = fixture('abc l end'); f.send(command); f.key('ArrowRight');
+    assert.equal(f.el.selectionStart, 0, command);
+    assert.equal(f.el.value, 'abc l end');
+    assert.equal(f.state._contextNoteKeyBuffer, '');
+    assert.equal(f.state._contextNoteLastFind, undefined);
+  }
+});
+
 check('V operates on whole logical lines, including empty/last lines', () => {
   const f = fixture('one\n\nthree', 1); f.send('Vjd');
   assert.equal(f.el.value, 'three'); assert.equal(f.state._contextNoteRegisterType, 'line');

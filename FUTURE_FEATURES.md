@@ -8,7 +8,7 @@ the README / CHANGELOG once implemented, and mark them done below.
 | # | Feature | Notes |
 |---|---------|-------|
 | 1 | ~~`n` / `N` next / previous search match~~ | **Done in v1.5-dev (commit 66c9c44)** — `findNext` / `findPrevious` actions plus the `findBarReturnBridge` that returns focus to the PDF after Enter in the find popup |
-| 2 | `Ctrl+o` / `Ctrl+i` reading history | Call `reader._internalReader.navigateBack() / navigateForward()` (Zotero exposes them; currently bound to Alt+←/→) |
+| 2 | ~~`Ctrl+o` / `Ctrl+i` reading history~~ | **Done (unreleased)** — uses the focused native reader view's back/forward stack for major jumps (`gg`/`G`, outline, marks, links and annotations), including split panes and count prefixes; independent of marks |
 | 3 | `+` / `-` (and `=`) zoom | Call `reader._internalReader.zoomIn() / zoomOut()` — zoom currently needs `Ctrl+=` / `Ctrl+-` |
 | 4 | `V` toggle reader sidebar | `_readerSetSidebarOpen` / `_readerIsSidebarOpen` already exist (used by the outline explorer) |
 | 5 | Page number / progress in the mode indicator | Read `pdfWin.PDFViewerApplication.pdfViewer.currentPageNumber` and `pdfDocument.numPages`; display like `12/34 · 35%` |

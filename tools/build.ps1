@@ -25,7 +25,8 @@ if (Get-Command node -ErrorAction SilentlyContinue) {
             if ($LASTEXITCODE -ne 0) { throw "Syntax check failed: $source" }
         }
         foreach ($check in @(
-            'tools/check-sync.js', 'tools/check-plugin-manifest.js',
+            'tools/check-sync.js', 'tools/check-bindings.js',
+            'tools/check-reader-history.js', 'tools/check-plugin-manifest.js',
             'tools/check-note-editor-routing.js',
             'tools/check-note-native-input.js',
             'tools/check-note-input-guard.js',

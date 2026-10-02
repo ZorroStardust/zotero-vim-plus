@@ -48,6 +48,8 @@ var ZoteroVim = {
     'normal:ctrl+u':  'halfPageUp',
     'normal:ctrl+f':  'fullPageDown',
     'normal:ctrl+b':  'fullPageUp',
+    'normal:ctrl+o':  'navigateBack',
+    'normal:ctrl+i':  'navigateForward',
     'normal:/':       'openSearch',
     'normal:n':       'findNext',
     'normal:N':       'findPrevious',
@@ -301,11 +303,19 @@ var ZoteroVim = {
   },
 
   getBindings() {
+    const bindings = Object.assign({}, this.DEFAULT_BINDINGS);
     try {
-      const raw = this.getPref('bindings', '');
-      if (raw) return Object.assign({}, this.DEFAULT_BINDINGS, JSON.parse(raw));
+      const saved = JSON.parse(this.getPref('bindings', '') || '{}');
+      if (saved && typeof saved === 'object' && !Array.isArray(saved)) {
+        for (const [key, action] of Object.entries(saved)) {
+          // A null override is an explicit unbinding, not a missing default.
+          // Legacy flat binding maps continue to work as string overrides.
+          if (action === null) delete bindings[key];
+          else if (typeof action === 'string' && action) bindings[key] = action;
+        }
+      }
     } catch (_) {}
-    return Object.assign({}, this.DEFAULT_BINDINGS);
+    return bindings;
   },
 
   getScrollStep() { return this.getPref('scrollStep', 60); },
@@ -601,6 +611,7 @@ var ZoteroVim = {
       activePdfWin: pdfWin,
       _pdfViewHandlers: new Map(),
       _pdfViewSyncTimer: null,
+      _readerHistoryPending: null,
       reader: reader,       // reference for direct annotation creation
       pdfWin: pdfWin,       // stored for _setMode → _clearVisualHints
       cleanup: () => {},
@@ -1335,15 +1346,15 @@ var ZoteroVim = {
       return;
     }
 
-    // Insert mode: pass through except Escape.
+    // Insert mode: pass through except explicitly bound single-key shortcuts.
     if (state.mode === 'insert') {
       const k = this._keyString(event);
-      if (k === 'escape') {
-        // Escape while editing an annotation comment: save and close the
-        // plugin's comment overlay.
+      const action = this.getBindings()['insert:' + k];
+      if (action) {
         event.preventDefault();
         event.stopImmediatePropagation();
-        this._exitAnnotationInsert(state, reader);
+        if (action === 'exitMode') this._exitAnnotationInsert(state, reader);
+        else this._executeAction(action, reader, state, pdfWin);
         return;
       }
       // While the plugin's own comment overlay is focused, keep Zotero's
@@ -1614,8 +1625,7 @@ var ZoteroVim = {
   _readerConsumesKey(state, keyStr) {
     if (!keyStr) return false;
     if (state.mode === 'insert') {
-      // Escape always exits insert mode.
-      if (keyStr === 'escape') return true;
+      if (this.getBindings()['insert:' + keyStr]) return true;
       // While editing an annotation comment the plugin traps printable
       // characters, Backspace/Delete and Enter itself (Zotero's focus
       // machinery prevents the editor from receiving real keydowns) — keep
@@ -1642,7 +1652,7 @@ var ZoteroVim = {
     const modePrefix = state.mode + ':';
     const bindings = this.getBindings();
     if (bindings[modePrefix + keyStr]) return true;
-    return Object.keys(bindings).some(k => k.startsWith(modePrefix + keyStr));
+    return Object.keys(bindings).some(k => this._bindingMatchesPrefix(k, modePrefix, keyStr));
   },
 
   _bindingMatchesPrefix(bindingKey, modePrefix, buffer) {
@@ -1704,6 +1714,10 @@ var ZoteroVim = {
         case 'scrollTop':    clearAnnotation(); this._scrollToPagePosition(pdfWin, 'top');    break;
         case 'scrollCenter': clearAnnotation(); this._scrollToPagePosition(pdfWin, 'center'); break;
         case 'scrollBottom': clearAnnotation(); this._scrollToPagePosition(pdfWin, 'bottom'); break;
+        case 'navigateBack':
+        case 'navigateForward':
+          this._navigateReaderHistory(reader, state, pdfWin, action === 'navigateForward', n);
+          break;
 
         case 'prevPage':
           clearAnnotation();
@@ -1738,12 +1752,15 @@ var ZoteroVim = {
           if (count > 0) {
             try {
               const readerWin = reader._iframeWindow;
-              reader._internalReader?.navigate?.(Cu.cloneInto({ pageIndex: count - 1 }, readerWin));
+              const navigation = reader._internalReader?.navigate?.(
+                Components.utils.cloneInto({ pageIndex: count - 1 }, readerWin));
+              this._recordReaderHistoryPoint(reader, state, pdfWin, navigation);
             } catch (e) {
               Zotero.debug('[ZoteroVim] goToPage: ' + e); }
           } else {
             try { reader._internalReader.navigateToFirstPage(); } catch (e) {
               Zotero.debug('[ZoteroVim] firstPage: ' + e); }
+            this._recordReaderHistoryPoint(reader, state, pdfWin);
           }
           break;
         case 'lastPage':
@@ -1757,13 +1774,16 @@ var ZoteroVim = {
           if (count > 0) {
             try {
               const readerWin = reader._iframeWindow;
-              reader._internalReader?.navigate?.(Cu.cloneInto({ pageIndex: count - 1 }, readerWin));
+              const navigation = reader._internalReader?.navigate?.(
+                Components.utils.cloneInto({ pageIndex: count - 1 }, readerWin));
+              this._recordReaderHistoryPoint(reader, state, pdfWin, navigation);
               Zotero.debug('[ZoteroVim] navigate pageIndex=' + (count - 1));
             } catch (e) {
               Zotero.debug('[ZoteroVim] goToPage: ' + e); }
           } else {
             try { reader._internalReader.navigateToLastPage(); } catch (e) {
               Zotero.debug('[ZoteroVim] lastPage: ' + e); }
+            this._recordReaderHistoryPoint(reader, state, pdfWin);
           }
           break;
 

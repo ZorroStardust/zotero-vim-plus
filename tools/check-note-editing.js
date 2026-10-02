@@ -270,6 +270,90 @@ check('composing Escape does not exit Insert or cancel the IME', () => {
   assert.equal(state._contextNoteMode, 'insert');
 });
 
+check('physical arrows move like hjkl in Normal and support counts/operators', () => {
+  const el = makeEditor('abc\ndef\nghi', 1);
+  const state = makeState();
+  for (const [arrow, position] of [
+    ['ArrowDown', 5], ['ArrowRight', 6], ['ArrowUp', 2], ['ArrowLeft', 1],
+  ]) {
+    assert.equal(key(el, state, arrow).defaultPrevented, true);
+    assert.equal(el.selectionStart, position, arrow);
+    assert.equal(el.value, 'abc\ndef\nghi');
+  }
+  key(el, state, '2'); key(el, state, 'ArrowDown');
+  assert.equal(el.selectionStart, 9);
+  key(el, state, 'd'); key(el, state, 'ArrowUp');
+  assert.equal(el.value, 'abc');
+});
+
+check('Insert arrows remain native, including Shift/Ctrl-modified arrows', () => {
+  const el = makeEditor('abc', 1);
+  for (const arrow of ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown']) {
+    for (const options of [{}, { shiftKey: true }, { ctrlKey: true }]) {
+      const state = makeState('insert');
+      const event = key(el, state, arrow, options);
+      assert.equal(event.defaultPrevented, false);
+      assert.equal(event.stopped, undefined);
+      assert.equal(state._contextNoteMode, 'insert');
+    }
+  }
+});
+
+check('first Escape dismisses an editor palette natively; next exits Insert', () => {
+  const el = makeEditor('/');
+  const doc = el.ownerDocument;
+  const popup = { hidden: false, visible: true, interactive: true,
+    closest: () => null, matches: () => true, querySelector: () => ({}),
+    getClientRects() { return this.visible ? [{}] : []; },
+  };
+  let open = true;
+  doc.querySelectorAll = () => open ? [popup] : [];
+  const paletteInput = { dispatchEvent() { open = false; return true; } };
+  doc.querySelector = selector => {
+    if (!open) return null;
+    return selector === '.command-palette' ? popup : paletteInput;
+  };
+  doc.defaultView.KeyboardEvent = function(type, options) { return { type, ...options }; };
+  doc.defaultView.getComputedStyle = () => ({ display: 'flex', visibility: 'visible' });
+  const state = makeState('insert');
+  const first = key(el, state, 'Escape');
+  assert.equal(first.defaultPrevented, false);
+  assert.equal(first.stopped, undefined);
+  assert.equal(state._contextNoteMode, 'insert');
+  assert.equal(state._contextNoteConsumedInput, null);
+  assert.equal(state._contextNoteDismissedSlashPalette, true);
+  open = false; // The editor's original listener closes its own popup.
+
+  // Better Notes reopens after Backspace reveals the same slash. Keyup closes
+  // that reopened palette through its own Escape handler, without leaving Insert.
+  key(el, state, 'Backspace');
+  open = true;
+  plugin._onMainContextNoteInput({ type: 'keyup', key: 'Backspace', target: el }, state);
+  assert.equal(open, false);
+  assert.equal(state._contextNoteMode, 'insert');
+  assert.equal(state._contextNoteDismissedSlashPalette, true);
+
+  // A newly typed slash (also Ctrl+/) deliberately opts back into the palette.
+  key(el, state, '/', { ctrlKey: true });
+  assert.equal(state._contextNoteDismissedSlashPalette, false);
+  assert.equal(key(el, state, 'Escape').defaultPrevented, true);
+  assert.equal(state._contextNoteMode, 'normal');
+
+  // Hidden/aria-hidden palettes and passive previews never trap Insert.
+  open = true;
+  for (const setup of [
+    () => { popup.hidden = true; },
+    () => { popup.hidden = false; popup.closest = () => ({}); },
+    () => { popup.closest = () => null; popup.visible = false; },
+    () => { popup.visible = true; popup.matches = () => false; popup.querySelector = () => null; },
+  ]) {
+    setup();
+    const hiddenState = makeState('insert');
+    assert.equal(key(el, hiddenState, 'Escape').defaultPrevented, true);
+    assert.equal(hiddenState._contextNoteMode, 'normal');
+  }
+});
+
 check('native undo/redo are used, and an empty history is not reported as success', () => {
   const el = makeEditor();
   const calls = [];

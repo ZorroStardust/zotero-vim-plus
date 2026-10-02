@@ -179,9 +179,16 @@ Cursor ──v──▶ Visual ──v/Escape──▶ Normal
 | `Ctrl+u` | Half-page up |
 | `Ctrl+f` | Full-page down |
 | `Ctrl+b` | Full-page up |
+| `Ctrl+o` | Go back through Zotero's reading-position history |
+| `Ctrl+i` | Go forward through Zotero's reading-position history |
 
 Count prefixes multiply the step — `3j` scrolls three steps, `2ctrl+f` two full
 pages, and so on.
+
+Reading-position history is Zotero's native per-view session history. Major
+jumps (`gg`/`G`, outline entries, marks, links and annotations) add entries in
+the active split pane; routine `hjkl` motion deliberately does not. It is
+separate from named marks and supports count prefixes (`3ctrl+o`).
 
 #### Page navigation
 
@@ -339,8 +346,8 @@ waiting for another key, such as `f`, `d` or `ci`.
 | `a` / `A` / `I` | Enter Insert mode at next char / line end / first non-blank |
 | `o` / `O` | Open line below / above and enter Insert mode |
 | `Escape` | Return to note Normal mode |
-| `h` / `l` | Move caret left / right |
-| `j` / `k` | Move caret down / up line |
+| `h` / `l` or `←` / `→` | Move caret left / right |
+| `j` / `k` or `↓` / `↑` | Move caret down / up line |
 | `w` / `e` / `b` | Move by word (forward start / forward end / backward) |
 | `W` / `E` / `B` | Big-word variants |
 | `0` / `^` / `$` | Move to line start / first non-blank / line end |
@@ -376,6 +383,12 @@ Counts before and after the operator multiply: `2d3w` deletes six words.
 `1G` goes to the first line; bare `G` goes to the last line.
 `p` and `P` support counts (for example `3p`) and use the internal note register,
 updated by yank/delete/change operations including `x`.
+Physical arrow keys are Vim motions only in note Normal/Visual mode; Insert
+mode leaves arrows and their modifiers entirely native. If an editor command
+palette is open (including Better Notes' `/` palette), the first `Escape`
+closes that palette and remains in Insert; press `Escape` again to enter Normal.
+After explicitly dismissing Better Notes' palette, deleting text back to that
+same `/` does not reopen it. Typing a new `/` or `Ctrl+/` enables it again.
 
 Precise motions work with operators and counts: `2fa` finds the second `a`,
 `dt)` deletes up to but not including `)`, `df)` includes it, and `d%` includes
@@ -646,8 +659,8 @@ sentence hints (then to Normal mode).
 
 | Key | Action |
 |-----|--------|
-| `j` / `k` | Extend selection down / up by one line |
-| `h` / `l` | Extend selection left / right by one character |
+| `j` / `k` or `↓` / `↑` | Extend selection down / up by one line |
+| `h` / `l` or `←` / `→` | Extend selection left / right by one character |
 | `w` / `b` | Extend selection forward / backward by one word |
 | `0` / `$` | Extend selection to line start / line end |
 | `)` / `(` | Extend selection to next / previous sentence start |
@@ -763,11 +776,17 @@ Open **Edit → Preferences** (macOS: **Zotero → Settings**) and navigate to t
 - Every row in the **Keybindings** table maps a *mode + key sequence* to an
   *action*.
 - Click the key sequence cell to edit it directly.
-- Use lowercase letters.  Prefix with `ctrl+` for Ctrl (or Cmd on macOS).
+- Keys are case-sensitive (`g` and `G` differ). Prefix with `ctrl+` for Ctrl
+  (or Cmd on macOS); use the uppercase character instead of `shift+`.
 - Multi-key sequences such as `gg`, `zy`, or `yy` are supported.
-- Click **+ Add binding** to add a new row; click **×** to remove one.
+- Click **+ Add binding** to add a new row; click **×** and then **Apply
+  bindings** to truly unbind it, including a default key.
 - Click **Apply bindings** to save keybinding changes.
+- Duplicate mode+key rows and invalid key notation are marked inline and never
+  overwrite the last working configuration.
 - Highlight colour, mode, marks and scroll settings save automatically on change.
+- Visual, Cursor, Insert and note-editor modes can each be enabled or disabled
+  under **Modes**. Note editing commands remain fixed and are not in this table.
 - Note editor Vim mode can be turned on or off independently from the Preferences panel.
 - Click **Reset to defaults** to restore all bindings to their defaults.
 
@@ -789,6 +808,8 @@ failures are reported to `zv-startup.log` in the profile directory with
 | `halfPageUp` | Scroll up half a viewport |
 | `fullPageDown` | Scroll down a full viewport |
 | `fullPageUp` | Scroll up a full viewport |
+| `navigateBack` | Go to the previous reading position |
+| `navigateForward` | Go to the next reading position |
 | `scrollTop` | Reposition view so current page is at top |
 | `scrollCenter` | Reposition view so current page is centred |
 | `scrollBottom` | Reposition view so current page is at bottom |

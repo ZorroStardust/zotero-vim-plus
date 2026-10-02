@@ -36,8 +36,10 @@ function _zvSet(key, value) {
     if (typeof value === "boolean")     p.setBoolPref(full, value);
     else if (typeof value === "number") p.setIntPref(full, value);
     else                                p.setStringPref(full, String(value));
+    return true;
   } catch (e) {
     dump("[ZoteroVim] prefs set failed (" + key + "): " + e + "\n");
+    return false;
   }
 }
 
@@ -55,6 +57,8 @@ const ZV_DEFAULT_BINDINGS = {
   "normal:ctrl+u":  "halfPageUp",
   "normal:ctrl+f":  "fullPageDown",
   "normal:ctrl+b":  "fullPageUp",
+  "normal:ctrl+o":  "navigateBack",
+  "normal:ctrl+i":  "navigateForward",
   "normal:/":       "openSearch",
   "normal:n":       "findNext",
   "normal:N":       "findPrevious",
@@ -195,6 +199,8 @@ const ZV_ACTION_LABELS = {
   halfPageUp:              "Half-page up",
   fullPageDown:            "Full-page down",
   fullPageUp:              "Full-page up",
+  navigateBack:            "Previous reading position (Ctrl+o)",
+  navigateForward:         "Next reading position (Ctrl+i)",
   scrollTop:               "Scroll — current page to top of view (zt)",
   scrollCenter:            "Scroll — current page to center of view (zz)",
   scrollBottom:            "Scroll — current page to bottom of view (zb)",
@@ -447,9 +453,17 @@ function _zvInit() {
         const next = langSelect.value === "zh-CN" ? "zh-CN" : "en";
         _zvSet("language", next);
         ZV_I18N_APPLY(document, next);
-        // Re-render action dropdowns with labels in the new language,
-        // preserving any unsaved edits in the table.
-        _zvRenderTable(_zvReadTable());
+        // Relabel in place: duplicate/invalid rows are still unsaved edits.
+        const tbody = document.getElementById("zv-bindings-body");
+        for (const option of tbody?.querySelectorAll("option") || []) {
+          if (ZV_ACTION_LABELS[option.value]) {
+            option.textContent = ZV_I18N_ACTION(option.value, next) || option.value;
+          }
+        }
+        for (const button of tbody?.querySelectorAll(".zv-unbind-button") || []) {
+          button.title = ZV_I18N_STR("zv.bindings.unbind", next);
+        }
+        _zvReadTable();
       });
     }
     ZV_I18N_APPLY(document, lang);
@@ -458,6 +472,7 @@ function _zvInit() {
   // ── Modes ──────────────────────────────────────────────────────────────────
   _zvSection("modes", () => {
     const visualCb = document.getElementById("zv-visual-enabled");
+    const cursorCb = document.getElementById("zv-cursor-enabled");
     const insertCb = document.getElementById("zv-insert-enabled");
     const noteEditorCb = document.getElementById("zv-note-editor-enabled");
     const noteNumbersCb = document.getElementById("zv-note-line-numbers");
@@ -466,6 +481,10 @@ function _zvInit() {
     if (visualCb) {
       visualCb.checked = _zvGet("mode.visual.enabled", true);
       _zvSaveCheckbox(visualCb, "mode.visual.enabled", modesStatus);
+    }
+    if (cursorCb) {
+      cursorCb.checked = _zvGet("mode.cursor.enabled", true);
+      _zvSaveCheckbox(cursorCb, "mode.cursor.enabled", modesStatus);
     }
     if (insertCb) {
       insertCb.checked = _zvGet("mode.insert.enabled", true);
@@ -605,16 +624,7 @@ function _zvInit() {
 
   // ── Keybindings table ──────────────────────────────────────────────────────
   _zvSection("bindings", () => {
-    let currentBindings = {};
-    try {
-      const raw = _zvGet("bindings", "");
-      currentBindings = raw ? Object.assign({}, ZV_DEFAULT_BINDINGS, JSON.parse(raw))
-                             : Object.assign({}, ZV_DEFAULT_BINDINGS);
-    } catch (_) {
-      currentBindings = Object.assign({}, ZV_DEFAULT_BINDINGS);
-    }
-
-    _zvRenderTable(currentBindings);
+    _zvRenderTable(_zvLoadBindings());
 
     const addBtn   = document.getElementById("zv-add-binding");
     const resetBtn = document.getElementById("zv-reset-bindings");
@@ -631,8 +641,8 @@ function _zvInit() {
     if (saveBtn) {
       saveBtn.textContent = ZV_I18N_STR("zv.bindings.apply", lang);
       saveBtn.addEventListener("click", () => {
-        _zvSaveBindings();
-        if (saveStatus) {
+        if (saveStatus) saveStatus.textContent = "";
+        if (_zvSaveBindings() && saveStatus) {
           _zvFlashStatus(saveStatus, ZV_I18N_STR("zv.status.saved", ZV_I18N_CURRENT_LANG()), "#5FB236");
         }
       });
@@ -645,6 +655,21 @@ function _zvInit() {
 }
 
 // ── Table helpers ─────────────────────────────────────────────────────────────
+
+// Match ZoteroVim.getBindings: null suppresses a default; strings are overrides.
+function _zvLoadBindings() {
+  const bindings = Object.assign({}, ZV_DEFAULT_BINDINGS);
+  try {
+    const saved = JSON.parse(_zvGet("bindings", "") || "{}");
+    if (saved && typeof saved === "object" && !Array.isArray(saved)) {
+      for (const [key, action] of Object.entries(saved)) {
+        if (action === null) delete bindings[key];
+        else if (typeof action === "string" && action) bindings[key] = action;
+      }
+    }
+  } catch (_) {}
+  return bindings;
+}
 
 function _zvBindingsToRows(bindings) {
   const modeOrder = { normal: 0, visual: 1, cursor: 2, insert: 3, main: 4 };
@@ -661,11 +686,11 @@ function _zvBindingsToRows(bindings) {
 
 // Convert a stored key (e.g. " ff") to a display string (e.g. "<space>ff").
 function _zvKeyToDisplay(key) {
-  return key.replace(/^ /, "<space>");
+  return key.replace(/ /g, "<space>");
 }
 // Convert a display string back to a stored key.
 function _zvKeyFromDisplay(display) {
-  return display.replace(/^<space>/, " ");
+  return display.replace(/<space>/g, " ");
 }
 
 function _zvMakeRow(mode, key, action, isNew) {
@@ -689,6 +714,7 @@ function _zvMakeRow(mode, key, action, isNew) {
     }
     modeSel.addEventListener("change", () => {
       tr.dataset.mode = modeSel.value;   // CSS re-colours via [data-mode]
+      _zvReadTable();
     });
     tdMode.appendChild(modeSel);
     tr.dataset.newRow = "1";
@@ -704,7 +730,12 @@ function _zvMakeRow(mode, key, action, isNew) {
   keyInput.type  = "text";
   keyInput.value = _zvKeyToDisplay(key);   // ' ff' → '<space>ff'
   keyInput.style.cssText = "font-family:monospace;width:120px;padding:2px 4px;";
+  keyInput.addEventListener("input", _zvReadTable);
   tdKey.appendChild(keyInput);
+  const error = document.createElement("small");
+  error.className = "zv-binding-error";
+  error.style.cssText = "display:block;max-width:240px;";
+  tdKey.appendChild(error);
   tr.appendChild(tdKey);
 
   // Action cell
@@ -712,6 +743,7 @@ function _zvMakeRow(mode, key, action, isNew) {
   tdAct.style.cssText = "padding:5px 10px;";
   const actSel  = document.createElement("select");
   actSel.style.cssText = "width:100%;padding:2px 4px;";
+  actSel.addEventListener("change", _zvReadTable);
   for (const a of ZV_ALL_ACTIONS) {
     const o = document.createElement("option");
     o.value = a; o.textContent = ZV_I18N_ACTION(a, lang) || a;
@@ -726,8 +758,10 @@ function _zvMakeRow(mode, key, action, isNew) {
   tdDel.style.cssText = "padding:5px 6px;text-align:center;";
   const delBtn = document.createElement("button");
   delBtn.textContent = "×";
+  delBtn.className = "zv-unbind-button";
+  delBtn.title = ZV_I18N_STR("zv.bindings.unbind", lang);
   delBtn.style.cssText = "cursor:pointer;padding:0 6px;font-size:1.1em;background:none;border:1px solid #ccc;border-radius:3px;";
-  delBtn.addEventListener("click", () => tr.remove());
+  delBtn.addEventListener("click", () => { tr.remove(); _zvReadTable(); });
   tdDel.appendChild(delBtn);
   tr.appendChild(tdDel);
 
@@ -741,18 +775,53 @@ function _zvRenderTable(bindings) {
   for (const { mode, key, action } of _zvBindingsToRows(bindings)) {
     tbody.appendChild(_zvMakeRow(mode, key, action, false));
   }
+  _zvReadTable();
 }
 
 function _zvAddRow() {
   const tbody = document.getElementById("zv-bindings-body");
   if (!tbody) return;
   tbody.appendChild(_zvMakeRow("normal", "", "scrollDown", true));
+  _zvReadTable();
+}
+
+/** Validate the notation actually emitted by _keyString, without changing case. */
+function _zvBindingKeyError(mode, key) {
+  if (!key) return "zv.bindings.error.empty";
+  const withoutLeader = key.startsWith(" ") ? key.slice(1) : key;
+  const modifierSpace = /^(?:ctrl\+)?(?:alt\+)? $/.test(key);
+  if (/[<>]/.test(key) || (/\s/.test(withoutLeader) && !modifierSpace)) {
+    return "zv.bindings.error.key";
+  }
+  if (["normal", "cursor", "main"].includes(mode) && /^[1-9]/.test(key)) {
+    return "zv.bindings.error.count";
+  }
+  const named = /^(?:enter|return|escape|tab|backspace|delete|home|end|pageup|pagedown|insert|arrowleft|arrowright|arrowup|arrowdown|f(?:[1-9]|1\d|2[0-4]))$/;
+  const modified = /^(?:ctrl\+)?(?:alt\+)?(.+)$/.exec(key);
+  const hasModifier = /^(?:ctrl|alt|shift|meta|cmd|control)\+/i.test(key);
+  if (hasModifier) {
+    const base = modified?.[1] || "";
+    if (!/^(?:ctrl\+|alt\+)/.test(key)
+        || !base || /^(?:shift|meta|cmd|control|ctrl|alt)\+/i.test(base)
+        || (mode === "insert" && !(Array.from(base).length === 1 || named.test(base)))) {
+      return "zv.bindings.error.key";
+    }
+  }
+  if (/^(?:control|alt|meta|shift|capslock|dead|unidentified|space)$/i.test(key)) {
+    return "zv.bindings.error.key";
+  }
+  if (mode === "insert" && !hasModifier && Array.from(key).length !== 1 && !named.test(key)) {
+    return "zv.bindings.error.insert";
+  }
+  return "";
 }
 
 function _zvReadTable() {
   const tbody  = document.getElementById("zv-bindings-body");
   const result = {};
-  if (!tbody) return result;
+  if (!tbody) return null;
+  const rows = [];
+  const seen = new Map();
   for (const tr of tbody.querySelectorAll("tr")) {
     const keyInput = tr.querySelector("input");
     const actSel   = tr.querySelectorAll("select")[tr.dataset.newRow ? 1 : 0];
@@ -760,33 +829,50 @@ function _zvReadTable() {
     const modeTd   = tr.querySelector("td:first-child");
 
     const mode   = modeSel ? modeSel.value : (modeTd?.textContent.trim().toLowerCase() || "");
-    // Convert display form back to stored form ('<space>ff' → ' ff'), then
-    // strip only trailing whitespace (leading space is the space-key leader).
-    const rawKey = keyInput ? _zvKeyFromDisplay(keyInput.value).replace(/\s+$/, "") : "";
-    // Preserve case for keys like G, Za, Zy etc. — only lowercase non-space chars
-    // that aren't part of the space alias (already handled above).
-    const key    = rawKey;   // keep original case from input
+    const key = keyInput ? _zvKeyFromDisplay(keyInput.value) : "";
     const action = actSel  ? actSel.value : "";
-
-    if (mode && key && action) result[mode + ":" + key] = action;
+    const row = { tr, keyInput, error: _zvBindingKeyError(mode, key) };
+    if (!["normal", "visual", "cursor", "insert", "main"].includes(mode)
+        || !ZV_ALL_ACTIONS.includes(action)) row.error = "zv.bindings.error.key";
+    const full = mode + ":" + key;
+    if (seen.has(full)) {
+      row.error = "zv.bindings.error.duplicate";
+      seen.get(full).error = row.error;
+    } else seen.set(full, row);
+    rows.push(row);
+    result[full] = action;
   }
-  return result;
-}
-
-function _zvBindingsEqual(a, b) {
-  const keysA = Object.keys(a);
-  const keysB = Object.keys(b);
-  if (keysA.length !== keysB.length) return false;
-  for (const key of keysA) {
-    if (a[key] !== b[key]) return false;
+  const lang = ZV_I18N_CURRENT_LANG();
+  for (const row of rows) {
+    const message = row.error ? ZV_I18N_STR(row.error, lang) : "";
+    row.keyInput?.setAttribute("aria-invalid", row.error ? "true" : "false");
+    const label = row.tr.querySelector(".zv-binding-error");
+    if (label) label.textContent = message;
   }
-  return true;
+  const invalid = rows.some(row => row.error);
+  const status = document.getElementById("zv-bindings-status");
+  if (status) status.textContent = invalid
+    ? ZV_I18N_STR("zv.bindings.error.summary", lang) : "";
+  // An invalid table never overwrites the last working configuration.
+  return invalid ? null : result;
 }
 
 function _zvSaveBindings() {
   const bindings = _zvReadTable();
-  const isDefault = _zvBindingsEqual(bindings, ZV_DEFAULT_BINDINGS);
-  _zvSet("bindings", isDefault ? "" : JSON.stringify(bindings));
+  if (!bindings) return false;
+  const overrides = {};
+  for (const key of Object.keys(ZV_DEFAULT_BINDINGS)) {
+    if (!Object.prototype.hasOwnProperty.call(bindings, key)) overrides[key] = null;
+  }
+  for (const [key, action] of Object.entries(bindings)) {
+    if (action !== ZV_DEFAULT_BINDINGS[key]) overrides[key] = action;
+  }
+  const saved = _zvSet("bindings", Object.keys(overrides).length ? JSON.stringify(overrides) : "");
+  if (!saved) {
+    const status = document.getElementById("zv-bindings-status");
+    if (status) status.textContent = ZV_I18N_STR("zv.bindings.error.save", ZV_I18N_CURRENT_LANG());
+  }
+  return saved;
 }
 
 // Boot

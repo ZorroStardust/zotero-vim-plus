@@ -8,6 +8,76 @@
  */
 
 Object.assign(ZoteroVim, {
+  _readerHistoryView(reader, pdfWin) {
+    const ir = reader?._internalReader;
+    for (const [view, primary] of [[ir?._primaryView, true], [ir?._secondaryView, false]]) {
+      if (!view || view._iframeWindow !== pdfWin) continue;
+      return typeof ir._getActiveView === 'function' ? ir._getActiveView(primary) : view;
+    }
+    return ir?._lastView || ir || null;
+  },
+
+  /** Commit a major plugin jump to Zotero's native per-view history. */
+  _recordReaderHistoryPoint(reader, state, pdfWin, afterNavigation = null) {
+    const target = this._readerHistoryView(reader, pdfWin);
+    if (typeof target?._pushHistoryPoint !== 'function') return Promise.resolve(false);
+    const previous = state._readerHistoryPending || Promise.resolve();
+    const pending = previous.catch(() => {}).then(async () => {
+      try {
+        if (afterNavigation) await afterNavigation;
+        await target._pushHistoryPoint();
+        return true;
+      } catch (e) {
+        Zotero.debug('[ZoteroVim] record reader history: ' + e);
+        return false;
+      }
+    });
+    state._readerHistoryPending = pending;
+    pending.finally(() => {
+      if (state._readerHistoryPending === pending) state._readerHistoryPending = null;
+    });
+    return pending;
+  },
+
+  /**
+   * Traverse Zotero's session history, independently of user marks. Select the
+   * focused split pane rather than relying on Zotero's last-view focus cache.
+   * Native navigation owns locations, forward-stack invalidation and scrolling.
+   */
+  _navigateReaderHistory(reader, state, pdfWin, forward, count = 1) {
+    if (state._readerHistoryPending) {
+      state._readerHistoryPending
+        .then(() => this._navigateReaderHistory(reader, state, pdfWin, forward, count))
+        .catch(e => Zotero.debug('[ZoteroVim] wait for reader history: ' + e));
+      return;
+    }
+    const ir = reader?._internalReader;
+    const method = forward ? 'navigateForward' : 'navigateBack';
+    const capability = forward ? 'canNavigateForward' : 'canNavigateBack';
+    let target = this._readerHistoryView(reader, pdfWin);
+    let statsKey = null;
+    for (const [view, primary] of [[ir?._primaryView, true], [ir?._secondaryView, false]]) {
+      if (!view || view._iframeWindow !== pdfWin) continue;
+      statsKey = primary ? 'primaryViewStats' : 'secondaryViewStats';
+      break;
+    }
+    if (typeof target?.[method] !== 'function') {
+      this._showStatus(state, '✗ Reading history unavailable', 1500);
+      return;
+    }
+    let moved = 0;
+    for (let i = 0; i < Math.max(1, count); i++) {
+      // The history getters update synchronously; view stats are the fallback
+      // for older readers. Unknown capability is left to the native method.
+      const available = target._history?.[capability] ?? ir?._state?.[statsKey]?.[capability];
+      if (available === false) break;
+      target[method]();
+      moved++;
+    }
+    if (moved) state.lastAnnotationKey = null;
+    else this._showStatus(state, forward ? 'No later reading position' : 'No earlier reading position', 1200);
+  },
+
   _onReaderOutlineExplorerKeyDown(event, reader, state, pdfWin) {
     const keyStr = this._keyString(event);
     if (!keyStr) return false;
@@ -425,6 +495,7 @@ Object.assign(ZoteroVim, {
     }
     this._closeReaderOutlineExplorer(state, pdfWin);
     this._setMode(state, 'normal');
+    this._recordReaderHistoryPoint(reader, state, pdfWin);
   },
 
   async _goToReaderOutlineEntry(reader, pdfWin, entry) {
@@ -4030,6 +4101,7 @@ Object.assign(ZoteroVim, {
       }
       this._showStatus(state,
         '→ mark ' + char + (annotationOK ? '' : ' · annotation gone'), 1200);
+      this._recordReaderHistoryPoint(reader, state, pdfWin);
     } catch (e) {
       Zotero.debug('[ZoteroVim] _jumpMark error: ' + e);
       this._showStatus(state, '✗ mark: ' + String(e).slice(0, 35), 3000);

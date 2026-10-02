@@ -68,6 +68,7 @@ Object.assign(ZoteroVim, {
       _contextNoteEditorInputHandler: null,
       _contextNoteConsumedInput: null,
       _contextNoteKeyHandling: false,
+      _contextNoteDismissedSlashPalette: false,
       _contextNoteLineNumbers: null,
       _contextNoteMode: 'normal',
       _contextNoteKeyBuffer: '',
@@ -265,7 +266,7 @@ Object.assign(ZoteroVim, {
 
     const newBuffer  = winState.keyBuffer + keyStr;
 
-    const possible = Object.keys(bindings).filter(k => k.startsWith(modePrefix + newBuffer));
+    const possible = Object.keys(bindings).filter(k => this._bindingMatchesPrefix(k, modePrefix, newBuffer));
     const exact    = bindings[modePrefix + newBuffer];
 
     if (possible.length === 0 && !exact) {
@@ -274,7 +275,7 @@ Object.assign(ZoteroVim, {
       clearTimeout(winState.keyTimeout);
       winState.keyTimeout = null;
       // Try single-key fallback
-      const sp = Object.keys(bindings).filter(k => k.startsWith(modePrefix + keyStr));
+      const sp = Object.keys(bindings).filter(k => this._bindingMatchesPrefix(k, modePrefix, keyStr));
       const se = bindings[modePrefix + keyStr];
       if (sp.length === 0 && !se) return;
       e.preventDefault(); e.stopPropagation();
@@ -857,6 +858,7 @@ Object.assign(ZoteroVim, {
       winState._contextNoteEditorKeyHandler = null;
       winState._contextNoteEditorInputHandler = null;
       winState._contextNoteConsumedInput = null;
+      winState._contextNoteDismissedSlashPalette = false;
     }
   },
 
@@ -937,6 +939,12 @@ Object.assign(ZoteroVim, {
           ? event.code === consumed.code : event.key === consumed.key))) {
         winState._contextNoteConsumedInput = null;
       }
+      if (event.type === 'keyup'
+          && winState._contextNoteMode === 'insert'
+          && winState._contextNoteDismissedSlashPalette
+          && event.key !== '/' && event.key !== 'Escape') {
+        this._dismissReopenedNoteSlashPalette(event.target?.ownerDocument);
+      }
       return;
     }
     if (!this.isNoteEditorVimEnabled() || winState._contextNoteKeyHandling
@@ -967,7 +975,7 @@ Object.assign(ZoteroVim, {
       this._noteSearchKeyDown(event, win, winState);
       return;
     }
-    const keyStr = this._keyString(event);
+    let keyStr = this._keyString(event);
     if (!keyStr) return;
     const mode = winState._contextNoteMode || 'normal';
     if (event.isComposing && mode === 'insert') return;
@@ -994,15 +1002,36 @@ Object.assign(ZoteroVim, {
     }
 
     if (mode === 'insert') {
+      // A newly typed slash is a fresh request for the palette. The dismissal
+      // guard only covers editing back to the exact slash that was dismissed.
+      if (event.key === '/') winState._contextNoteDismissedSlashPalette = false;
       if (keyStr === 'escape') {
+        // The editor (including Better Notes' slash palette) must receive the
+        // original Escape. Do not synthesize events or remove its popup DOM.
+        const doc = event.target?.ownerDocument;
+        if (this._noteEditorHasDismissiblePopup(doc)) {
+          if (this._noteBetterNotesSlashPaletteOpen(doc)) {
+            winState._contextNoteDismissedSlashPalette = true;
+          }
+          return;
+        }
         event.preventDefault();
         event.stopImmediatePropagation();
         this._clearMainContextNoteKeyState(winState);
         winState._contextNoteMode = 'normal';
+        winState._contextNoteDismissedSlashPalette = false;
         this._syncNoteCursorVisualState(event.target?.ownerDocument || null, 'normal', event.target);
         this._mainShowStatus(win, '-- NOTE NORMAL --', 900);
       }
       return;
+    }
+
+    // Physical arrows are note motions only outside Insert. A pending f/F/t/T
+    // expects a literal character, so an arrow must cancel it, not find h/j/k/l.
+    if (!/^[dyc]?[fFtT]$/.test(winState._contextNoteKeyBuffer || '')
+        && !event.shiftKey) {
+      keyStr = ({ arrowleft: 'h', arrowdown: 'j', arrowup: 'k', arrowright: 'l' })[keyStr]
+        || keyStr;
     }
 
     // Normal mode consumes every key. Cancel the original editor event before
@@ -1048,6 +1077,57 @@ Object.assign(ZoteroVim, {
         this._syncNoteCursorVisualState(event.target?.ownerDocument || null, 'normal', event.target);
       }
       return;
+    }
+  },
+
+  /** Only visible, interactive editor popups take priority over Insert Escape. */
+  _noteEditorHasDismissiblePopup(doc) {
+    if (!doc) return false;
+    try {
+      const popups = doc.querySelectorAll(
+        '.command-palette, [role="menu"], [role="listbox"], [role="dialog"], '
+        + '.popup-container .popup'
+      );
+      for (const popup of popups) {
+        if (popup.hidden || popup.closest('[hidden], [aria-hidden="true"]')) continue;
+        // Ignore passive previews/tooltips that have no Escape-driven editor UI.
+        if (!popup.matches('.command-palette, [role="menu"], [role="listbox"], [role="dialog"]')
+            && !popup.querySelector('input, textarea, button, [tabindex]')) continue;
+        if (!popup.getClientRects().length) continue;
+        const style = doc.defaultView?.getComputedStyle(popup);
+        if (style?.visibility === 'hidden' || style?.display === 'none') continue;
+        return true;
+      }
+    } catch (_) {}
+    return false;
+  },
+
+  _noteBetterNotesSlashPaletteOpen(doc) {
+    try {
+      const popup = doc?.querySelector?.('.command-palette');
+      if (!popup || popup.hidden || popup.closest('[hidden], [aria-hidden="true"]')) return false;
+      if (!popup.getClientRects().length) return false;
+      const style = doc.defaultView?.getComputedStyle(popup);
+      return style?.visibility !== 'hidden' && style?.display !== 'none';
+    } catch (_) {
+      return false;
+    }
+  },
+
+  /** Close only an automatically reopened Better Notes slash palette. */
+  _dismissReopenedNoteSlashPalette(doc) {
+    if (!this._noteBetterNotesSlashPaletteOpen(doc)) return false;
+    try {
+      const input = doc.querySelector('.command-palette .popup-input');
+      if (!input) return false;
+      const KeyboardEvent = doc.defaultView?.KeyboardEvent;
+      if (!KeyboardEvent) return false;
+      input.dispatchEvent(new KeyboardEvent('keydown', {
+        key: 'Escape', code: 'Escape', bubbles: true, cancelable: true,
+      }));
+      return true;
+    } catch (_) {
+      return false;
     }
   },
 

@@ -12,8 +12,12 @@
     #zv-bindings-table tbody tr[data-mode="cursor"] { background-color: #fff3e0; }
     #zv-bindings-table tbody tr[data-mode="insert"] { background-color: #fff8e1; }
     #zv-bindings-table tbody tr[data-mode="main"]   { background-color: #f0e8ff; }
+    .zv-binding-error, #zv-bindings-status { color: #b3261e; }
+    #zv-bindings-table input[aria-invalid="true"] { outline: 2px solid #b3261e; }
 
     @media (prefers-color-scheme: dark) {
+      .zv-binding-error, #zv-bindings-status { color: #ffb4ab; }
+      #zv-bindings-table input[aria-invalid="true"] { outline-color: #ffb4ab; }
       /* Table header */
       #zv-bindings-table thead tr {
         background-color: #2c2c2c !important;
@@ -75,6 +79,11 @@
       <checkbox id="zv-visual-enabled"
         data-i18n="zv.mode.visual"
         label="Enable Visual mode (v — select text and annotate)" />
+    </hbox>
+    <hbox align="center" style="margin-top: 4px;">
+      <checkbox id="zv-cursor-enabled"
+        data-i18n="zv.mode.cursor"
+        label="Enable Cursor mode (c — move a text caret without selecting)" />
     </hbox>
     <hbox align="center" style="margin-top: 4px;">
       <checkbox id="zv-insert-enabled"
@@ -227,9 +236,11 @@
       <html:br />
       <html:span data-i18n="zv.bindings.help2a">Click a </html:span><html:strong data-i18n="zv.bindings.help2b">Key sequence</html:strong><html:span data-i18n="zv.bindings.help2c"> cell to edit it.</html:span>
       <html:br />
-      <html:span data-i18n="zv.bindings.help3a">Use lowercase letters; prefix with </html:span><html:code>ctrl+</html:code><html:span data-i18n="zv.bindings.help3b"> for Ctrl/Cmd.</html:span>
+      <html:span data-i18n="zv.bindings.help3a">Keys are case-sensitive (g and G differ); prefix with </html:span><html:code>ctrl+</html:code><html:span data-i18n="zv.bindings.help3b"> for Ctrl/Cmd.</html:span>
       <html:br />
       <html:span data-i18n="zv.bindings.help4a">Multi-key sequences such as </html:span><html:code>gg</html:code><html:span data-i18n="zv.bindings.help4b"> or </html:span><html:code>zy</html:code><html:span data-i18n="zv.bindings.help4c"> are supported.</html:span>
+      <html:br />
+      <html:span data-i18n="zv.bindings.unbindHelp">× unbinds a key after Apply, including defaults. Use &lt;space&gt; for a leading Space key. Note editing commands are fixed, not remapped here.</html:span>
     </html:p>
 
     <hbox style="margin-bottom: 6px;">
@@ -238,6 +249,9 @@
       <html:button id="zv-reset-bindings"
         data-i18n="zv.bindings.reset" style="padding: 2px 10px; margin-left: 8px;">Reset to defaults</html:button>
     </hbox>
+
+    <html:div id="zv-bindings-status" role="status" aria-live="polite"
+      style="font-size: 0.9em; margin-bottom: 6px;"></html:div>
 
     <!-- Keybinding table -->
     <html:div style="max-height: 400px; overflow-y: auto; border: 1px solid #ccc; border-radius: 3px;">

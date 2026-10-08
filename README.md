@@ -56,6 +56,8 @@ Vibe coded with Claude Sonnet 4.5.
   command hints and compact absolute line numbers
 - **Remappable reader and main-window actions** — rebind actions from the
   Preferences panel; note editing commands currently use built-in Vim keys
+- **Native two-page PDF view** — `<space>s` toggles single/two-page layout;
+  `<space>S` switches odd/even page pairing, independently in each split pane
 - **No shortcut collisions** — keys consumed by vim are intercepted before
   Zotero's reader key handling, so `l` (next page) doesn't trigger the
   built-in Read Aloud and `h`/`s`/`Ctrl+F` don't toggle the hand tool /
@@ -293,6 +295,32 @@ you still press `Enter` to jump.
 | `Ctrl+j` | Focus split pane below (or toggle pane in vertical split) |
 | `Ctrl+k` | Focus split pane above (or toggle pane in vertical split) |
 | `Ctrl+l` | In vertical split, move to the right reader pane first and then the right-side note editor; otherwise focus the split pane to the right |
+
+#### Native two-page PDF view
+
+| Key | Action |
+|-----|--------|
+| `<space>s` | Toggle single/two-page view in the focused PDF pane |
+| `<space>S` | Switch odd/even page pairing; from single-page view, open even spreads |
+
+Press Space and then `s`, or Space and then `Shift+s` for uppercase `S`.
+Odd spreads pair pages **1–2, 3–4, …**; even spreads leave page **1** alone
+and pair **2–3, 4–5, …**. Pairing uses physical PDF page order, including
+covers and front matter, rather than printed page labels. An unpaired final
+page remains alone.
+
+Entering two-page view from single-page view enables vertical continuous
+scrolling and fits the pair to the pane. Returning to single-page view restores
+the previous zoom and scrolling mode at the current reading page. Switching
+odd/even pairing keeps any manual zoom made while in two-page view. Each pane
+remembers its last pairing for the life of that PDF view; the first toggle
+uses odd spreads. Existing `h`/`l` navigation uses Zotero's native page/spread
+logic, while `j`/`k` scroll normally.
+
+Split view and page pairing can be combined: these commands only change the
+focused PDF pane. Preferences also offers `setReaderSinglePage`,
+`setReaderOddSpread` and `setReaderEvenSpread` for custom direct-selection
+bindings. These layout actions are PDF-only.
 
 #### Marks
 
@@ -926,6 +954,11 @@ failures are reported to `zv-startup.log` in the profile directory with
 | `focusReaderSidebar` | Focus or reopen the custom outline explorer overlay |
 | `toggleReaderSplitHorizontal` | Toggle reader horizontal split view |
 | `toggleReaderSplitVertical` | Toggle reader vertical split view |
+| `toggleReaderSpread` | Toggle single/two-page PDF view, remembering the last pairing |
+| `toggleReaderSpreadParity` | Switch odd/even pairing, or open even spreads from single-page view |
+| `setReaderSinglePage` | Use single-page PDF view |
+| `setReaderOddSpread` | Pair PDF pages 1–2, 3–4, … |
+| `setReaderEvenSpread` | Leave PDF page 1 alone, then pair 2–3, 4–5, … |
 | `focusReaderSplitLeft` | Focus left split pane (or toggle in horizontal split) |
 | `focusReaderSplitDown` | Focus lower split pane (or toggle in vertical split) |
 | `focusReaderSplitUp` | Focus upper split pane (or toggle in vertical split) |

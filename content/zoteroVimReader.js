@@ -8,6 +8,100 @@
  */
 
 Object.assign(ZoteroVim, {
+  /**
+   * Set native PDF page pairing in the key event's pane. Entering from single
+   * page saves that pane's zoom/scroll mode; leaving restores them at the
+   * current reading page. Parity and restore state belong to this reader's
+   * individual PDF windows, and expire when a window is replaced.
+   * @param {number|string} mode 0/1/2, 'toggle', or 'parity'.
+   */
+  _setReaderSpreadMode(state, reader, pdfWin, mode) {
+    const ir = reader?._internalReader;
+    const view = [ir?._primaryView, ir?._secondaryView]
+      .find(candidate => candidate && candidate._iframeWindow === pdfWin);
+    const viewer = pdfWin?.PDFViewerApplication?.pdfViewer;
+    if (!view || !viewer || ![0, 1, 2].includes(viewer.spreadMode)) {
+      this._showStatus(state, '✗ Page layout is only available in PDF readers', 1500);
+      return false;
+    }
+    if (!viewer.pagesCount) {
+      this._showStatus(state, 'PDF is still loading', 1200);
+      return false;
+    }
+
+    const layouts = state._readerPageLayouts || (state._readerPageLayouts = new WeakMap());
+    const saved = layouts.get(pdfWin) || { lastSpreadMode: 1, restore: null };
+    const before = {
+      spreadMode: viewer.spreadMode,
+      scrollMode: viewer.scrollMode,
+      scale: viewer.currentScaleValue,
+    };
+    if (mode === 'toggle') mode = before.spreadMode ? 0 : saved.lastSpreadMode;
+    else if (mode === 'parity') mode = before.spreadMode === 2 ? 1 : 2;
+    if (![0, 1, 2].includes(mode)) return false;
+
+    const label = ['Single page', 'Two pages · odd starts (1–2, 3–4)',
+      'Two pages · even starts (1, 2–3, 4–5)'][mode];
+    if (mode === before.spreadMode) {
+      if (mode) saved.lastSpreadMode = mode;
+      layouts.set(pdfWin, saved);
+      this._showStatus(state, label, 1400);
+      return true;
+    }
+
+    // Only primitives cross into the content compartment. Prefer Zotero's
+    // layout methods so its menus, statistics and document state stay in sync.
+    const setSpread = value => {
+      if (typeof view.setSpreadMode === 'function') view.setSpreadMode(value);
+      else viewer.spreadMode = value;
+    };
+    const setScroll = value => {
+      if (typeof view.setScrollMode === 'function') view.setScrollMode(value);
+      else viewer.scrollMode = value;
+    };
+    const restore = before.spreadMode === 0 ? before : saved.restore;
+    this._stopSmoothHoldScroll(state, pdfWin);
+    try {
+      if (mode) {
+        if (!before.spreadMode) setScroll(0);
+        setSpread(mode);
+        if (!before.spreadMode) {
+          if (typeof view.zoomPageHeight === 'function') view.zoomPageHeight();
+          else viewer.currentScaleValue = 'page-fit';
+        }
+      } else {
+        setSpread(0);
+        if (restore) {
+          setScroll(restore.scrollMode);
+          if (restore.scale) viewer.currentScaleValue = restore.scale;
+        }
+      }
+      if (viewer.spreadMode !== mode
+          || (mode && !before.spreadMode && viewer.scrollMode !== 0)) {
+        throw new Error('Reader did not apply the requested page layout');
+      }
+    } catch (e) {
+      // A failed transition must not discard the single-page restore point.
+      try {
+        setSpread(before.spreadMode);
+        setScroll(before.scrollMode);
+        if (before.scale) viewer.currentScaleValue = before.scale;
+      } catch (rollbackError) {
+        Zotero.debug('[ZoteroVim] restore page layout: ' + rollbackError);
+      }
+      Zotero.debug('[ZoteroVim] set page layout: ' + e);
+      this._showStatus(state, '✗ Could not change PDF page layout', 1500);
+      return false;
+    }
+
+    layouts.set(pdfWin, {
+      lastSpreadMode: mode || before.spreadMode,
+      restore: mode ? restore : null,
+    });
+    this._showStatus(state, label, 1400);
+    return true;
+  },
+
   /** Record dot-repeat only when the requested mutation has a real target. */
   _readerChangeTargetAvailable(action, reader, state, pdfWin) {
     if (/^(highlight|addNote)/.test(action)) {

@@ -91,6 +91,8 @@ var ZoteroVim = {
     'normal: e':   'toggleReaderSidebarOutline',
     'normal: -':   'toggleReaderSplitHorizontal',
     'normal: |':   'toggleReaderSplitVertical',
+    'normal: s':   'toggleReaderSpread',
+    'normal: S':   'toggleReaderSpreadParity',
     'normal: ff':  'mainFuzzyAll',
     'normal: fb':  'mainFuzzyCollection',
     'normal: bj':  'mainTabPick',
@@ -638,6 +640,7 @@ var ZoteroVim = {
       _pdfViewHandlers: new Map(),
       _pdfViewSyncTimer: null,
       _readerHistoryPending: null,
+      _readerPageLayouts: new WeakMap(),
       reader: reader,       // reference for direct annotation creation
       pdfWin: pdfWin,       // stored for _setMode → _clearVisualHints
       cleanup: () => {},
@@ -1806,8 +1809,11 @@ var ZoteroVim = {
     if (state.mode === 'normal' && state.keyBuffer === 'd' && keyStr === 'M') return true;
     const modePrefix = state.mode + ':';
     const bindings = this.getBindings();
-    if (bindings[modePrefix + keyStr]) return true;
-    return Object.keys(bindings).some(k => this._bindingMatchesPrefix(k, modePrefix, keyStr));
+    // Chord suffixes must also be blocked before Zotero's direct forwarding
+    // callback runs (including layout commands such as <space>s).
+    const buffers = state.keyBuffer ? [state.keyBuffer + keyStr, keyStr] : [keyStr];
+    return buffers.some(buffer => bindings[modePrefix + buffer]
+      || Object.keys(bindings).some(k => this._bindingMatchesPrefix(k, modePrefix, buffer)));
   },
 
   _bindingMatchesPrefix(bindingKey, modePrefix, buffer) {
@@ -2116,6 +2122,16 @@ var ZoteroVim = {
           this._toggleReaderSplit(state, reader, 'horizontal'); break;
         case 'toggleReaderSplitVertical':
           this._toggleReaderSplit(state, reader, 'vertical'); break;
+        case 'toggleReaderSpread':
+          this._setReaderSpreadMode(state, reader, pdfWin, 'toggle'); break;
+        case 'toggleReaderSpreadParity':
+          this._setReaderSpreadMode(state, reader, pdfWin, 'parity'); break;
+        case 'setReaderSinglePage':
+          this._setReaderSpreadMode(state, reader, pdfWin, 0); break;
+        case 'setReaderOddSpread':
+          this._setReaderSpreadMode(state, reader, pdfWin, 1); break;
+        case 'setReaderEvenSpread':
+          this._setReaderSpreadMode(state, reader, pdfWin, 2); break;
         case 'focusReaderSplitLeft':
           this._focusReaderSplit(state, reader, 'left', pdfWin); break;
         case 'focusReaderSplitDown':

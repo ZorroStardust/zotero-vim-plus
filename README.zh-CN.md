@@ -268,6 +268,28 @@ mark 相互独立，也支持计数前缀（如 `3ctrl+o`）。
 | `Ctrl+k` | 聚焦上方分栏面板（垂直分栏中则切换面板） |
 | `Ctrl+l` | 垂直分栏中，先移动到右侧阅读器面板，再到右侧笔记编辑器；否则聚焦右侧分栏面板 |
 
+#### 原生双页 PDF 布局
+
+| 按键 | 动作 |
+|-----|--------|
+| `<space>s` | 在当前 PDF 窗格切换单页 / 双页 |
+| `<space>S` | 切换奇数 / 偶数起始双页；单页状态下直接进入偶数起始双页 |
+
+依次按空格和 `s`；大写 `S` 使用 `Shift+s` 输入。奇数起始配对为
+**1–2、3–4……**；偶数起始让**第 1 页单独显示**，随后配对为
+**2–3、4–5……**。奇偶按 PDF 文件的实际页序计算，包括封面和前言，
+不依据正文印刷页码。末尾无法配对的一页会单独显示。
+
+从单页进入双页时，自动采用纵向连续滚动，并将两页完整适配到当前窗格。
+返回单页时恢复进入前的缩放和滚动方式，保留当前阅读页。双页状态下切换
+奇偶会保留手动调整的缩放。每个 PDF 窗格在该视图存续期间记住上次的
+奇偶布局，首次使用 `<space>s` 采用奇数起始。`h`/`l` 沿用 Zotero 原生
+翻页逻辑，`j`/`k` 正常滚动。
+
+该功能可与分栏视图组合使用，只改变当前获得焦点的 PDF 窗格。设置面板
+还提供 `setReaderSinglePage`、`setReaderOddSpread`、`setReaderEvenSpread`
+三个动作，方便自定义直接选择布局的按键。上述布局动作仅用于 PDF。
+
 #### 标记（Marks）
 
 类 Vim 的位置标记，用于快速跳转。`m<x>` 在当前视口位置设置标记，
@@ -801,6 +823,11 @@ UI 元素输入内容而无需 vim 绑定拦截按键时，这很有用。
 | `focusReaderSidebar` | 聚焦或重新打开自定义目录浏览浮层 |
 | `toggleReaderSplitHorizontal` | 切换阅读器水平分栏视图 |
 | `toggleReaderSplitVertical` | 切换阅读器垂直分栏视图 |
+| `toggleReaderSpread` | 切换单页 / 双页 PDF 布局，记住上次的奇偶配对 |
+| `toggleReaderSpreadParity` | 切换奇偶配对，或从单页进入偶数起始双页 |
+| `setReaderSinglePage` | 使用单页 PDF 布局 |
+| `setReaderOddSpread` | PDF 页配对为 1–2、3–4…… |
+| `setReaderEvenSpread` | PDF 第 1 页单独显示，随后配对为 2–3、4–5…… |
 | `focusReaderSplitLeft` | 聚焦左侧分栏面板（水平分栏中则切换） |
 | `focusReaderSplitDown` | 聚焦下方分栏面板（垂直分栏中则切换） |
 | `focusReaderSplitUp` | 聚焦上方分栏面板（垂直分栏中则切换） |

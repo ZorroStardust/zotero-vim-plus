@@ -250,6 +250,30 @@ Si el número de elementos es pequeño, las pistas son caracteres simples; de lo
 | `Ctrl+k` | Enfocar el panel dividido encima (o alternar panel en división vertical) |
 | `Ctrl+l` | En división vertical, moverse al panel derecho del lector primero y luego al editor de notas lateral; de lo contrario, enfocar el panel dividido a la derecha |
 
+#### Vista nativa de dos páginas PDF
+
+| Tecla | Acción |
+|-----|--------|
+| `<space>s` | Alternar una/dos páginas en el panel PDF con foco |
+| `<space>S` | Cambiar emparejamiento impar/par; desde una página, abrir pares |
+
+Pulsa Espacio y luego `s`, o Espacio y luego `Shift+s` para la `S` mayúscula.
+El modo impar agrupa **1–2, 3–4, …**; el modo par deja la página **1** sola
+y agrupa **2–3, 4–5, …**. Se usa el orden físico del PDF, incluida la portada,
+no la numeración impresa. Una última página sin pareja queda sola.
+
+Al pasar de una a dos páginas, se activa el desplazamiento vertical continuo
+y se ajusta la pareja al panel. Al volver a una página, se restauran el zoom
+y el modo de desplazamiento anteriores en la página actual. Cambiar la paridad
+conserva el zoom manual. Cada panel recuerda su última paridad mientras exista
+esa vista PDF; el primer `<space>s` usa el modo impar. `h`/`l` siguen la
+navegación nativa de Zotero y `j`/`k` desplazan normalmente.
+
+La vista dividida se puede combinar con este diseño: solo cambia el panel PDF
+con foco. Preferencias también ofrece `setReaderSinglePage`,
+`setReaderOddSpread` y `setReaderEvenSpread` para asignar teclas que seleccionen
+un diseño directamente. Estas acciones solo se aplican a PDF.
+
 #### Editor Vim de notas
 
 Cuando un editor de notas tiene el foco, el plugin permite navegar, buscar y
@@ -729,6 +753,11 @@ Abrir **Editar → Preferencias** (macOS: **Zotero → Ajustes**) y navegar al p
 | `focusReaderSidebar` | Enfocar o reabrir la superposición personalizada de explorador de esquema |
 | `toggleReaderSplitHorizontal` | Alternar vista dividida horizontal del lector |
 | `toggleReaderSplitVertical` | Alternar vista dividida vertical del lector |
+| `toggleReaderSpread` | Alternar una/dos páginas PDF y recordar la última paridad |
+| `toggleReaderSpreadParity` | Cambiar la paridad o abrir pares desde una página |
+| `setReaderSinglePage` | Usar una página PDF |
+| `setReaderOddSpread` | Agrupar páginas PDF 1–2, 3–4, … |
+| `setReaderEvenSpread` | Dejar la página PDF 1 sola y agrupar 2–3, 4–5, … |
 | `focusReaderSplitLeft` | Enfocar panel dividido izquierdo (o alternar en división horizontal) |
 | `focusReaderSplitDown` | Enfocar panel dividido inferior (o alternar en división vertical) |
 | `focusReaderSplitUp` | Enfocar panel dividido superior (o alternar en división vertical) |

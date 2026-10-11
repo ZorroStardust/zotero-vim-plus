@@ -223,6 +223,7 @@ const ZV_I18N_ACTION_LABELS = {
   addNote:                  "添加笔记 / 注释",
   copySelection:            "将选区复制到剪贴板",
   searchSelection:          "打开查找栏并搜索选区（#）",
+  translateSelection:       "使用 Translate for Zotero 翻译选区（t）",
   swapVisualEnds:           "交换选区锚点 / 焦点 — 跳到另一端（o）",
   editAnnotation:           "打开标注注释进行编辑（在 [ / ] 之后）",
   deleteAnnotation:         "删除所选标注（dd）",

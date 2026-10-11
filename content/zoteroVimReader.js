@@ -4109,6 +4109,306 @@ Object.assign(ZoteroVim, {
     }
   },
 
+  // ── Translate for Zotero integration ──────────────────────────────────────
+
+  /** Count word-like segments the same way Translate for Zotero routes selections. */
+  _isSingleTranslationWord(text) {
+    if (typeof Intl.Segmenter === 'function') {
+      let count = 0;
+      for (const segment of new Intl.Segmenter(undefined, { granularity: 'word' }).segment(text)) {
+        if (segment.isWordLike && ++count > 1) return false;
+      }
+      return count === 1;
+    }
+    return /^[\p{L}\p{M}\p{N}_]+(?:['’][\p{L}\p{M}\p{N}_]+)*$/u.test(text);
+  },
+
+  /**
+   * Read the other add-on's dictionary preferences without changing them. The
+   * public API accepts ordered services, so its normal translator can be a fallback.
+   */
+  _translationDictionaryServices(addon, text) {
+    if (!this._isSingleTranslationWord(text) || !Zotero.Prefs?.get) return null;
+    try {
+      const prefix = addon.data?.config?.prefsPrefix || 'extensions.zotero.ZoteroPDFTranslate';
+      if (Zotero.Prefs.get(prefix + '.enableDict', true) !== true) return null;
+      const dictionary = Zotero.Prefs.get(prefix + '.dictSource', true);
+      const translator = Zotero.Prefs.get(prefix + '.translateSource', true);
+      if (typeof dictionary !== 'string' || !dictionary) return null;
+      return typeof translator === 'string' && translator && translator !== dictionary
+        ? [dictionary, translator] : [dictionary];
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] _translationDictionaryServices error: ' + e);
+      return null;
+    }
+  },
+
+  /**
+   * Translate the focused pane's DOM selection with the other plugin's public
+   * API. Each popup owns its request so closing/replacing it ignores late results.
+   * The service and languages remain under Translate for Zotero's control.
+   */
+  async _translateSelection(state, reader, pdfWin) {
+    if (state._translationPopup) {
+      this._closeTranslationPopup(state);
+      return;
+    }
+    const zh = this._isZhLocale();
+    let popup = null;
+    try {
+      const selection = pdfWin.getSelection?.();
+      const text = selection && !selection.isCollapsed
+        ? selection.toString().normalize('NFKC').replace(/\s+/g, ' ').trim() : '';
+      if (!text) {
+        this._showStatus(state, zh ? '请先选中要翻译的文本' : 'Select text to translate first');
+        return;
+      }
+      const addon = Zotero.PDFTranslate;
+      const api = addon?.api;
+      if (addon?.data?.alive === false || typeof api?.translate !== 'function') {
+        this._showStatus(state, zh
+          ? '请安装并启用支持翻译接口的 Translate for Zotero'
+          : 'Install and enable Translate for Zotero with translation API support', 4000);
+        return;
+      }
+      const dictionaryServices = this._translationDictionaryServices(addon, text);
+      popup = this._createTranslationPopup(state, pdfWin, text, selection);
+      if (!popup) return;
+      this._setTranslationPopupDictionary(popup, !!dictionaryServices);
+      // The API belongs to another add-on's sandbox, not the PDF content window.
+      const target = Components.utils.getGlobalForObject(api.translate);
+      const apiOptions = {
+        pluginID: this.id,
+        itemID: reader.itemID,
+      };
+      if (dictionaryServices) apiOptions.service = dictionaryServices;
+      const options = Components.utils.cloneInto(apiOptions, target);
+      let task = await api.translate(text, options);
+      if (state._translationPopup !== popup || !popup.overlay.isConnected) return;
+      // A dictionary can return an empty successful result, or a removed service
+      // can fail before the API tries candidates. Avoid repeating a fallback it ran.
+      if (dictionaryServices?.length > 1 && task?.service !== dictionaryServices[1]
+          && (task?.status !== 'success' || !String(task.result || '').trim())) {
+        this._setTranslationPopupDictionary(popup, false);
+        apiOptions.service = dictionaryServices[1];
+        task = await api.translate(text, Components.utils.cloneInto(apiOptions, target));
+        if (state._translationPopup !== popup || !popup.overlay.isConnected) return;
+      }
+      const result = typeof task?.result === 'string' ? task.result : '';
+      if (task?.status !== 'success' || !result.trim()) {
+        popup.resultLabel.textContent = zh ? '翻译失败' : 'Translation failed';
+        popup.result.textContent = result.trim() ? result : (zh
+          ? '未收到译文，请检查 Translate for Zotero 的服务设置。'
+          : 'No translation returned. Check the service settings in Translate for Zotero.');
+        return;
+      }
+      const dictionary = !!dictionaryServices
+        && (!task.service || task.service === dictionaryServices[0]);
+      this._setTranslationPopupDictionary(popup, dictionary);
+      // Some dictionaries (Bing/Haici/Collins) return pronunciation only in audio.text.
+      // Keep those phonetics visible and copyable without duplicating ones in result.
+      const phonetics = [];
+      if (dictionary && Array.isArray(task.audio)) {
+        const normalize = value => value.replace(/\s+/g, ' ').trim();
+        const normalizedResult = normalize(result);
+        for (const audio of task.audio) {
+          const text = typeof audio?.text === 'string' ? normalize(audio.text) : '';
+          if (text && !normalizedResult.includes(text) && !phonetics.includes(text)) {
+            phonetics.push(text);
+          }
+        }
+      }
+      popup.phonetics.textContent = phonetics.join(' · ');
+      popup.phonetics.style.display = phonetics.length ? 'block' : 'none';
+      popup.translation = phonetics.length ? phonetics.join('\n') + '\n\n' + result : result;
+      popup.result.textContent = result;
+      popup.copyButton.disabled = false;
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] _translateSelection error: ' + e);
+      if (popup && state._translationPopup === popup && popup.overlay.isConnected) {
+        popup.resultLabel.textContent = zh ? '翻译失败' : 'Translation failed';
+        popup.result.textContent = String(e?.message || e);
+      } else if (!popup) {
+        this._showStatus(state, zh ? '无法打开翻译浮窗' : 'Could not open translation popup');
+      }
+    }
+  },
+
+  /** Create a pane-local popup without clearing the selection or changing mode. */
+  _createTranslationPopup(state, pdfWin, text, selection) {
+    const doc = pdfWin.document;
+    if (!doc.body) return null;
+    const zh = this._isZhLocale();
+    const h = tag => doc.createElementNS('http://www.w3.org/1999/xhtml', tag);
+    const overlay = h('div');
+    overlay.id = 'zv-translation-popup';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-labelledby', 'zv-translation-title');
+    overlay.style.cssText =
+      'position:fixed;right:20px;bottom:48px;width:min(540px,calc(100% - 40px));' +
+      'max-height:calc(100vh - 64px);z-index:99998;display:flex;flex-direction:column;' +
+      'color-scheme:light dark;background:Canvas;color:CanvasText;border:1px solid GrayText;' +
+      'border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,0.35);' +
+      'font:14px/1.6 sans-serif;overflow:hidden;';
+
+    const header = h('div');
+    header.style.cssText =
+      'display:flex;flex-shrink:0;align-items:center;gap:12px;padding:10px 14px;';
+    const title = h('h2');
+    title.id = 'zv-translation-title';
+    title.style.cssText = 'flex:1;margin:0;font-size:14px;';
+    title.textContent = 'Translate for Zotero';
+    const closeButton = h('button');
+    closeButton.type = 'button';
+    closeButton.textContent = zh ? '关闭' : 'Close';
+    const body = h('div');
+    body.style.cssText = 'min-height:0;overflow:auto;padding:0 14px 14px;';
+    const sourceLabel = h('h3');
+    sourceLabel.style.cssText = 'margin:4px 0;font-size:12px;color:GrayText;';
+    sourceLabel.textContent = zh ? '原文' : 'Original';
+    const source = h('div');
+    source.style.cssText =
+      'max-height:96px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;';
+    source.textContent = text;
+    const phonetics = h('div');
+    phonetics.style.cssText =
+      'display:none;margin-top:4px;color:GrayText;overflow-wrap:anywhere;';
+    const resultLabel = h('h3');
+    resultLabel.style.cssText = 'margin:14px 0 4px;font-size:12px;color:GrayText;';
+    resultLabel.textContent = zh ? '译文' : 'Translation';
+    const result = h('div');
+    result.style.cssText = 'white-space:pre-wrap;overflow-wrap:anywhere;user-select:text;';
+    result.setAttribute('role', 'status');
+    result.setAttribute('aria-live', 'polite');
+    result.textContent = zh ? '正在翻译…' : 'Translating…';
+    const footer = h('div');
+    footer.style.cssText =
+      'display:flex;flex-shrink:0;align-items:center;gap:12px;padding:8px 14px;' +
+      'border-top:1px solid GrayText;';
+    const hint = h('div');
+    hint.style.cssText = 'flex:1;font-size:12px;color:GrayText;';
+    hint.textContent = zh ? 'j/k 滚动 · y 复制译文 · Esc 关闭'
+      : 'j/k scroll · y copy translation · Esc close';
+    const copyButton = h('button');
+    copyButton.type = 'button';
+    copyButton.textContent = zh ? '复制译文' : 'Copy translation';
+    copyButton.disabled = true;
+    for (const button of [closeButton, copyButton]) {
+      button.style.cssText =
+        'padding:3px 9px;border:1px solid GrayText;border-radius:4px;' +
+        'background:ButtonFace;color:ButtonText;font:inherit;cursor:pointer;';
+      // Clicking a control must not collapse the PDF selection.
+      button.addEventListener('mousedown', event => event.preventDefault());
+    }
+    header.appendChild(title);
+    header.appendChild(closeButton);
+    for (const element of [sourceLabel, source, phonetics, resultLabel, result]) {
+      body.appendChild(element);
+    }
+    footer.appendChild(hint);
+    footer.appendChild(copyButton);
+    for (const element of [header, body, footer]) overlay.appendChild(element);
+
+    const popup = {
+      overlay, body, sourceLabel, source, phonetics, resultLabel, result,
+      closeButton, copyButton, hint, pdfWin,
+      translation: '',
+      selection: {
+        anchorNode: selection.anchorNode, anchorOffset: selection.anchorOffset,
+        focusNode: selection.focusNode, focusOffset: selection.focusOffset,
+      },
+      selectionParams: state.selectionParams,
+    };
+    closeButton.addEventListener('click', () => this._closeTranslationPopup(state));
+    copyButton.addEventListener('click', () => this._copyTranslationResult(state));
+    doc.body.appendChild(overlay);
+    state._translationPopup = popup;
+    state.keyBuffer = '';
+    state.countBuffer = '';
+    clearTimeout(state.keyTimeout);
+    state.keyTimeout = null;
+    this._updateIndicator(state);
+    return popup;
+  },
+
+  /** Keep dictionary labels accurate when the API falls back to sentence translation. */
+  _setTranslationPopupDictionary(popup, dictionary) {
+    const zh = this._isZhLocale();
+    popup.sourceLabel.textContent = dictionary ? (zh ? '单词' : 'Word') : (zh ? '原文' : 'Original');
+    popup.source.style.fontSize = dictionary ? '22px' : '';
+    popup.source.style.fontWeight = dictionary ? 'bold' : '';
+    popup.resultLabel.textContent = dictionary
+      ? (zh ? '词典释义' : 'Dictionary entry') : (zh ? '译文' : 'Translation');
+    popup.copyButton.textContent = dictionary
+      ? (zh ? '复制释义' : 'Copy entry') : (zh ? '复制译文' : 'Copy translation');
+    popup.hint.textContent = dictionary
+      ? (zh ? 'j/k 滚动 · y 复制释义 · Esc 关闭' : 'j/k scroll · y copy entry · Esc close')
+      : (zh ? 'j/k 滚动 · y 复制译文 · Esc 关闭' : 'j/k scroll · y copy translation · Esc close');
+  },
+
+  /** Dismiss the popup; restoring anchor/focus preserves backward selections too. */
+  _closeTranslationPopup(state, restoreSelection = true) {
+    const popup = state._translationPopup;
+    if (!popup) return;
+    state._translationPopup = null;
+    try { popup.overlay.remove(); } catch (_) {}
+    if (!restoreSelection) return;
+    try {
+      const saved = popup.selection;
+      if (saved.anchorNode?.isConnected && saved.focusNode?.isConnected) {
+        popup.pdfWin.getSelection().setBaseAndExtent(
+          saved.anchorNode, saved.anchorOffset, saved.focusNode, saved.focusOffset);
+        state.selectionParams = popup.selectionParams;
+      }
+      state.activePdfWin = popup.pdfWin;
+      popup.pdfWin.focus();
+      this._updateVisualCursor(state, popup.pdfWin, { autoPan: false });
+    } catch (_) {}
+  },
+
+  _copyTranslationResult(state) {
+    const popup = state._translationPopup;
+    if (!popup?.translation) return;
+    try {
+      const clipboard = Components.classes['@mozilla.org/widget/clipboardhelper;1']
+        .getService(Components.interfaces.nsIClipboardHelper);
+      clipboard.copyString(popup.translation);
+      popup.copyButton.textContent = this._isZhLocale() ? '已复制' : 'Copied';
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] _copyTranslationResult error: ' + e);
+      this._showStatus(state, this._isZhLocale() ? '复制失败' : 'Copy failed');
+    }
+  },
+
+  /** Own popup keys so PDF motions and Zotero shortcuts cannot alter the selection. */
+  _onTranslationPopupKeyDown(event, state) {
+    const popup = state._translationPopup;
+    if (!popup) return;
+    const key = this._keyString(event);
+    event.stopImmediatePropagation();
+    // Allow native activation of a focused button, and copying selected popup text.
+    if ((event.target === popup.closeButton || event.target === popup.copyButton)
+        && (key === 'enter' || key === ' ')) return;
+    if (key === 'ctrl+c') return;
+    event.preventDefault();
+    if (key === 'escape') {
+      this._closeTranslationPopup(state);
+    } else if (key === 'y') {
+      this._copyTranslationResult(state);
+    } else if (key === 'tab') {
+      const next = !popup.copyButton.disabled
+        && (event.target === popup.closeButton
+          || (event.shiftKey && event.target !== popup.copyButton))
+        ? popup.copyButton : popup.closeButton;
+      next.focus();
+    } else if (['j', 'arrowdown', 'k', 'arrowup'].includes(key)) {
+      popup.body.scrollTop += ['j', 'arrowdown'].includes(key) ? 60 : -60;
+    } else if (['pagedown', 'ctrl+d', 'pageup', 'ctrl+u'].includes(key)) {
+      const direction = ['pagedown', 'ctrl+d'].includes(key) ? 1 : -1;
+      popup.body.scrollTop += direction * popup.body.clientHeight * 0.8;
+    }
+  },
+
   _copySelection(state, pdfWin) {
     try {
       const sel = pdfWin.getSelection?.();

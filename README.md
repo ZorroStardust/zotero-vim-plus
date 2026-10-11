@@ -735,6 +735,37 @@ sentence hints (then to Normal mode).
 All copy operations apply Unicode NFKC normalisation (resolves ligatures such
 as `ﬁ` → `fi`) and collapse PDF line-break newlines into spaces.
 
+#### Translating text
+
+Install and enable [Translate for Zotero](https://github.com/windingwind/zotero-pdf-translate),
+then configure its translation service and target language. Select text in Visual
+mode and press `t` to open a translation popup in the focused PDF pane. The popup
+shows the original text, a loading message, and then the translation or service error.
+It uses Translate for Zotero's configured translation service and languages through
+its [public API](https://github.com/windingwind/zotero-pdf-translate/blob/main/src/api.ts).
+Selected text is sent to that service when you press the translation key.
+
+For a single word, the popup uses the **Dictionary Services** selection when
+**Use Dictionary Service for Word Translation** is enabled in Translate for Zotero.
+It preserves the dictionary's phonetic symbols, parts of speech, multiple meanings
+and examples. Pronunciation labels returned separately by the service also appear
+below the word and are included when copying the entry. The available details and
+definition language depend on the chosen dictionary. If a dictionary query fails,
+Translate for Zotero tries the configured normal translation service instead.
+Sentences and longer selections continue to use normal translation. If you prefer
+normal translation for words too, turn off the dictionary option in Translate for Zotero.
+
+Inside the popup, `j` / `k` (or arrow keys) scroll, `y` or **Copy translation**
+copies the result, and `Escape` or **Close** dismisses it. Closing restores the
+original selection and leaves you in Visual mode, ready to extend or annotate it.
+Closing while translation is pending dismisses the popup immediately; a late
+response cannot reopen it. If Translate for Zotero is missing or its API is
+unavailable, the reader shows a hint instead.
+
+The `translateSelection` action can be remapped in **Settings → Zotero Vim Plus →
+Key bindings**. This integration requires a Translate for Zotero version that
+supports `api.translate(text, { pluginID, itemID })`.
+
 #### Exiting Visual mode
 
 | Key | Action |
@@ -914,6 +945,7 @@ failures are reported to `zv-startup.log` in the profile directory with
 | `highlightPurple` | Create purple highlight |
 | `addNote` | Add note annotation |
 | `copySelection` | Copy current selection to clipboard |
+| `translateSelection` | Translate selection in a popup using Translate for Zotero |
 | `searchSelection` | Open find bar and search for current selection |
 | `yankParagraph` | Copy whole paragraph to clipboard |
 | `swapVisualEnds` | Swap selection anchor and focus |

@@ -130,6 +130,7 @@ var ZoteroVim = {
     'visual:i':       'addNote',
     'visual:y':       'copySelection',
     'visual:yy':      'yankParagraph',
+    'visual:t':       'translateSelection',
     // Visual mode — search selection
     'visual:#':       'searchSelection',
     // Visual mode — swap anchor/focus
@@ -612,6 +613,7 @@ var ZoteroVim = {
       _marksExplorerOverlay: null,
       _marksExplorerList: null,
       _marksExplorerStatus: null,
+      _translationPopup: null,
       smoothHold: {
         active: false,
         releasing: false,
@@ -740,6 +742,7 @@ var ZoteroVim = {
       state._insertSessionID = (state._insertSessionID || 0) + 1;
       this._stopSmoothHoldScroll(state, pdfWin);
       this._closeReaderOutlineExplorer(state);
+      this._closeTranslationPopup(state, false);
       clearInterval(state._pdfViewSyncTimer);
       this._restoreReaderKeyForwarding(reader, state);
       this._restoreAnnotationDeletionFlag(state, reader);
@@ -853,6 +856,9 @@ var ZoteroVim = {
 
     for (const [viewWin, handlers] of state._pdfViewHandlers.entries()) {
       if (wantedWins.includes(viewWin)) continue;
+      if (state._translationPopup?.pdfWin === viewWin) {
+        this._closeTranslationPopup(state, false);
+      }
       try { viewWin.removeEventListener('keydown', handlers.keyDown, true); } catch (_) {}
       try { viewWin.removeEventListener('keyup', handlers.keyUp, true); } catch (_) {}
       try { viewWin.removeEventListener('blur', handlers.blur, true); } catch (_) {}
@@ -1008,6 +1014,7 @@ var ZoteroVim = {
    * intercept: while our textarea is focused the wrapper returns true and
    * Zotero skips all its key/pointer handling — no popup, and its
    * preventDefault() no longer eats the native Enter newline.
+   * The same guard protects a translation popup's selection and native buttons.
    *
    * Re-applied periodically by _syncReaderPdfViewListeners() (view
    * recreation, restored sessions); views without the method (EPUB/snapshot)
@@ -1029,6 +1036,7 @@ var ZoteroVim = {
         const orig = view._textAnnotationFocused;
         const wrapperFn = function () {
           try {
+            if (state._translationPopup?.pdfWin === view._iframeWindow) return true;
             const input = state._commentOverlayInput;
             if (input?.isConnected
                 && view._iframeWindow?.document?.activeElement === input) {
@@ -1160,6 +1168,9 @@ var ZoteroVim = {
   },
 
   _setMode(state, mode) {
+    if (state._translationPopup && mode !== state.mode) {
+      this._closeTranslationPopup(state, false);
+    }
     if (mode !== 'normal') this._stopSmoothHoldScroll(state, state.pdfWin);
     // Leaving insert mode invalidates any insert session that is still being
     // prepared asynchronously, so an Esc during annotation-item resolution
@@ -1406,6 +1417,11 @@ var ZoteroVim = {
     // never consume keys or move focus, otherwise typing in Zotero's own
     // editors loses focus.
     if (this._nativeEditableFocused(reader)) return;
+
+    if (state._translationPopup) {
+      this._onTranslationPopupKeyDown(event, state);
+      return;
+    }
 
     if (state.outlineExplorerOpen) {
       if (this._onReaderOutlineExplorerKeyDown(event, reader, state, pdfWin)) {
@@ -1779,6 +1795,7 @@ var ZoteroVim = {
    */
   _readerConsumesKey(state, keyStr) {
     if (!keyStr) return false;
+    if (state._translationPopup) return true;
     if (state.mode === 'insert') {
       if (this.getBindings()['insert:' + keyStr]) return true;
       // While editing an annotation comment the plugin traps printable
@@ -2086,6 +2103,10 @@ var ZoteroVim = {
         case 'highlightPurple':  this._highlight(state, reader, pdfWin, this.COLORS.purple);  break;
         case 'addNote':          this._addNote(state, reader, pdfWin);                         break;
         case 'copySelection':    this._copySelection(state, pdfWin);                           break;
+        case 'translateSelection':
+          this._translateSelection(state, reader, pdfWin)
+            .catch(e => Zotero.debug('[ZoteroVim] _translateSelection error: ' + e));
+          break;
         case 'searchSelection':  this._searchSelection(state, reader, pdfWin);                 break;
         case 'swapVisualEnds':   this._swapVisualEnds(state, pdfWin);                          break;
 

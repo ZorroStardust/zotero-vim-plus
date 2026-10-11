@@ -23,6 +23,7 @@ if command -v node >/dev/null 2>&1; then
   node tools/check-reader-history.js
   node tools/check-reader-layout.js
   node tools/check-reader-text.js
+  node tools/check-reader-translation.js
   node tools/check-plugin-manifest.js
   node tools/check-note-editor-routing.js
   node tools/check-note-native-input.js

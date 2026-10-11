@@ -29,6 +29,7 @@ if (Get-Command node -ErrorAction SilentlyContinue) {
             'tools/check-reader-history.js', 'tools/check-plugin-manifest.js',
             'tools/check-reader-layout.js',
             'tools/check-reader-text.js',
+            'tools/check-reader-translation.js',
             'tools/check-note-editor-routing.js',
             'tools/check-note-native-input.js',
             'tools/check-note-input-guard.js',

@@ -20,6 +20,7 @@ if (Get-Command node -ErrorAction SilentlyContinue) {
             'bootstrap.js', 'content/i18n.js', 'content/zoteroVim.js',
             'content/keymapLabels.js', 'content/zoteroVimHelp.js',
             'content/zoteroVimReader.js', 'content/zoteroVimMain.js',
+            'content/zoteroVimSearch.js',
             'content/zoteroVimFocus.js',
             'content/zoteroVimNoteDiagnostics.js', 'content/prefs.js'
         )) {
@@ -30,6 +31,7 @@ if (Get-Command node -ErrorAction SilentlyContinue) {
             'tools/check-sync.js', 'tools/check-bindings.js',
             'tools/check-spacekeys.js',
             'tools/check-shortcut-help.js',
+            'tools/check-library-search.js',
             'tools/check-fuzzy-picker.js',
             'tools/check-reader-outline-picker.js',
             'tools/check-reader-focus.js',

@@ -178,6 +178,7 @@ const ZV_DEFAULT_BINDINGS = {
   "main: wl":   "mainFocusRight",
   "main: ww":   "mainFocusItems",
   // Main window — bare keys
+  "main:/":      "mainSearch",
   "main:j":      "mainNavDown",
   "main:k":      "mainNavUp",
   "main:h":      "mainTreeCollapse",

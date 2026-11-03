@@ -195,6 +195,7 @@ var ZoteroVim = {
     'main:t8':    'mainColoredTag8',
     'main:t9':    'mainColoredTag9',
     // Main window — panel-scoped navigation
+    'main:/':     'mainSearch',
     'main:h':     'mainTreeCollapse',
     'main:l':     'mainTreeExpand',
     'main:j':     'mainNavDown',
@@ -1171,6 +1172,7 @@ var ZoteroVim = {
     mainOpenPDF: ['Open attachment', '打开附件'],
     mainClosePDF: ['Close PDF tab', '关闭 PDF 标签页'],
     mainFocusSearch: ['Focus search', '聚焦搜索栏'],
+    mainSearch: ['Search focused pane', '搜索当前栏'],
     showShortcutHelp: ['All plugin shortcuts', '快捷键总览'],
     mainFocusTree: ['Focus collections', '聚焦分类树'],
     mainFocusLeft: ['Focus collections', '聚焦分类树'],

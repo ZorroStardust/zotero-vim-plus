@@ -131,6 +131,7 @@ zotero-vim-plus/
 │   ├── zoteroVim.js       Core: modes, key handling, action dispatcher
 │   ├── zoteroVimReader.js Reader-side methods (outline, visual/cursor, annotations)
 │   ├── zoteroVimMain.js   Main-window methods (note editor, pickers, notes layout)
+│   ├── zoteroVimSearch.js Native collection filtering and item quick search
 │   ├── zoteroVimFocus.js  Shared focus frame for outline, PDF panes and sidebar notes
 │   ├── zoteroVimHelp.js   Searchable shortcut reference and fixed command families
 │   ├── keymapLabels.js   Shared English/Chinese action descriptions
@@ -609,6 +610,22 @@ list) when that pane has focus.
 | `R` | Expand all collections in the current library tree |
 | `M` | Collapse all collections in the current library tree |
 
+With the collection tree focused, `/` opens Zotero's native collection filter;
+with the item list focused, it enters Zotero's native quick search. The input
+is ready immediately, including when the collection filter was hidden.
+`Enter` applies the query and returns to the corresponding tree/list; `Esc`
+clears that search and returns there in one press. While collections are
+filtered, `j/k` and `gg/G` navigate matching rows using Zotero's native helpers.
+Versions without the native collection filter use a collection picker that
+also searches collapsed descendants and displays their parent paths.
+
+In the item search input, `Ctrl+h/l` cycles backward/forward through **Title,
+Creator, Year**, **All Fields & Tags**, and **Everything**, including wrapping
+at either end. It preserves the query and updates Zotero's native mode menu,
+placeholder and saved preference, then reruns the search. Ordinary text,
+including `/`, and input composition keep their native behavior. PDF and note
+searches and `Space /` (shortcut reference) retain their own commands.
+
 #### Main window `<space>` chords
 
 These bindings work in the main Zotero window (not inside the reader), on
@@ -1059,6 +1076,7 @@ failures are reported to `zv-startup.log` in the profile directory with
 | `mainFocusLeft` | Focus the collection tree (left pane) |
 | `mainFocusRight` | Focus the detail pane (right pane) |
 | `mainFocusSearch` | Focus Zotero's search bar |
+| `mainSearch` | Filter collections or search items according to the focused library pane (`/`) |
 | `showShortcutHelp` | Open the searchable shortcut reference (`Space /`) |
 | `mainNavDown` | Move selection down (collections tree / item list) |
 | `mainNavUp` | Move selection up (collections tree / item list) |

@@ -18,6 +18,7 @@ if command -v node >/dev/null 2>&1; then
   node --check content/zoteroVim.js
   node --check content/zoteroVimReader.js
   node --check content/zoteroVimMain.js
+  node --check content/zoteroVimSearch.js
   node --check content/zoteroVimFocus.js
   node --check content/zoteroVimNoteDiagnostics.js
   node --check content/prefs.js
@@ -25,6 +26,7 @@ if command -v node >/dev/null 2>&1; then
   node tools/check-bindings.js
   node tools/check-spacekeys.js
   node tools/check-shortcut-help.js
+  node tools/check-library-search.js
   node tools/check-fuzzy-picker.js
   node tools/check-reader-outline-picker.js
   node tools/check-reader-focus.js

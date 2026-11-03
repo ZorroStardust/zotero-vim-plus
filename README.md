@@ -58,6 +58,8 @@ Vibe coded with Claude Sonnet 4.5.
   Preferences panel; note editing commands currently use built-in Vim keys
 - **Native two-page PDF view** — `<space>s` toggles single/two-page layout;
   `<space>S` switches odd/even page pairing, independently in each split pane
+- **Subtle focus indication** — a neutral inner frame identifies the active
+  outline, PDF split pane or sidebar note editor without changing the layout
 - **No shortcut collisions** — keys consumed by vim are intercepted before
   Zotero's reader key handling, so `l` (next page) doesn't trigger the
   built-in Read Aloud and `h`/`s`/`Ctrl+F` don't toggle the hand tool /
@@ -127,6 +129,7 @@ zotero-vim-plus/
 │   ├── zoteroVim.js       Core: modes, key handling, action dispatcher
 │   ├── zoteroVimReader.js Reader-side methods (outline, visual/cursor, annotations)
 │   ├── zoteroVimMain.js   Main-window methods (note editor, pickers, notes layout)
+│   ├── zoteroVimFocus.js  Shared focus frame for outline, PDF panes and sidebar notes
 │   ├── preferences.xhtml  Preferences panel UI (XUL/HTML hybrid)
 │   └── prefs.js           Preferences panel JS (reads/writes Firefox prefs)
 ├── tools/
@@ -306,8 +309,18 @@ Tree navigation and `/` are scoped to the focused outline. Click the PDF to
 resume document shortcuts, including `/` for body-text search, while the tree
 remains visible; click the tree to resume outline navigation. You can also use
 `Ctrl+h` from that PDF pane to focus its open tree, and `Ctrl+l` from the tree
-to return to the PDF. The tree header shows which region is active. Outside
+to return to the PDF. A subtle inner frame shows which region is active. Outside
 this tree/PDF handoff, the same keys retain their split-pane and note focus actions.
+
+The same theme-aware frame follows the active PDF split pane and the right-side
+note editor. Only one region is emphasized, including with note Vim disabled.
+All frames retain a compact 1px inset. The active PDF pane also has a small,
+neutral dot at its upper-right viewport corner, clear of the scrollbar. It follows
+pane resizing and stays fixed while scrolling or zooming the document; outline
+and note focus keep their frame-only appearance.
+It fades in gently, respects reduced-motion preferences and hides when the
+window is inactive or a plugin popup owns input. The cue occupies no layout
+space and leaves page content, selections and note formatting unchanged.
 
 #### Reader split view
 
@@ -319,6 +332,13 @@ this tree/PDF handoff, the same keys retain their split-pane and note focus acti
 | `Ctrl+j` | Focus split pane below (or toggle pane in vertical split) |
 | `Ctrl+k` | Focus split pane above (or toggle pane in vertical split) |
 | `Ctrl+l` | In vertical split, move to the right reader pane first and then the right-side note editor; otherwise focus the split pane to the right |
+
+In split views, padding is removed only from the two adjoining PDF edges to
+keep the central gutter compact. Other page spacing, zoom and the native
+draggable divider are preserved; closing the split restores the original padding.
+Opening a split focuses the new pane once its PDF is initialized, updating its
+focus cue and keyboard target together. Later input cancels a pending handoff.
+Background initialization and scroll events never retarget keyboard commands.
 
 #### Native two-page PDF view
 
@@ -1097,6 +1117,35 @@ Components.utils.cloneInto(value, targetWindow)
 Primitive values (numbers, strings, booleans) cross compartments freely.
 Forgetting `cloneInto` produces `"Permission denied to access property"` errors
 that are easy to miss because they are often caught and silently swallowed.
+
+### Focus appearance
+
+`zoteroVimFocus.js` tracks region ownership and aligns the keyboard pane target;
+its rendering remains independent of keyboard command handling.
+Each reader's `_focusCue` owns pointer-transparent drawing layers with at most
+one visible. PDF and outline frames draw directly in their own PDF document,
+avoiding cross-compartment geometry and native browser compositing boundaries.
+The note frame continues to draw around the outer editor host in chrome.
+Every layer is fixed before insertion so it cannot allocate layout space.
+Top-level window activation is independent of chrome document focus while an
+embedded PDF is active.
+The note editor's managed DOM is never modified. Native editor replacements,
+split creation/closure, tab selection and window activation are reconciled by the
+existing view-sync timer; closing a reader removes its observers and overlay.
+Content window focus is observed alongside document focus events, because Gecko
+can focus a PDF iframe without emitting `focusin`. Newly observed views also
+inherit their actual native focus if activation preceded observer attachment.
+Native `PDFView.focus()` focuses the outer iframe element; that element's focus
+is mapped to its live PDF view instead of being discarded as incidental reader
+focus. Changes in the native focus chain are also reconciled while both split
+panes remain alive, without waiting for keyboard input or moving actual focus.
+Focus ownership is separate from the rendering method so other cue styles can
+be added without changing command handling.
+Detached frame/style nodes are recreated during painting. When a PDF view is
+destroyed, ownership recovery waits for native focus to return to a live reader
+region and follows delayed replacement views beyond the split toggle's initial
+timed callbacks. Toolbar inputs and notes retain focus throughout recovery;
+the visual reconciler never calls DOM focus methods.
 
 ### Zotero built-in shortcut conflicts (Read Aloud)
 

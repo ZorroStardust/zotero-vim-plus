@@ -289,7 +289,7 @@ async function main() {
     assert.equal(key(f, 'l', { ctrlKey: true }).prevented, true);
     assert.equal(z._readerOutlineExplorerFocused(f.state, f.primary.win), false);
     assert.equal(f.state.outlineExplorerOpen, true);
-    assert.match(f.state._outlineExplorerHeader.textContent, /Ctrl\+h/);
+    assert.equal(f.state._outlineExplorerHeader.textContent, 'Outline');
     key(f, 'l', { ctrlKey: true });
     assert.equal(f.state.activePdfWin, f.secondary.win);
     key(f, 'h', { ctrlKey: true }, f.secondary);
@@ -300,7 +300,7 @@ async function main() {
     assert.equal(f.state._outlineExplorerOverlay, tree);
     assert.equal(f.state.outlineExplorerSelected, 1);
     assert.equal(f.state._outlineExplorerList.scrollTop, 97);
-    assert.match(f.state._outlineExplorerHeader.textContent, /Focused/);
+    assert.equal(f.state._outlineExplorerHeader.textContent, 'Outline');
     key(f, '/');
     assert.ok(f.state._outlinePicker?.outlineOverlay);
     key(f, 'Escape');

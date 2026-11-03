@@ -260,11 +260,28 @@ Los comandos del árbol y `/` solo actúan cuando el esquema tiene el foco.
 Haz clic en el PDF para buscar en el texto con `/` aunque el árbol siga visible;
 haz clic en el árbol para volver a navegar por el esquema.
 También puedes pulsar `Ctrl+h` en el panel PDF correspondiente para enfocar
-su árbol abierto y `Ctrl+l` en el árbol para volver al PDF. La cabecera indica
-el foco actual. Fuera de este cambio entre árbol y PDF, las mismas teclas
+su árbol abierto y `Ctrl+l` en el árbol para volver al PDF. Un contorno interior
+sutil indica el foco actual. Fuera de este cambio entre árbol y PDF, las mismas teclas
 conservan sus acciones de foco entre paneles divididos y notas.
 
+El mismo contorno se adapta al tema y señala el panel PDF o editor de notas
+lateral activo, incluso con Vim de notas desactivado. Solo se enfatiza una región.
+Todos los contornos conservan un margen interior de 1px. El panel PDF activo
+añade un pequeño punto neutro en la esquina superior derecha de su área visible,
+sin tapar la barra de desplazamiento. Se ajusta al tamaño del panel y permanece
+fijo al desplazar o ampliar el documento; el esquema y las notas usan solo el contorno.
+La aparición respeta la preferencia de movimiento reducido y se oculta cuando
+la ventana está inactiva o un diálogo del plugin recibe la entrada. No ocupa
+espacio ni modifica el texto, las selecciones o el formato de las notas.
+Al cerrar o recrear un panel se recupera la indicación válida y se reconstruyen
+los contornos retirados por la página, sin mover el foco real ni quitárselo a
+las notas o a los controles de la barra de herramientas.
+
 #### Vista dividida del lector
+
+Al crear un panel, recibe el foco cuando su PDF está listo; la indicación y el
+destino del teclado se actualizan juntos. Una interacción posterior cancela
+el cambio pendiente. La carga o el desplazamiento de fondo no cambia ese destino.
 
 | Tecla | Acción |
 |-----|--------|
@@ -274,6 +291,10 @@ conservan sus acciones de foco entre paneles divididos y notas.
 | `Ctrl+j` | Enfocar el panel dividido debajo (o alternar panel en división vertical) |
 | `Ctrl+k` | Enfocar el panel dividido encima (o alternar panel en división vertical) |
 | `Ctrl+l` | En división vertical, moverse al panel derecho del lector primero y luego al editor de notas lateral; de lo contrario, enfocar el panel dividido a la derecha |
+
+En vistas divididas solo se elimina el relleno de los dos bordes PDF contiguos
+para reducir el espacio central. Se conservan el resto del espaciado, el zoom
+y el divisor arrastrable. Al cerrar la división se restaura el relleno original.
 
 #### Vista nativa de dos páginas PDF
 

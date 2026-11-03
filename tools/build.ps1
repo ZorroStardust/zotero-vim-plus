@@ -19,6 +19,7 @@ if (Get-Command node -ErrorAction SilentlyContinue) {
         foreach ($source in @(
             'bootstrap.js', 'content/i18n.js', 'content/zoteroVim.js',
             'content/zoteroVimReader.js', 'content/zoteroVimMain.js',
+            'content/zoteroVimFocus.js',
             'content/zoteroVimNoteDiagnostics.js', 'content/prefs.js'
         )) {
             node --check $source
@@ -28,6 +29,7 @@ if (Get-Command node -ErrorAction SilentlyContinue) {
             'tools/check-sync.js', 'tools/check-bindings.js',
             'tools/check-fuzzy-picker.js',
             'tools/check-reader-outline-picker.js',
+            'tools/check-reader-focus.js',
             'tools/check-reader-history.js', 'tools/check-plugin-manifest.js',
             'tools/check-reader-layout.js',
             'tools/check-reader-text.js',

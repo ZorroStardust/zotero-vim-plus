@@ -571,6 +571,70 @@ Object.assign(ZoteroVim, {
     return winState?.activePanelFocus || 'items';
   },
 
+  /**
+   * Native PDF viewers add padding around every page. In a split reader,
+   * remove only the two adjoining edges so they do not form a wide gutter.
+   * Preserve other edges, document page gaps, zoom, scroll and the splitter.
+   */
+  _syncReaderSplitGutters(reader, state) {
+    const ir = reader?._internalReader;
+    const views = [ir?._primaryView, ir?._secondaryView];
+    const desired = new Map();
+    if (views.every(view => view?._iframeWindow)
+        && ['vertical', 'horizontal'].includes(ir.splitType)) {
+      const horizontal = ir.splitType === 'horizontal';
+      const position = view => {
+        const frame = view._iframe || view._iframeWindow.frameElement;
+        const bounds = frame?.getBoundingClientRect();
+        return bounds ? bounds[horizontal ? 'top' : 'left'] : null;
+      };
+      const first = position(views[0]);
+      const second = position(views[1]);
+      const ordered = first !== null && second !== null && first > second
+        ? [views[1], views[0]] : views;
+      ordered.forEach((view, index) => {
+        const doc = view._iframeWindow.document;
+        const viewer = doc.getElementById('viewer') || doc.querySelector('.pdfViewer');
+        if (viewer?.style) {
+          desired.set(viewer, horizontal
+            ? (index ? 'padding-top' : 'padding-bottom')
+            : (index ? 'padding-left' : 'padding-right'));
+        }
+      });
+    }
+    const saved = state._readerSplitGutters || (state._readerSplitGutters = new Map());
+    for (const [viewer, record] of saved) {
+      if (desired.get(viewer) === record.property) continue;
+      this._restoreReaderSplitGutter(viewer, record);
+      saved.delete(viewer);
+    }
+    for (const [viewer, property] of desired) {
+      const style = viewer.style;
+      if (!saved.has(viewer)) {
+        saved.set(viewer, { property, value: style.getPropertyValue(property),
+          priority: style.getPropertyPriority(property) });
+      }
+      if (style.getPropertyValue(property) !== '0px'
+          || style.getPropertyPriority(property) !== 'important') {
+        style.setProperty(property, '0px', 'important');
+      }
+    }
+  },
+
+  _restoreReaderSplitGutter(viewer, record) {
+    try {
+      if (record.value) viewer.style.setProperty(record.property, record.value, record.priority);
+      else viewer.style.removeProperty(record.property);
+    } catch (_) {} // The view may already have been destroyed.
+  },
+
+  _clearReaderSplitGutters(state) {
+    for (const [viewer, record] of state._readerSplitGutters || []) {
+      this._restoreReaderSplitGutter(viewer, record);
+    }
+    state._readerSplitGutters?.clear();
+  },
+
   _toggleReaderSplit(state, reader, orientation) {
     if (!reader) {
       this._showStatus(state, '✗ reader not ready', 1200);
@@ -579,7 +643,7 @@ Object.assign(ZoteroVim, {
 
     const method = orientation === 'vertical' ? 'toggleVerticalSplit' : 'toggleHorizontalSplit';
     const ir = reader._internalReader;
-    const fallbackPrimaryWin = ir?._primaryView?._iframeWindow || state?.activePdfWin || null;
+    const previousSplit = String(ir?.splitType || '');
     let ok = false;
 
     try {
@@ -599,26 +663,59 @@ Object.assign(ZoteroVim, {
       return;
     }
 
-    const syncAndRecoverFocus = () => {
-      this._syncReaderPdfViewListeners(reader, state);
-
-      const irNow = reader?._internalReader;
-      const splitTypeNow = String(irNow?.splitType || '');
-      const primaryNow = irNow?._primaryView?._iframeWindow || fallbackPrimaryWin;
-      const secondaryNow = irNow?._secondaryView?._iframeWindow;
-      const splitActive = !!(primaryNow && secondaryNow && ['vertical', 'horizontal'].includes(splitTypeNow));
-
-      // When split is just closed, focus can remain on a defunct secondary iframe.
-      // Pull focus back to a live reader pane so hjkl continues to work immediately.
-      if (!splitActive && primaryNow) {
-        this._focusReaderPdfWindow(primaryNow, state);
-      }
-    };
-
-    setTimeout(syncAndRecoverFocus, 60);
-    setTimeout(syncAndRecoverFocus, 220);
+    // Opening a split hands input to the new pane, matching the next Vim key's
+    // destination. Wait for native PDF initialization, not an arbitrary delay.
+    // Changing an existing split's orientation preserves its current focus.
+    state._readerSplitFocus = !previousSplit
+      ? { role: 'secondary', orientation, view: null, waiting: false, ready: false }
+      : previousSplit === orientation
+        ? { role: 'primary', orientation: '', view: null, waiting: false, ready: false } : null;
+    const sync = () => this._syncReaderPdfViewListeners(reader, state);
+    sync();
+    setTimeout(sync, 60);
+    setTimeout(sync, 220);
 
     this._showStatus(state, orientation === 'vertical' ? '→ split vertical' : '→ split horizontal', 900);
+  },
+
+  /** Complete a split command once its target PDF is ready; later input cancels it. */
+  _syncReaderSplitFocus(reader, state) {
+    const request = state._readerSplitFocus;
+    if (!request) return;
+    const ir = reader?._internalReader;
+    if (String(ir?.splitType || '') !== request.orientation) {
+      state._readerSplitFocus = null;
+      return;
+    }
+    const cue = state._focusCue;
+    if (cue && (!cue.active || !this._readerFocusCueSelected(cue, reader))) {
+      state._readerSplitFocus = null;
+      return;
+    }
+    const view = request.role === 'secondary' ? ir?._secondaryView : ir?._primaryView;
+    if (!view) return;
+    if (request.view && request.view !== view) {
+      state._readerSplitFocus = null;
+      return;
+    }
+    request.view = view;
+    if (!request.waiting && view.initializedPromise) {
+      request.waiting = true;
+      Promise.resolve(view.initializedPromise).then(() => {
+        if (state._readerSplitFocus !== request) return;
+        request.ready = true;
+        this._syncReaderPdfViewListeners(reader, state);
+      }).catch(e => {
+        if (state._readerSplitFocus === request) state._readerSplitFocus = null;
+        Zotero.debug('[ZoteroVim] split target initialization: ' + e);
+      });
+      return;
+    }
+    if (request.waiting && !request.ready) return;
+    const win = view._iframeWindow;
+    if (!win?.document?.body) return;
+    state._readerSplitFocus = null;
+    this._focusReaderPdfWindow(win, state);
   },
 
   _getActiveContextNoteEditor(win) {
@@ -3501,8 +3598,10 @@ Object.assign(ZoteroVim, {
 
     try {
       if (state) {
+        state._readerSplitFocus = null;
         state.activePdfWin = viewWin;
         if (state.outlineExplorerOpen) this._setReaderOutlineExplorerFocus(state, false);
+        this._setReaderFocusCueOwner?.(state, 'pdf', viewWin);
       }
       viewWin.focus?.();
 
@@ -3531,6 +3630,7 @@ Object.assign(ZoteroVim, {
       const noteEditor = this._getActiveContextNoteEditor(win);
       if (noteEditor?.focus) {
         await noteEditor.focus();
+        this._focusCueContextNote?.(win);
         return true;
       }
 
@@ -3540,6 +3640,7 @@ Object.assign(ZoteroVim, {
       const doc = noteWin.document;
       const target = doc?.querySelector?.('[contenteditable="true"], .ProseMirror, .editor, .editor-core, body') || doc?.body || null;
       target?.focus?.({ preventScroll: true });
+      this._focusCueContextNote?.(win);
       return true;
     } catch (e) {
       Zotero.debug('[ZoteroVim] _focusContextNoteEditor error: ' + e);

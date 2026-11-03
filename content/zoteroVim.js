@@ -644,6 +644,8 @@ var ZoteroVim = {
       _outlineExplorerList: null,
       _outlineExplorerStatus: null,
       _outlinePicker: null,
+      _focusCue: null,
+      _readerSplitFocus: null,
       activePdfWin: pdfWin,
       _pdfViewHandlers: new Map(),
       _pdfViewSyncTimer: null,
@@ -746,6 +748,9 @@ var ZoteroVim = {
     state.cleanup = () => {
       // Cancel any insert session that is still resolving an annotation item.
       state._insertSessionID = (state._insertSessionID || 0) + 1;
+      this._clearReaderFocusCue?.(state);
+      state._readerSplitFocus = null;
+      this._clearReaderSplitGutters?.(state);
       this._stopSmoothHoldScroll(state, pdfWin);
       this._closeReaderOutlinePicker(state, false);
       this._closeReaderOutlineExplorer(state);
@@ -947,6 +952,12 @@ var ZoteroVim = {
 
     this._patchReaderKeyForwarding(reader, state);
     this._patchReaderTextAnnotationFocus(reader, state);
+    try { this._syncReaderSplitGutters?.(reader, state); } catch (e) {
+      Zotero.debug('[ZoteroVim] split gutter sync: ' + e);
+    }
+    try { this._syncReaderFocusCue?.(reader, state); } catch (e) {
+      Zotero.debug('[ZoteroVim] focus cue sync: ' + e);
+    }
     const progressMode = this.getReaderProgressMode();
     if (state._progressPreference !== progressMode) {
       state._progressPreference = progressMode;
@@ -957,6 +968,9 @@ var ZoteroVim = {
     if (progressMode === 'always'
         && !state._statusActive && state.indicatorEl?.style.display === 'none') {
       this._updateIndicator(state);
+    }
+    try { this._syncReaderSplitFocus?.(reader, state); } catch (e) {
+      Zotero.debug('[ZoteroVim] split focus sync: ' + e);
     }
   },
 
@@ -1112,6 +1126,7 @@ var ZoteroVim = {
   },
 
   _clearReaderPdfViewListeners(state) {
+    if (state) state._readerSplitFocus = null;
     if (!state?._pdfViewHandlers) return;
     for (const [viewWin, handlers] of state._pdfViewHandlers.entries()) {
       try { viewWin.removeEventListener('keydown', handlers.keyDown, true); } catch (_) {}
@@ -1282,7 +1297,10 @@ var ZoteroVim = {
       if (!state._statusActive) this._updateIndicator(state);
       return;
     }
-    state.activePdfWin = pdfWin || state.activePdfWin;
+    // Loading/zooming a background split also emits scroll. Progress must
+    // never change which pane will receive the next forwarded Vim key.
+    const active = state.activePdfWin || state.pdfWin;
+    if (pdfWin && active && pdfWin !== active) return;
     clearTimeout(state._progressTimer);
     state._progressVisible = mode === 'transient';
     if (!state._statusActive) this._updateIndicator(state);
@@ -1442,6 +1460,8 @@ var ZoteroVim = {
     // never consume keys or move focus, otherwise typing in Zotero's own
     // editors loses focus.
     if (this._nativeEditableFocused(reader)) return;
+
+    this._onReaderFocusCueEvent?.(state, { kind: 'pdf', win: pdfWin }, event);
 
     if (state._outlinePicker?.pdfWin === pdfWin) {
       this._onReaderOutlinePickerKeyDown(event, state);

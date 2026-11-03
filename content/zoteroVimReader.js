@@ -202,16 +202,16 @@ Object.assign(ZoteroVim, {
       && (!pdfWin || state._outlineExplorerPdfWin === pdfWin));
   },
 
-  /** Update both the command owner and the visible focus cue. */
+  /** Report command ownership to the separate, read-only focus appearance layer. */
   _setReaderOutlineExplorerFocus(state, focused) {
     state._outlineExplorerFocused = focused;
-    const overlay = state._outlineExplorerOverlay;
-    if (overlay) overlay.style.borderRightColor = focused ? '#89b4fa' : '#313244';
     if (state._outlineExplorerHeader) {
-      const zh = this._isZhLocale();
-      state._outlineExplorerHeader.textContent = zh
-        ? '目录 · ' + (focused ? '已聚焦 · Ctrl+l 返回正文' : 'Ctrl+h 聚焦')
-        : 'Outline · ' + (focused ? 'Focused · Ctrl+l for PDF' : 'Ctrl+h to focus');
+      state._outlineExplorerHeader.textContent = this._isZhLocale() ? '目录' : 'Outline';
+    }
+    if (focused) {
+      this._setReaderFocusCueOwner?.(state, 'outline', state._outlineExplorerPdfWin);
+    } else if (state._focusCue?.owner?.kind === 'outline') {
+      this._setReaderFocusCueOwner?.(state, 'pdf', state._outlineExplorerPdfWin);
     }
   },
 
@@ -611,7 +611,8 @@ Object.assign(ZoteroVim, {
     overlay.style.cssText =
       'position:fixed;top:0;left:0;bottom:0;width:320px;z-index:99998;' +
       'background:rgba(24,24,37,0.96);color:#cdd6f4;border-right:1px solid #313244;' +
-      'display:flex;flex-direction:column;box-shadow:12px 0 40px rgba(0,0,0,0.35);font:13px/1.35 monospace;';
+      'outline:none!important;display:flex;flex-direction:column;' +
+      'box-shadow:12px 0 40px rgba(0,0,0,0.35);font:13px/1.35 monospace;';
 
     const header = h('div');
     header.style.cssText = 'padding:12px 14px;border-bottom:1px solid #313244;font-weight:bold;letter-spacing:0.04em;';
@@ -624,7 +625,7 @@ Object.assign(ZoteroVim, {
     status.style.cssText = 'padding:6px 12px;border-top:1px solid #313244;color:#6c7086;font-size:11px;';
     status.textContent =
       'j/k move  ·  Ctrl+d/u fast  ·  gg/G top/bottom  ·  R/M expand/collapse all  ·  ' +
-      '/ search headings  ·  Enter jump';
+      '/ search headings  ·  Ctrl+h/l focus  ·  Enter jump';
 
     overlay.appendChild(header);
     overlay.appendChild(list);
@@ -1171,7 +1172,7 @@ Object.assign(ZoteroVim, {
       this._renderReaderOutlineExplorer(state);
       this._clearReaderOutlineExplorerHintBuffer(state, false);
       this._setReaderOutlineExplorerStatus(state,
-        'Selected ' + exact.item.hint + '  ·  / search headings  ·  Enter jump');
+        'Selected ' + exact.item.hint + '  ·  / search headings  ·  Ctrl+l PDF  ·  Enter jump');
       return;
     }
 
@@ -1184,7 +1185,7 @@ Object.assign(ZoteroVim, {
     state._outlineExplorerHintTimer = null;
     if (resetStatus && state._outlineExplorerStatus) {
       state._outlineExplorerStatus.textContent =
-        'j/k move  ·  l expand  ·  h collapse  ·  / search headings  ·  Enter jump  ·  Esc close';
+        'j/k move  ·  l expand  ·  h collapse  ·  / search headings  ·  Ctrl+l PDF  ·  Esc close';
     }
   },
 
@@ -1209,7 +1210,7 @@ Object.assign(ZoteroVim, {
     if (resetStatus && state._outlineExplorerStatus && !state.outlineExplorerHintBuffer) {
       state._outlineExplorerStatus.textContent =
         'j/k move  ·  Ctrl+d/u fast  ·  gg/G top/bottom  ·  R/M expand/collapse all  ·  ' +
-        '/ search headings  ·  Enter jump';
+        '/ search headings  ·  Ctrl+h/l focus  ·  Enter jump';
     }
   },
 

@@ -56,6 +56,8 @@ Vibe coded with Claude Sonnet 4.5.
   command hints and compact absolute line numbers
 - **Remappable reader and main-window actions** — rebind actions from the
   Preferences panel; note editing commands currently use built-in Vim keys
+- **Shortcut reference** — `Space /` opens a searchable, categorized overview
+  of effective bindings, note commands and popup controls in the centre of the window
 - **Native two-page PDF view** — `<space>s` toggles single/two-page layout;
   `<space>S` switches odd/even page pairing, independently in each split pane
 - **Subtle focus indication** — a neutral inner frame identifies the active
@@ -130,6 +132,8 @@ zotero-vim-plus/
 │   ├── zoteroVimReader.js Reader-side methods (outline, visual/cursor, annotations)
 │   ├── zoteroVimMain.js   Main-window methods (note editor, pickers, notes layout)
 │   ├── zoteroVimFocus.js  Shared focus frame for outline, PDF panes and sidebar notes
+│   ├── zoteroVimHelp.js   Searchable shortcut reference and fixed command families
+│   ├── keymapLabels.js   Shared English/Chinese action descriptions
 │   ├── preferences.xhtml  Preferences panel UI (XUL/HTML hybrid)
 │   └── prefs.js           Preferences panel JS (reads/writes Firefox prefs)
 ├── tools/
@@ -181,6 +185,25 @@ can be changed under Preferences → Spacekeys, where hints can also be disabled
 Other Vim prefixes retain their existing timing.
 If a key does not continue the chord, its normal binding runs immediately;
 `j`/`k` resume smooth scrolling on that first keypress.
+
+**Shortcut reference:** press `Space /` in the library, reader or note Normal
+mode to open the centred reference. It shows all categories initially: Reader,
+Library, Notes and Popups. Search by key, action or mode in English or Chinese.
+The compact list uses two columns within each mode (one in narrow windows),
+combining related commands such as `j/k/H/L`, `h/l`, `gg/G` and `*/#`.
+The groups reflect remaps and unbindings and mark custom bindings; searches
+also match each group's individual commands and full descriptions. Count,
+character and text-object commands are shown as patterns with examples.
+Disabled modes are labelled, and descriptions are shared with Preferences.
+Ordinary typing (including `j`, `k` and IME input) searches; `Ctrl+j/k`, arrows
+and PageUp/PageDown scroll the results. `Ctrl+h/l` cycles the categories while
+preserving the query and resetting the result scroll. When the list has
+focus, `j/k`, `g/G`, Home/End and Space also scroll. Escape, Close or a backdrop
+click dismisses the reference and restores the originating focus/selection.
+The reader's bare `/` still searches document text. The old library `Space /`
+search shortcut is reassigned; `mainFocusSearch` remains available for rebinding.
+On first upgrade, an explicitly saved old `Space /` → `mainFocusSearch` binding
+is removed once; other overrides and explicit unbindings are preserved.
 
 ### Normal mode
 
@@ -601,7 +624,7 @@ whatever has focus:
 | `<space>yy` | Copy the selected item's citekey to the clipboard |
 | `<space>o` | Open the selected item's PDF |
 | `<space>q` | Close the active PDF tab |
-| `<space>/` | Focus Zotero's search bar |
+| `<space>/` | Open the searchable shortcut reference |
 | `<space>wh` | Focus the collection tree (left pane) |
 | `<space>wl` | Focus the detail pane (right pane) |
 | `<space>ww` | Focus the item list (middle pane) |
@@ -1036,6 +1059,7 @@ failures are reported to `zv-startup.log` in the profile directory with
 | `mainFocusLeft` | Focus the collection tree (left pane) |
 | `mainFocusRight` | Focus the detail pane (right pane) |
 | `mainFocusSearch` | Focus Zotero's search bar |
+| `showShortcutHelp` | Open the searchable shortcut reference (`Space /`) |
 | `mainNavDown` | Move selection down (collections tree / item list) |
 | `mainNavUp` | Move selection up (collections tree / item list) |
 | `mainNavFirst` | Jump to the first row |
@@ -1134,6 +1158,20 @@ Components.utils.cloneInto(value, targetWindow)
 Primitive values (numbers, strings, booleans) cross compartments freely.
 Forgetting `cloneInto` produces `"Permission denied to access property"` errors
 that are easy to miss because they are often caught and silently swallowed.
+
+### Shortcut reference
+
+`keymapLabels.js` supplies action descriptions to the runtime and preferences
+pane. `zoteroVimHelp.js` reads `getBindings()` on each open and supplements it
+with `SHORTCUT_REFERENCE` for fixed note commands, marks and transient UI controls.
+Update those descriptions when changing a fixed command. `tools/check-sync.js`
+checks the shared language tables and defaults; `tools/check-shortcut-help.js`
+exercises discovery, routing, migration and lifecycle.
+The modal lives in the originating chrome window and belongs to its reader or
+main-window state. Its key capture takes priority over reader and note handlers;
+the native text-annotation-focus guard also suppresses Zotero's early reader
+shortcuts. Closing invalidates listeners and delayed focus; tab changes or
+destroyed views close without restoring stale focus. Managed note DOM is untouched.
 
 ### Focus appearance
 

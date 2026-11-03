@@ -88,6 +88,7 @@ var ZoteroVim = {
     'normal:ctrl+l':  'focusReaderSplitRight',
     'normal:escape':  'clearSearch',
     // Normal mode — space-chord bindings (delegate to main window)
+    'normal: /':   'showShortcutHelp',
     'normal: e':   'toggleReaderSidebarOutline',
     'normal: -':   'toggleReaderSplitHorizontal',
     'normal: |':   'toggleReaderSplitVertical',
@@ -174,7 +175,7 @@ var ZoteroVim = {
     'main: yy':   'mainYankCitekey',      // <space>yy  — copy citekey of selected item
     'main: o':    'mainOpenPDF',          // <space>o   — open selected item's PDF
     'main: q':    'mainClosePDF',         // <space>q   — close active PDF tab
-    'main: /':    'mainFocusSearch',      // <space>/   — focus Zotero search bar
+    'main: /':    'showShortcutHelp',     // <space>/   — all plugin shortcuts
     'main: wh':   'mainFocusLeft',        // <space>wh  — focus collection tree
     'main: wl':   'mainFocusRight',       // <space>wl  — focus detail pane
     'main: ww':   'mainFocusItems',       // <space>ww  — focus items list
@@ -236,6 +237,7 @@ var ZoteroVim = {
     this.id = id;
     this.version = version;
     this.rootURI = rootURI;
+    this._migrateShortcutHelpBinding?.();
     this._registerPrefsPane();
     this._registerReaderListeners();
     Zotero.debug('[ZoteroVim] Initialized v' + version + ' on Zotero ' + (Zotero.version || '?'));
@@ -295,7 +297,8 @@ var ZoteroVim = {
       id:       'zotero-vim-plus-prefs',
       pluginID: this.id,
       src:      this.rootURI + 'content/preferences.xhtml',
-      scripts:  [this.rootURI + 'content/i18n.js', this.rootURI + 'content/prefs.js'],
+      scripts:  [this.rootURI + 'content/keymapLabels.js',
+        this.rootURI + 'content/i18n.js', this.rootURI + 'content/prefs.js'],
       label:    'Zotero Vim Plus',
       image:    this.rootURI + 'icons/icon-64x64.png',
     });
@@ -752,6 +755,7 @@ var ZoteroVim = {
     }
 
     state.cleanup = () => {
+      this._closeShortcutHelp?.(state, false);
       this._cancelSpacekeys(state);
       // Cancel any insert session that is still resolving an annotation item.
       state._insertSessionID = (state._insertSessionID || 0) + 1;
@@ -847,6 +851,8 @@ var ZoteroVim = {
         Zotero.debug('[ZoteroVim] _forwardReaderKey: no state for ' + reader._instanceID);
         return;
       }
+      const help = this._shortcutHelpForWindow?.(win);
+      if (help) { this._onShortcutHelpKeyDown(e, help); return; }
       // A Zotero-native editor has focus — leave the keystroke alone; do not
       // steal focus to the PDF iframe.
       if (this._nativeEditableFocused(reader)) return;
@@ -870,6 +876,7 @@ var ZoteroVim = {
 
   _syncReaderPdfViewListeners(reader, state) {
     if (!state?._pdfViewHandlers) return;
+    this._syncShortcutHelp?.(state);
     this._syncSpacekeysContext(state);
 
     const primaryWin = reader?._internalReader?._primaryView?._iframeWindow;
@@ -1078,6 +1085,8 @@ var ZoteroVim = {
         const orig = view._textAnnotationFocused;
         const wrapperFn = function () {
           try {
+            if (zv._shortcutHelpForWindow?.(reader._window
+                || reader._iframe?.ownerDocument?.defaultView)) return true;
             if (state._translationPopup?.pdfWin === view._iframeWindow) return true;
             if (state._outlinePicker?.pdfWin === view._iframeWindow
                 || zv._readerOutlineExplorerFocused(state, view._iframeWindow)) return true;
@@ -1162,6 +1171,7 @@ var ZoteroVim = {
     mainOpenPDF: ['Open attachment', '打开附件'],
     mainClosePDF: ['Close PDF tab', '关闭 PDF 标签页'],
     mainFocusSearch: ['Focus search', '聚焦搜索栏'],
+    showShortcutHelp: ['All plugin shortcuts', '快捷键总览'],
     mainFocusTree: ['Focus collections', '聚焦分类树'],
     mainFocusLeft: ['Focus collections', '聚焦分类树'],
     mainFocusRight: ['Focus details', '聚焦详情栏'],
@@ -1211,7 +1221,8 @@ var ZoteroVim = {
       const action = (exact || entries[0]).action;
       const labels = this.SPACEKEYS_LABELS[action];
       let label = labels ? labels[zh ? 1 : 0]
-        : String(action).replace(/([a-z])([A-Z])/g, '$1 $2');
+        : this._shortcutActionLabel?.(action, zh)
+          || String(action).replace(/([a-z])([A-Z])/g, '$1 $2');
       if (grouped && !exact) {
         label = buffer === ' ' && names[key] ? names[key]
           : entries.length === 1 ? label : (zh ? '更多组合' : 'More chords');
@@ -1690,6 +1701,9 @@ var ZoteroVim = {
   },
 
   _onKeyDown(event, reader, state, pdfWin) {
+    const help = this._shortcutHelpForWindow?.(reader?._window
+      || reader?._iframe?.ownerDocument?.defaultView);
+    if (help) { this._onShortcutHelpKeyDown(event, help); return; }
     if (state._spacekeys && state._spacekeys.sourceWin !== pdfWin) {
       this._cancelSpacekeys(state);
     }
@@ -1714,8 +1728,15 @@ var ZoteroVim = {
     }
 
     if (state.outlineExplorerOpen && this._readerOutlineExplorerFocused(state, pdfWin)) {
-      if (this._onReaderOutlineExplorerKeyDown(event, reader, state, pdfWin)) {
-        return;
+      const leader = state.keyBuffer?.startsWith(' ');
+      const candidate = state.keyBuffer + this._keyString(event);
+      const continuation = leader && Object.keys(this.getBindings()).some(binding =>
+        this._bindingMatchesPrefix(binding, state.mode + ':', candidate));
+      // Actual leader chords outrank tree-local keys; a canceled prefix leaves
+      // j/k and bare / with the outline instead of moving the PDF underneath it.
+      if (!continuation) {
+        if (leader) this._cancelSpacekeys(state);
+        if (this._onReaderOutlineExplorerKeyDown(event, reader, state, pdfWin)) return;
       }
     }
 
@@ -2111,6 +2132,8 @@ var ZoteroVim = {
    */
   _readerConsumesKey(state, keyStr, pdfWin = null) {
     if (!keyStr) return false;
+    if (this._shortcutHelpForWindow?.(state.reader?._window
+        || state.reader?._iframe?.ownerDocument?.defaultView)) return true;
     if (keyStr === 'escape' && state.keyBuffer?.startsWith(' ')) return true;
     if (state._outlinePicker && (!pdfWin || state._outlinePicker.pdfWin === pdfWin)) return true;
     if (state.outlineExplorerOpen && this._readerOutlineExplorerFocused(state, pdfWin)) return true;
@@ -2170,6 +2193,12 @@ var ZoteroVim = {
   _executeAction(action, reader, state, pdfWin, count = 0) {
     try {
       Zotero.debug('[ZoteroVim] Action: ' + action + ' (mode:' + state.mode + ', count:' + count + ')');
+
+      if (action === 'showShortcutHelp') {
+        this._openShortcutHelp(state,
+          reader._window || reader._iframe?.ownerDocument?.defaultView, pdfWin);
+        return;
+      }
 
       if (this._handleReaderSidebarAction(state, reader, pdfWin, action)) {
         return;

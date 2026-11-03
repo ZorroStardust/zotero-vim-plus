@@ -39,10 +39,12 @@ async function startup({ id, version, rootURI }) {
   log('startup called at ' + T0 + ' (app process start +' + (T0 - APP_START_TS) + 'ms)');
   zvLogFile('startup called (app process +' + (T0 - APP_START_TS) + 'ms)');
 
+  Services.scriptloader.loadSubScript(rootURI + 'content/keymapLabels.js');
   Services.scriptloader.loadSubScript(rootURI + 'content/zoteroVim.js');
   Services.scriptloader.loadSubScript(rootURI + 'content/zoteroVimReader.js');
   Services.scriptloader.loadSubScript(rootURI + 'content/zoteroVimMain.js');
   Services.scriptloader.loadSubScript(rootURI + 'content/zoteroVimFocus.js');
+  Services.scriptloader.loadSubScript(rootURI + 'content/zoteroVimHelp.js');
   // The opt-in diagnostic package observes note input without changing it.
   // Stable builds never load its observers or diagnostic UI.
   if (version === '1.9.1pre3') {

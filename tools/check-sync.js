@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /*
  * Consistency check between content/zoteroVim.js (DEFAULT_BINDINGS) and
- * content/prefs.js (ZV_DEFAULT_BINDINGS, ZV_ACTION_LABELS).
+ * content/prefs.js (ZV_DEFAULT_BINDINGS) and shared keymapLabels.js.
  *
  * These tables are maintained by hand in two files, so drift silently breaks
  * the Preferences panel: "Reset to defaults" and the action dropdown would
@@ -92,23 +92,23 @@ const prefsBindings = extractTable(
 );
 
 const actionLabels = extractTable(
-  'content/prefs.js',
-  /ZV_ACTION_LABELS\s*=\s*\{/,
-  /^\s*\};\s*$/,
-  /^\s*(\w+)\s*:\s*"([^"]+)"/gm
+  'content/keymapLabels.js',
+  /^  "en": \{/,
+  /^  \},?\s*$/,
+  /^\s*"(\w+)"\s*:\s*"([^"]+)"/gm
 );
 
 const zhActionLabels = extractTable(
-  'content/i18n.js',
-  /ZV_I18N_ACTION_LABELS\s*=\s*\{/,
-  /^\s*\};\s*$/,
-  /^\s*(\w+)\s*:\s*"([^"]+)"/gm
+  'content/keymapLabels.js',
+  /^  "zh-CN": \{/,
+  /^  \},?\s*$/,
+  /^\s*"(\w+)"\s*:\s*"([^"]+)"/gm
 );
 
 console.log('[sync] zoteroVim.js bindings: ' + Object.keys(zoteroVimBindings).length);
 console.log('[sync] prefs.js bindings:     ' + Object.keys(prefsBindings).length);
-console.log('[sync] prefs.js action labels:' + Object.keys(actionLabels).length);
-console.log('[sync] zh-CN action labels:   ' + Object.keys(zhActionLabels).length);
+console.log('[sync] shared English labels:' + Object.keys(actionLabels).length);
+console.log('[sync] shared zh-CN labels:  ' + Object.keys(zhActionLabels).length);
 
 reportDuplicateKeys(
   'content/zoteroVim.js',
@@ -125,11 +125,18 @@ reportDuplicateKeys(
   'prefs.js ZV_DEFAULT_BINDINGS'
 );
 reportDuplicateKeys(
-  'content/prefs.js',
-  /ZV_ACTION_LABELS\s*=\s*\{/,
-  /^\s*\};\s*$/,
-  /^\s*(\w+)\s*:\s*"([^"]+)"/gm,
-  'prefs.js ZV_ACTION_LABELS'
+  'content/keymapLabels.js',
+  /^  "en": \{/,
+  /^  \},?\s*$/,
+  /^\s*"(\w+)"\s*:\s*"([^"]+)"/gm,
+  'English action labels'
+);
+reportDuplicateKeys(
+  'content/keymapLabels.js',
+  /^  "zh-CN": \{/,
+  /^  \},?\s*$/,
+  /^\s*"(\w+)"\s*:\s*"([^"]+)"/gm,
+  'zh-CN action labels'
 );
 
 // 1. The two default-binding tables must be identical.
@@ -152,7 +159,7 @@ for (const key of Object.keys(zoteroVimBindings)) {
 //    Preferences action dropdown cannot represent it.
 for (const action of new Set(Object.values(zoteroVimBindings))) {
   if (!(action in actionLabels)) {
-    report('action missing from prefs.js ZV_ACTION_LABELS: ' + action);
+    report('action missing from keymapLabels.js English descriptions: ' + action);
   }
 }
 
@@ -167,10 +174,10 @@ for (const key of Object.keys(zoteroVimBindings)) {
 
 // 4. English and zh-CN action dropdowns must contain the same actions.
 for (const action of diff(actionLabels, zhActionLabels)) {
-  report('action missing from zh-CN ZV_I18N_ACTION_LABELS: ' + action);
+    report('action missing from keymapLabels.js zh-CN descriptions: ' + action);
 }
 for (const action of diff(zhActionLabels, actionLabels)) {
-  report('action present only in zh-CN ZV_I18N_ACTION_LABELS: ' + action);
+    report('action present only in keymapLabels.js zh-CN descriptions: ' + action);
 }
 
 if (failed) {

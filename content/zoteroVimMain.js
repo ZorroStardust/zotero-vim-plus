@@ -96,6 +96,7 @@ Object.assign(ZoteroVim, {
     this._initNoteDiagnostics?.(win, mainWinState);
 
     const readerScanHandler = () => {
+      this._syncShortcutHelp?.(mainWinState);
       this._syncSpacekeysContext(mainWinState);
       this._rescanSelectedReader(win);
       this._syncMainContextNoteListener(win, mainWinState);
@@ -118,11 +119,14 @@ Object.assign(ZoteroVim, {
     // shortcuts such as Ctrl+j).  _onPickerKeyDown guards re-entrancy with
     // the _zvPickerHandled flag.
     const pickerWindowKeyHandler = (e) => {
+      const help = this._shortcutHelpForWindow?.(win);
+      if (help) { this._onShortcutHelpKeyDown(e, help); return; }
       if (mainWinState.pickerOpen) this._onPickerKeyDown(e, win, mainWinState);
     };
     win.addEventListener('keydown', pickerWindowKeyHandler, true);
 
     mainWinState.cleanup = () => {
+      this._closeShortcutHelp?.(mainWinState, false);
       this._cancelSpacekeys(mainWinState);
       win.clearInterval(readerScanTimer);
       this._clearNoteDiagnostics?.(mainWinState);
@@ -141,6 +145,8 @@ Object.assign(ZoteroVim, {
   },
 
   _onMainKeyDown(e, win, winState) {
+    const help = this._shortcutHelpForWindow?.(win);
+    if (help) { this._onShortcutHelpKeyDown(e, help); return; }
     if (e._zvNoteEditorCommand) return;
     // When picker is open, delegate to _onPickerKeyDown.  Nav keys get full
     // preventDefault+stopPropagation; regular keys only get stopPropagation
@@ -398,6 +404,10 @@ Object.assign(ZoteroVim, {
 
   _executeMainAction(action, win, winState, count) {
     this._cancelWindowSpacekeys(win);
+    if (action === 'showShortcutHelp') {
+      this._openShortcutHelp(winState, win);
+      return;
+    }
     if (action === 'mainPrevTab' || action === 'mainNextTab') {
       const now = Date.now();
       if (winState._lastDedupedAction === action && now - (winState._lastDedupedActionTS || 0) < 220) {
@@ -1017,6 +1027,8 @@ Object.assign(ZoteroVim, {
 
   _onMainContextNoteKeyDown(event, win, winState) {
     if (!winState) return;
+    const help = this._shortcutHelpForWindow?.(win);
+    if (help) { this._onShortcutHelpKeyDown(event, help); return; }
     if (!this.isNoteEditorVimEnabled()) return;
     if (event._zvNoteEditorCommand) return;
     // The same handler is installed on both the note window and its document

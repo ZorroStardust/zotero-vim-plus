@@ -501,7 +501,7 @@ lector), sobre lo que tenga el foco:
 | `<space>yy` | Copiar la citekey del elemento seleccionado al portapapeles |
 | `<space>o` | Abrir el PDF del elemento seleccionado |
 | `<space>q` | Cerrar la pestaña de PDF activa |
-| `<space>/` | Enfocar la barra de búsqueda de Zotero |
+| `<space>/` | Abrir la referencia de atajos con búsqueda y categorías |
 | `<space>wh` | Enfocar el árbol de colecciones (panel izquierdo) |
 | `<space>wl` | Enfocar el panel de detalles (panel derecho) |
 | `<space>ww` | Enfocar la lista de elementos (panel central) |
@@ -794,6 +794,7 @@ Abrir **Editar → Preferencias** (macOS: **Zotero → Ajustes**) y navegar al p
 | `mainFocusLeft` | Enfocar el árbol de colecciones (panel izquierdo) |
 | `mainFocusRight` | Enfocar el panel de detalles (panel derecho) |
 | `mainFocusSearch` | Enfocar la barra de búsqueda de Zotero |
+| `showShortcutHelp` | Abrir la referencia de atajos (`Space /`) |
 | `mainNavDown` | Mover la selección hacia abajo (árbol de colecciones / lista de elementos) |
 | `mainNavUp` | Mover la selección hacia arriba (árbol de colecciones / lista de elementos) |
 | `mainNavFirst` | Saltar a la primera fila |

@@ -60,7 +60,8 @@ the README / CHANGELOG once implemented, and mark them done below.
 ## Implementation notes
 
 - Every new action must be added to `content/zoteroVim.js` `DEFAULT_BINDINGS`
-  **and** `content/prefs.js` (`ZV_DEFAULT_BINDINGS` + `ZV_ACTION_LABELS`) —
+  **and** `content/prefs.js` `ZV_DEFAULT_BINDINGS`, with English/Chinese labels
+  in `content/keymapLabels.js` —
   `tools/check-sync.js` (run by `build.sh`) enforces this.
 - Reader actions that Zotero's `KeyboardManager` also handles (Read Aloud
   `l`/`r`, tools `h`/`s`, find `Ctrl+F`) are intercepted by

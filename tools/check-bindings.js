@@ -62,7 +62,8 @@ const context = vm.createContext({
   Components: { classes: { '@mozilla.org/preferences-service;1': { getService: () => prefs } },
     interfaces: { nsIPrefBranch: {} } },
 });
-for (const name of ['zoteroVim.js', 'zoteroVimReader.js', 'i18n.js', 'prefs.js']) {
+for (const name of ['keymapLabels.js', 'zoteroVim.js', 'zoteroVimReader.js',
+  'i18n.js', 'prefs.js']) {
   const source = fs.readFileSync(path.join(root, 'content', name), 'utf8');
   vm.runInContext(name === 'prefs.js' ? source.replace(/\n\/\/ Boot[\s\S]*$/, '') : source, context);
 }

@@ -379,6 +379,12 @@ var ZoteroVim = {
     return ['off', 'transient', 'always'].includes(mode) ? mode : 'transient';
   },
 
+  /** Leader chords allow time to read Spacekeys; other Vim prefixes stay unchanged. */
+  getSpacekeysTimeout() {
+    const value = Number(this.getPref('spacekeys.timeout', 10000));
+    return Number.isFinite(value) ? Math.max(1000, Math.min(30000, value)) : 10000;
+  },
+
   isNoteEditorVimEnabled() {
     return this.getPref('noteEditor.enabled', true);
   },
@@ -746,6 +752,7 @@ var ZoteroVim = {
     }
 
     state.cleanup = () => {
+      this._cancelSpacekeys(state);
       // Cancel any insert session that is still resolving an annotation item.
       state._insertSessionID = (state._insertSessionID || 0) + 1;
       this._clearReaderFocusCue?.(state);
@@ -863,6 +870,7 @@ var ZoteroVim = {
 
   _syncReaderPdfViewListeners(reader, state) {
     if (!state?._pdfViewHandlers) return;
+    this._syncSpacekeysContext(state);
 
     const primaryWin = reader?._internalReader?._primaryView?._iframeWindow;
     const secondaryWin = reader?._internalReader?._secondaryView?._iframeWindow;
@@ -1139,6 +1147,234 @@ var ZoteroVim = {
     state._pdfViewHandlers.clear();
   },
 
+  // ── Spacekeys ─────────────────────────────────────────────────────────────
+  // Inspired by upstream Zotero Vim's Spacekeys (dc1ac84, Alex Fink).
+  // This version groups the effective bindings and shares the reader's outer
+  // document with the mode indicator; note content is never modified.
+
+  SPACEKEYS_LABELS: {
+    mainFuzzyAll: ['All library items', '全库条目'],
+    mainFuzzyCollection: ['Current collection', '当前分类'],
+    readerOutlinePick: ['PDF headings', 'PDF 目录标题'],
+    mainTabPick: ['Choose a tab', '选择标签页'],
+    mainNotesLayout: ['Notes layout', '笔记布局'],
+    mainYankCitekey: ['Copy citation key', '复制引用键'],
+    mainOpenPDF: ['Open attachment', '打开附件'],
+    mainClosePDF: ['Close PDF tab', '关闭 PDF 标签页'],
+    mainFocusSearch: ['Focus search', '聚焦搜索栏'],
+    mainFocusTree: ['Focus collections', '聚焦分类树'],
+    mainFocusLeft: ['Focus collections', '聚焦分类树'],
+    mainFocusRight: ['Focus details', '聚焦详情栏'],
+    mainFocusItems: ['Focus item list', '聚焦条目列表'],
+    mainPrevTab: ['Previous tab', '上一个标签页'],
+    mainNextTab: ['Next tab', '下一个标签页'],
+    toggleReaderSidebarOutline: ['Outline explorer', '目录浏览'],
+    toggleReaderSplitHorizontal: ['Horizontal split', '上下分栏'],
+    toggleReaderSplitVertical: ['Vertical split', '左右分栏'],
+    toggleReaderSpread: ['Single / two-page view', '单页／双页视图'],
+    toggleReaderSpreadParity: ['Odd / even page pairing', '奇偶页配对'],
+    toggleMarksExplorer: ['Marks explorer', '位置标记'],
+    focusReaderSplitLeft: ['Focus left pane', '聚焦左侧分栏'],
+    focusReaderSplitRight: ['Focus right pane', '聚焦右侧分栏'],
+    focusReaderSplitUp: ['Focus upper pane', '聚焦上方分栏'],
+    focusReaderSplitDown: ['Focus lower pane', '聚焦下方分栏'],
+    scrollDown: ['Scroll down', '向下滚动'],
+    scrollUp: ['Scroll up', '向上滚动'],
+    nextPage: ['Next page', '下一页'],
+    prevPage: ['Previous page', '上一页'],
+    openSearch: ['Search document', '搜索文档'],
+    translateSelection: ['Translate selection', '翻译选区'],
+  },
+
+  /** Group matching bindings by the next key, keeping case and modifiers intact. */
+  _spacekeysRows(modePrefix, buffer) {
+    const zh = /^zh/i.test(this.getPref('language', '') || Zotero.locale || '');
+    const prefix = modePrefix + buffer;
+    const groups = new Map();
+    const named = 'arrow(?:left|right|up|down)|page(?:up|down)|backspace|delete|escape|enter|'
+      + 'return|tab|home|end|insert|f(?:2[0-4]|1\\d|[1-9])(?!\\d)';
+    const nextKey = new RegExp('^(?:(?:ctrl|alt)\\+)*(?:' + named + '|.)', 'u');
+    for (const [binding, action] of Object.entries(this.getBindings())) {
+      if (!binding.startsWith(prefix)) continue;
+      const rest = binding.slice(prefix.length);
+      if (!rest) continue;
+      const token = rest.match(nextKey);
+      const key = token[0];
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push({ action, rest });
+    }
+    const names = zh ? { f: '搜索', b: '标签页', w: '窗口', y: '复制' }
+      : { f: 'Search', b: 'Tabs', w: 'Windows', y: 'Copy' };
+    return Array.from(groups, ([key, entries]) => {
+      const exact = entries.find(entry => entry.rest === key);
+      const grouped = entries.some(entry => entry.rest !== key);
+      const action = (exact || entries[0]).action;
+      const labels = this.SPACEKEYS_LABELS[action];
+      let label = labels ? labels[zh ? 1 : 0]
+        : String(action).replace(/([a-z])([A-Z])/g, '$1 $2');
+      if (grouped && !exact) {
+        label = buffer === ' ' && names[key] ? names[key]
+          : entries.length === 1 ? label : (zh ? '更多组合' : 'More chords');
+      }
+      return { key, label, grouped };
+    }).sort((a, b) => a.key < b.key ? -1 : a.key > b.key ? 1 : 0);
+  },
+
+  /** Remove the passive popup, its delayed render and its focus observers. */
+  _hideSpacekeys(state) {
+    const ui = state?._spacekeys;
+    if (!ui) return;
+    state._spacekeys = null;
+    clearTimeout(ui.timer);
+    for (const [target, type, handler] of ui.listeners) {
+      try { target.removeEventListener(type, handler, true); } catch (_) {}
+    }
+    try { ui.el?.remove(); } catch (_) {}
+  },
+
+  /** Losing the originating input context cancels its chord as well as its UI. */
+  _cancelSpacekeys(state) {
+    const ui = state?._spacekeys;
+    if (!ui && !state?.keyBuffer?.startsWith(' ')) return;
+    this._hideSpacekeys(state);
+    if (ui?.source === 'note') this._clearMainContextNoteKeyState(state);
+    else {
+      clearTimeout(state.keyTimeout);
+      state.keyTimeout = null;
+      state.keyBuffer = '';
+      state.countBuffer = '';
+      this._updateIndicator(state);
+    }
+  },
+
+  _cancelWindowSpacekeys(win, except = null) {
+    for (const state of [...this._readerState.values(), ...this._mainWindowState.values()]) {
+      if (state !== except && state._spacekeys?.win === win) this._cancelSpacekeys(state);
+    }
+  },
+
+  /** Called by existing reader/window scans to invalidate tabs or replaced views. */
+  _syncSpacekeysContext(state) {
+    const ui = state?._spacekeys;
+    if (!ui) return;
+    const views = state.reader?._internalReader;
+    if (!this.getPref('spacekeys.enabled', true) || ui.sourceWin?.closed
+        || ui.tabID !== ui.win?.Zotero_Tabs?.selectedID
+        || (ui.source === 'note' && state._contextNoteEditorWin !== ui.sourceWin)
+        || (views && ![views._primaryView?._iframeWindow,
+          views._secondaryView?._iframeWindow].includes(ui.sourceWin))) {
+      this._cancelSpacekeys(state);
+    }
+  },
+
+  /** Update from either the generic key buffer or the note editor's leader buffer. */
+  _updateSpacekeys(state, modePrefix, buffer = state.keyBuffer, source = 'keys') {
+    if (!buffer?.startsWith(' ') || !['normal:', 'main:'].includes(modePrefix)
+        || !this.getPref('spacekeys.enabled', true)) {
+      this._hideSpacekeys(state);
+      return;
+    }
+    const rows = this._spacekeysRows(modePrefix, buffer);
+    if (!rows.length) { this._hideSpacekeys(state); return; }
+    try {
+      const sourceWin = source === 'note' ? state._contextNoteEditorWin
+        : state.activePdfWin || state.pdfWin || state.win;
+      const doc = state.reader?._iframeWindow?.document || state.win?.document;
+      if (!doc || !sourceWin) return;
+      const win = state.reader?._window || state.reader?._iframe?.ownerDocument?.defaultView
+        || state.win || doc.defaultView;
+      let ui = state._spacekeys;
+      if (ui && (ui.sourceWin !== sourceWin || ui.doc !== doc || ui.source !== source)) {
+        this._hideSpacekeys(state);
+        ui = null;
+      }
+      if (!ui) {
+        // A reader and a sidebar note have separate states but share a window.
+        this._cancelWindowSpacekeys(win, state);
+        ui = { doc, win, sourceWin, source, buffer, rows, el: null, timer: null,
+          tabID: win?.Zotero_Tabs?.selectedID, listeners: [] };
+        state._spacekeys = ui;
+        const listen = (target, type, handler) => {
+          if (!target?.addEventListener) return;
+          target.addEventListener(type, handler, true);
+          ui.listeners.push([target, type, handler]);
+        };
+        const cancel = () => this._cancelSpacekeys(state);
+        for (const targetDoc of new Set([doc, sourceWin.document, win?.document])) {
+          const active = targetDoc?.activeElement;
+          listen(targetDoc, 'pointerdown', cancel);
+          listen(targetDoc, 'focusin', event => {
+            if (event.target !== active
+                && !(active?.isContentEditable && active.contains?.(event.target))) cancel();
+          });
+        }
+        listen(sourceWin, 'blur', event => {
+          if (event.target === sourceWin) cancel();
+        });
+        listen(win, 'deactivate', cancel);
+        const delay = Number(this.getPref('spacekeys.delay', 200));
+        ui.timer = setTimeout(() => {
+          if (state._spacekeys !== ui) return;
+          ui.timer = null;
+          this._syncSpacekeysContext(state);
+          if (state._spacekeys === ui) this._renderSpacekeys(state, ui);
+        }, Number.isFinite(delay) ? Math.max(0, Math.min(1000, delay)) : 200);
+      }
+      ui.buffer = buffer;
+      ui.rows = rows;
+      if (ui.el) this._renderSpacekeys(state, ui);
+    } catch (e) {
+      this._hideSpacekeys(state);
+      Zotero.debug('[ZoteroVim] Spacekeys: ' + e);
+    }
+  },
+
+  /** Render outside editor-managed content without taking focus or intercepting keys. */
+  _renderSpacekeys(state, ui) {
+    try {
+      const h = tag => ui.doc.createElementNS('http://www.w3.org/1999/xhtml', tag);
+      if (!ui.el) {
+        ui.el = h('div');
+        ui.el.id = 'zv-spacekeys';
+        ui.el.setAttribute('role', 'status');
+        ui.el.style.cssText =
+          'position:fixed;right:14px;bottom:42px;z-index:99998;box-sizing:border-box;'
+          + 'max-width:calc(100vw - 28px);width:max-content;max-height:calc(100vh - 64px);'
+          + 'overflow:hidden;padding:10px 14px;border:1px solid #45475a;border-radius:8px;'
+          + 'background:rgba(30,30,46,.97);color:#cdd6f4;box-shadow:0 8px 28px #0005;'
+          + 'font:12px/1.6 sans-serif;pointer-events:none;user-select:none;';
+        (ui.doc.body || ui.doc.documentElement).appendChild(ui.el);
+      }
+      while (ui.el.firstChild) ui.el.removeChild(ui.el.firstChild);
+      const header = h('div');
+      header.style.cssText = 'font:bold 12px/1.5 monospace;color:#89b4fa;margin-bottom:6px;';
+      header.textContent = 'Spacekeys  ' + ui.buffer.replace(/ /g, '␣');
+      ui.el.appendChild(header);
+      const grid = h('div');
+      grid.style.cssText = 'display:grid;grid-template-columns:max-content minmax(0,1fr);'
+        + 'gap:2px 18px;max-width:360px;';
+      for (const row of ui.rows) {
+        const key = h('kbd');
+        key.style.cssText = 'font:bold 12px/1.6 monospace;color:#f9e2af;';
+        key.textContent = row.key === ' ' ? 'Space' : row.key;
+        const label = h('span');
+        label.style.cssText = 'overflow-wrap:anywhere;';
+        label.textContent = row.label + (row.grouped ? '  + ' : '');
+        grid.appendChild(key);
+        grid.appendChild(label);
+      }
+      ui.el.appendChild(grid);
+      const footer = h('div');
+      footer.style.cssText = 'color:#a6adc8;font-size:11px;margin-top:6px;';
+      footer.textContent = /^zh/i.test(this.getPref('language', '') || Zotero.locale || '')
+        ? 'Esc 取消 · 继续输入组合键' : 'Esc cancel · Keep typing a chord';
+      ui.el.appendChild(footer);
+    } catch (e) {
+      this._hideSpacekeys(state);
+      Zotero.debug('[ZoteroVim] render Spacekeys: ' + e);
+    }
+  },
+
   // ── Mode indicator ────────────────────────────────────────────────────────
 
   _createModeIndicator(doc) {
@@ -1205,6 +1441,7 @@ var ZoteroVim = {
   },
 
   _setMode(state, mode) {
+    this._hideSpacekeys(state);
     if (state._outlinePicker && mode !== state.mode) {
       this._closeReaderOutlinePicker(state, false);
     }
@@ -1453,6 +1690,9 @@ var ZoteroVim = {
   },
 
   _onKeyDown(event, reader, state, pdfWin) {
+    if (state._spacekeys && state._spacekeys.sourceWin !== pdfWin) {
+      this._cancelSpacekeys(state);
+    }
     state.activePdfWin = pdfWin || state.activePdfWin;
 
     // While a Zotero-native editor (annotation popup / sidebar comment /
@@ -1581,6 +1821,13 @@ var ZoteroVim = {
     const keyStr = this._keyString(event);
     if (!keyStr) return;
 
+    if (keyStr === 'escape' && state.keyBuffer?.startsWith(' ')) {
+      this._cancelSpacekeys(state);
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      return;
+    }
+
     // Cursor f/F/t/T consumes the next literal character rather than looking
     // it up as another binding. Escape cancels the pending find in place.
     if (state.mode === 'cursor' && state.cursorFindPending) {
@@ -1707,6 +1954,18 @@ var ZoteroVim = {
       state.countBuffer = '';
       clearTimeout(state.keyTimeout);
       state.keyTimeout = null;
+      this._hideSpacekeys(state);
+      // Retry hold scrolling after dropping an unmatched prefix. The first
+      // j/k must start the same animation as a bare key, without a one-shot
+      // scroll followed by a wait for the operating system's key repeat.
+      const fallbackHold = this._smoothHoldSpecForEvent(event, state);
+      if (fallbackHold) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        this._startSmoothHoldScroll(state, pdfWin, fallbackHold);
+        this._maybePdfLoadingStatus(state, pdfWin);
+        return;
+      }
       const sp = Object.keys(bindings).filter(k => this._bindingMatchesPrefix(k, modePrefix, keyStr));
       const se = bindings[modePrefix + keyStr];
       if (sp.length === 0 && !se) return;
@@ -1790,40 +2049,47 @@ var ZoteroVim = {
     clearTimeout(state.keyTimeout);
     state.keyTimeout = null;
     const longerPossible = possible.filter(k => k.length > modePrefix.length + buffer.length);
+    const leader = buffer.startsWith(' ');
 
     if (exact && longerPossible.length === 0) {
       state.keyBuffer = '';
       const count = state.countBuffer ? parseInt(state.countBuffer, 10) : 0;
       state.countBuffer = '';
       this._updateIndicator(state);   // clear buffer display before action
+      this._hideSpacekeys(state);
       state.executeAction(bindings[modePrefix + buffer], count);
       return;
     }
     if (exact && longerPossible.length > 0) {
       state.keyBuffer = buffer;
       this._updateIndicator(state);
+      this._updateSpacekeys(state, modePrefix);
       state.keyTimeout = setTimeout(() => {
         state.keyBuffer = '';
         const count = state.countBuffer ? parseInt(state.countBuffer, 10) : 0;
         state.countBuffer = '';
         this._updateIndicator(state);
+        this._hideSpacekeys(state);
         state.executeAction(exact, count);
-      }, 800);
+      }, leader ? this.getSpacekeysTimeout() : 800);
       return;
     }
     if (!exact && possible.length > 0) {
       state.keyBuffer = buffer;
       this._updateIndicator(state);   // show pending buffer (e.g. "z" waiting for next key)
+      this._updateSpacekeys(state, modePrefix);
       state.keyTimeout = setTimeout(() => {
         state.keyBuffer = '';
         state.countBuffer = '';
         this._updateIndicator(state);
-      }, 1200);
+        this._hideSpacekeys(state);
+      }, leader ? this.getSpacekeysTimeout() : 1200);
       return;
     }
     state.keyBuffer = '';
     state.countBuffer = '';
     this._updateIndicator(state);
+    this._hideSpacekeys(state);
   },
 
   _keyString(event) {
@@ -1845,6 +2111,7 @@ var ZoteroVim = {
    */
   _readerConsumesKey(state, keyStr, pdfWin = null) {
     if (!keyStr) return false;
+    if (keyStr === 'escape' && state.keyBuffer?.startsWith(' ')) return true;
     if (state._outlinePicker && (!pdfWin || state._outlinePicker.pdfWin === pdfWin)) return true;
     if (state.outlineExplorerOpen && this._readerOutlineExplorerFocused(state, pdfWin)) return true;
     if (state._translationPopup) return true;

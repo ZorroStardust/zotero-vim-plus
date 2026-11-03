@@ -552,6 +552,30 @@ function _zvInit() {
     }
   });
 
+  // ── Spacekeys ──────────────────────────────────────────────────────────────
+  _zvSection("spacekeys", () => {
+    const enabled = document.getElementById("zv-spacekeys-enabled");
+    const status = document.getElementById("zv-spacekeys-status");
+    if (enabled) {
+      enabled.checked = _zvGet("spacekeys.enabled", true);
+      _zvSaveCheckbox(enabled, "spacekeys.enabled", status);
+    }
+    for (const [id, pref, fallback, min, max, factor] of [
+      ["zv-spacekeys-delay", "spacekeys.delay", 200, 0, 1000, 1],
+      ["zv-spacekeys-timeout", "spacekeys.timeout", 10000, 1, 30, 1000],
+    ]) {
+      const input = document.getElementById(id);
+      if (!input) continue;
+      input.value = _zvClampInt(_zvGet(pref, fallback) / factor, fallback / factor, min, max);
+      input.addEventListener("change", () => {
+        const value = _zvClampInt(input.value, fallback / factor, min, max);
+        input.value = value;
+        _zvSet(pref, value * factor);
+        _zvFlashStatus(status, ZV_I18N_STR("zv.status.saved", ZV_I18N_CURRENT_LANG()), "#5FB236");
+      });
+    }
+  });
+
   // ── Marks ──────────────────────────────────────────────────────────────────
   _zvSection("marks", () => {
     const marksPersistCb = document.getElementById("zv-marks-persist-enabled");

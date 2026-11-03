@@ -27,6 +27,7 @@ Object.assign(ZoteroVim, {
 
     const mainWinState = {
       mode: 'main',
+      win,
       keyBuffer: '',
       countBuffer: '',
       keyTimeout: null,
@@ -95,6 +96,7 @@ Object.assign(ZoteroVim, {
     this._initNoteDiagnostics?.(win, mainWinState);
 
     const readerScanHandler = () => {
+      this._syncSpacekeysContext(mainWinState);
       this._rescanSelectedReader(win);
       this._syncMainContextNoteListener(win, mainWinState);
     };
@@ -121,6 +123,7 @@ Object.assign(ZoteroVim, {
     win.addEventListener('keydown', pickerWindowKeyHandler, true);
 
     mainWinState.cleanup = () => {
+      this._cancelSpacekeys(mainWinState);
       win.clearInterval(readerScanTimer);
       this._clearNoteDiagnostics?.(mainWinState);
       win.removeEventListener('keydown', pickerWindowKeyHandler, true);
@@ -218,6 +221,13 @@ Object.assign(ZoteroVim, {
     const keyStr = this._keyString(e);
     if (!keyStr) return;
 
+    if (keyStr === 'escape' && winState.keyBuffer?.startsWith(' ')) {
+      this._cancelSpacekeys(winState);
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+
     // Keep tab cycling responsive even when a heavy reader tab is still loading.
     // In that phase focus is often on <browser> and normal reader listeners are not ready.
     const bindings = this.getBindings();
@@ -229,6 +239,7 @@ Object.assign(ZoteroVim, {
       // plugin's own comment overlay all report <browser> as the main
       // window's activeElement, so the input check above does not catch them.
       if (this._isMainTextEditing(win, winState)) return;
+      this._cancelWindowSpacekeys(win);
       e.preventDefault();
       e.stopPropagation();
       if (e.repeat) return;
@@ -276,6 +287,7 @@ Object.assign(ZoteroVim, {
       winState.countBuffer = '';
       clearTimeout(winState.keyTimeout);
       winState.keyTimeout = null;
+      this._hideSpacekeys(winState);
       // Try single-key fallback
       const sp = Object.keys(bindings).filter(k => this._bindingMatchesPrefix(k, modePrefix, keyStr));
       const se = bindings[modePrefix + keyStr];
@@ -385,6 +397,7 @@ Object.assign(ZoteroVim, {
   },
 
   _executeMainAction(action, win, winState, count) {
+    this._cancelWindowSpacekeys(win);
     if (action === 'mainPrevTab' || action === 'mainNextTab') {
       const now = Date.now();
       if (winState._lastDedupedAction === action && now - (winState._lastDedupedActionTS || 0) < 220) {
@@ -1271,6 +1284,7 @@ Object.assign(ZoteroVim, {
 
   _clearMainContextNoteKeyState(winState) {
     if (!winState) return;
+    if (winState._spacekeys?.source === 'note') this._hideSpacekeys(winState);
     this._noteClearPendingCommand(winState);
     winState._contextNoteKeyBuffer = '';
     winState._contextNoteMainBuffer = '';
@@ -1921,10 +1935,15 @@ Object.assign(ZoteroVim, {
         return true;
       }
 
-      if (!exact) {
+      const longer = possible.some(k => k.length > modePrefix.length + candidate.length);
+      if (!exact || longer) {
         winState._contextNoteMainBuffer = candidate;
+        this._updateSpacekeys(winState, modePrefix, candidate, 'note');
         clearTimeout(winState._contextNoteKeyTimeout);
-        winState._contextNoteKeyTimeout = setTimeout(() => this._clearMainContextNoteKeyState(winState), 1200);
+        winState._contextNoteKeyTimeout = setTimeout(() => {
+          this._clearMainContextNoteKeyState(winState);
+          if (exact) this._executeMainAction(exact, win, winState, 1);
+        }, this.getSpacekeysTimeout());
         return true;
       }
 

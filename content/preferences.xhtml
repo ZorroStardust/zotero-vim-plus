@@ -127,6 +127,30 @@
     </hbox>
   </groupbox>
 
+  <!-- ── Spacekeys ──────────────────────────────────────────────────── -->
+  <groupbox>
+    <label value="Spacekeys" style="font-weight: bold;" />
+    <checkbox id="zv-spacekeys-enabled" data-i18n="zv.spacekeys.enabled"
+      label="Show leader-key hints in the bottom-right corner" />
+    <html:p data-i18n="zv.spacekeys.help"
+      style="margin:4px 0 10px;font-size:.9em;color:#666;">
+      Press Space to see available chords. Works in the library, reader and note Normal mode.
+    </html:p>
+    <hbox align="center" style="margin-top:4px;">
+      <html:label for="zv-spacekeys-delay" data-i18n="zv.spacekeys.delay"
+        style="min-width:180px;">Popup delay (ms)</html:label>
+      <html:input id="zv-spacekeys-delay" type="number" min="0" max="1000"
+        step="50" style="width:80px;" />
+    </hbox>
+    <hbox align="center" style="margin-top:6px;">
+      <html:label for="zv-spacekeys-timeout" data-i18n="zv.spacekeys.timeout"
+        style="min-width:180px;">Leader chord timeout (seconds)</html:label>
+      <html:input id="zv-spacekeys-timeout" type="number" min="1" max="30"
+        step="1" style="width:80px;" />
+    </hbox>
+    <html:span id="zv-spacekeys-status" style="font-size:.9em;color:#5FB236;" />
+  </groupbox>
+
   <!-- ── Scroll ─────────────────────────────────────────────────────── -->
   <groupbox>
     <label data-i18n="zv.scroll" value="Scroll" style="font-weight: bold;" />

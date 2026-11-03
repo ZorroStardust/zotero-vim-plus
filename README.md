@@ -170,6 +170,18 @@ Cursor ──v──▶ Visual ──v/Escape──▶ Normal
 
 ## Default keybindings
 
+**Spacekeys:** pause after pressing Space to see the available chords in the
+bottom-right corner. Keep typing to narrow the groups (`Space f` shows search
+actions, including `fh` for PDF headings). Hints use your effective bindings,
+including remaps and unbindings, in the library, reader and note Normal mode.
+They never take focus or change note content. Escape, clicking elsewhere,
+changing panes/tabs or losing focus cancels the pending chord.
+The default popup delay is 200 ms and the leader timeout is 10 seconds; both
+can be changed under Preferences → Spacekeys, where hints can also be disabled.
+Other Vim prefixes retain their existing timing.
+If a key does not continue the chord, its normal binding runs immediately;
+`j`/`k` resume smooth scrolling on that first keypress.
+
 ### Normal mode
 
 #### Scrolling
@@ -1064,6 +1076,9 @@ failures are reported to `zv-startup.log` in the profile directory with
 | Note editor Vim mode | on | Enable Vim-style editing in library notes, reader-side notes and note tabs |
 | Note editor line numbers | on | Absolute logical line numbers with the current number highlighted; requires note Vim mode |
 | Reader page progress | Briefly after navigation | `12/34 · 35%` in the mode indicator; can be Off, transient, or always visible |
+| Spacekeys hints | on | Grouped leader-key hints in the bottom-right corner, above the mode/progress indicator |
+| Spacekeys popup delay | 200 ms | Delay before showing hints; fast chords do not flash a popup (0–1000 ms) |
+| Leader chord timeout | 10 seconds | Time to finish a Space chord in the library, reader or note Normal mode (1–30 seconds) |
 | Scroll mode | Constant-speed scrolling | Step / Constant-speed / Accelerating — only the active mode's parameters are shown |
 | Scroll step | 60 px | Pixels scrolled per `j`/`k`/`H`/`L` keypress (step mode; count prefixes like `3j` always use this) |
 | Scroll speed | 2000 px/s | Constant hold-scroll speed (constant-speed mode) |

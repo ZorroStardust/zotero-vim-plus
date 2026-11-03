@@ -27,6 +27,7 @@ if (Get-Command node -ErrorAction SilentlyContinue) {
         }
         foreach ($check in @(
             'tools/check-sync.js', 'tools/check-bindings.js',
+            'tools/check-spacekeys.js',
             'tools/check-fuzzy-picker.js',
             'tools/check-reader-outline-picker.js',
             'tools/check-reader-focus.js',

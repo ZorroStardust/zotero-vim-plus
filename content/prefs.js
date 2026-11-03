@@ -104,6 +104,7 @@ const ZV_DEFAULT_BINDINGS = {
   "normal: bj":  "mainTabPick",
   "normal: ff":  "mainFuzzyAll",
   "normal: fb":  "mainFuzzyCollection",
+  "normal: fh":  "readerOutlinePick",
   "normal: n":   "mainNotesLayout",
   "normal: yy":  "mainYankCitekey",
   "normal: o":   "mainOpenPDF",
@@ -333,10 +334,10 @@ const ZV_ACTION_LABELS = {
   mainTreeExpandAll:   "Main window: expand all collections (R)",
   mainTreeCollapseAll: "Main window: collapse all collections (M)",
   // Reader split view / outline
-  focusReaderSplitLeft:   "Reader: focus left split pane (or toggle in horizontal split)",
+  focusReaderSplitLeft:   "Reader: focus open outline or left split pane",
   focusReaderSplitDown:   "Reader: focus lower split pane (or toggle in vertical split)",
   focusReaderSplitUp:     "Reader: focus upper split pane (or toggle in vertical split)",
-  focusReaderSplitRight:  "Reader: focus right split pane (or toggle in horizontal split)",
+  focusReaderSplitRight:  "Reader: return from outline to PDF, or focus right split pane",
   toggleReaderSplitHorizontal: "Reader: toggle horizontal split (<space>-)",
   toggleReaderSplitVertical:   "Reader: toggle vertical split (<space>|)",
   toggleReaderSpread:       "Reader: toggle single/two-page view (<space>s)",
@@ -345,6 +346,7 @@ const ZV_ACTION_LABELS = {
   setReaderOddSpread:       "Reader: pair pages starting with odd pages (1–2, 3–4)",
   setReaderEvenSpread:      "Reader: pair pages starting with even pages (1, 2–3, 4–5)",
   toggleReaderSidebarOutline:  "Reader: toggle outline explorer overlay (<space>e)",
+  readerOutlinePick:           "Reader: search PDF headings (<space>fh)",
   focusReaderSidebar:          "Reader: focus or reopen outline explorer overlay",
   toggleMarksExplorer:         "Reader: toggle marks explorer overlay (<space>m)",
 };

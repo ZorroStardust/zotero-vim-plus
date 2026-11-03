@@ -230,6 +230,10 @@ Si la pestaña actual es un lector de PDF, abrir una nota desde esta superposici
 | Tecla | Acción |
 |-----|--------|
 | `<space>e` | Alternar la superposición personalizada de explorador de esquema |
+| `<space>fh` | Buscar todos los títulos del esquema PDF |
+| `/` (con el esquema enfocado) | Abrir la misma búsqueda desde el árbol |
+| `Ctrl+h` (PDF, árbol abierto en este panel) | Enfocar el árbol del esquema |
+| `Ctrl+l` (con el esquema enfocado) | Volver al PDF sin cerrar el árbol |
 | `j` / `k` | Mover la selección de esquema hacia abajo / arriba |
 | `Ctrl+d` / `Ctrl+u` | Movimiento rápido hacia abajo / arriba |
 | `l` | Expandir el nodo de esquema seleccionado |
@@ -242,6 +246,23 @@ Si la pestaña actual es un lector de PDF, abrir una nota desde esta superposici
 
 Cuando el explorador de esquema se abre, intentará preseleccionar el elemento de esquema más cercano o actual para tu posición de lectura; si los metadatos del PDF no permiten un mapeo confiable, se cae al primer elemento de esquema visible. Cada elemento visible también muestra una etiqueta de pista.
 Si el número de elementos es pequeño, las pistas son caracteres simples; de lo contrario, se expanden a pistas de dos caracteres. Escribir una pista solo cambia la selección actual; aún debes presionar `Enter` para saltar.
+
+La búsqueda incluye todos los niveles, incluso los nodos colapsados. Escribe
+para filtrar títulos y rutas superiores con coincidencia difusa; cada resultado
+muestra su ruta y página. Usa `Ctrl+j/k`, `Ctrl+n/p` o las flechas para seleccionar
+y `Enter` (o un clic) para saltar en el panel PDF de origen y volver al modo Normal.
+Si abriste la búsqueda con `/`, `Escape` restaura el árbol, su selección,
+expansión y desplazamiento. Con `<space>fh`, vuelve al PDF. Las letras,
+Retroceso y la entrada IME conservan su comportamiento de escritura.
+Los PDF sin esquema muestran un estado vacío; no se deducen títulos del texto.
+
+Los comandos del árbol y `/` solo actúan cuando el esquema tiene el foco.
+Haz clic en el PDF para buscar en el texto con `/` aunque el árbol siga visible;
+haz clic en el árbol para volver a navegar por el esquema.
+También puedes pulsar `Ctrl+h` en el panel PDF correspondiente para enfocar
+su árbol abierto y `Ctrl+l` en el árbol para volver al PDF. La cabecera indica
+el foco actual. Fuera de este cambio entre árbol y PDF, las mismas teclas
+conservan sus acciones de foco entre paneles divididos y notas.
 
 #### Vista dividida del lector
 
@@ -754,6 +775,7 @@ Abrir **Editar → Preferencias** (macOS: **Zotero → Ajustes**) y navegar al p
 | `mainNavFirst` | Saltar a la primera fila |
 | `mainNavLast` | Saltar a la última fila |
 | `toggleReaderSidebarOutline` | Alternar la superposición personalizada de explorador de esquema |
+| `readerOutlinePick` | Buscar títulos del esquema PDF (`<space>fh`) |
 | `focusReaderSidebar` | Enfocar o reabrir la superposición personalizada de explorador de esquema |
 | `toggleReaderSplitHorizontal` | Alternar vista dividida horizontal del lector |
 | `toggleReaderSplitVertical` | Alternar vista dividida vertical del lector |

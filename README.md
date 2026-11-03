@@ -271,6 +271,10 @@ prefer Zotero's right-side note editor so you can read and edit side by side.
 | Key | Action |
 |-----|--------|
 | `<space>e` | Toggle custom outline explorer overlay |
+| `<space>fh` | Search all PDF outline headings directly |
+| `/` (outline focused) | Open the same heading search from the outline tree |
+| `Ctrl+h` (PDF, outline open in this pane) | Focus the outline tree |
+| `Ctrl+l` (outline focused) | Return focus to the PDF, keeping the tree open |
 | `j` / `k` | Move outline selection down / up |
 | `Ctrl+d` / `Ctrl+u` | Fast move down / up |
 | `l` | Expand selected outline node |
@@ -288,6 +292,22 @@ item also shows a hint label.
 If the number of items is small the hints are single characters; otherwise they
 expand to two-character hints. Typing a hint only changes the current selection;
 you still press `Enter` to jump.
+
+Heading search includes every level, including collapsed nodes. Type a fuzzy
+query to filter titles and parent paths; results show their parent path and
+page number. Use `Ctrl+j/k`, `Ctrl+n/p` or arrows to select, and `Enter` (or a
+mouse click) to jump in the originating PDF pane and return to Normal mode.
+`Escape` returns to the original tree with its selection, expansion and scroll
+preserved when opened with `/`; opening directly with `<space>fh` returns to
+the PDF instead. Plain letters, Backspace and IME input remain search text.
+PDFs without an outline show an empty state; headings are not inferred from text.
+
+Tree navigation and `/` are scoped to the focused outline. Click the PDF to
+resume document shortcuts, including `/` for body-text search, while the tree
+remains visible; click the tree to resume outline navigation. You can also use
+`Ctrl+h` from that PDF pane to focus its open tree, and `Ctrl+l` from the tree
+to return to the PDF. The tree header shows which region is active. Outside
+this tree/PDF handoff, the same keys retain their split-pane and note focus actions.
 
 #### Reader split view
 
@@ -987,6 +1007,7 @@ failures are reported to `zv-startup.log` in the profile directory with
 | `mainNavFirst` | Jump to the first row |
 | `mainNavLast` | Jump to the last row |
 | `toggleReaderSidebarOutline` | Toggle the custom outline explorer overlay |
+| `readerOutlinePick` | Search PDF outline headings (`<space>fh`) |
 | `focusReaderSidebar` | Focus or reopen the custom outline explorer overlay |
 | `toggleReaderSplitHorizontal` | Toggle reader horizontal split view |
 | `toggleReaderSplitVertical` | Toggle reader vertical split view |
@@ -1109,6 +1130,16 @@ The patch is re-applied by the 800 ms view-sync timer so it survives view
 recreation, split views, and restored sessions.  If Zotero changes the
 reader's forwarding internals, re-verify `view._onKeyDown` and the
 `KeyboardManager` shortcut table (keyboard-manager.js).
+
+**Outline search ownership.** Tree command ownership is stored per reader and
+updated by explicit focus commands, pointer events and focus on actual controls.
+Gecko window wrappers and incidental iframe-body focus do not determine ownership;
+chrome key forwarding must not refocus the PDF while the tree or picker owns input.
+The tree handles keys only in its originating pane. The heading picker captures keys before
+ordinary reader bindings while leaving native input/IME behavior intact;
+both the forwarding wrapper and `_textAnnotationFocused` guard suppress
+Zotero shortcuts in that pane. Closing a pane or reader invalidates its popup;
+late outline results must never replace another popup or restore stale focus.
 
 **Enter opening the annotation popup (Zotero 9).**  The popup is opened by
 `PdfView._handleKeyDown()` — a bound capture listener on the PDF iframe

@@ -95,6 +95,7 @@ var ZoteroVim = {
     'normal: S':   'toggleReaderSpreadParity',
     'normal: ff':  'mainFuzzyAll',
     'normal: fb':  'mainFuzzyCollection',
+    'normal: fh':  'readerOutlinePick',
     'normal: bj':  'mainTabPick',
     'normal: n':   'mainNotesLayout',
     'normal: yy':  'mainYankCitekey',
@@ -636,8 +637,13 @@ var ZoteroVim = {
       outlineExplorerCmdBuffer: '',
       _outlineExplorerCmdTimer: null,
       _outlineExplorerOverlay: null,
+      _outlineExplorerFocused: false,
+      _outlineExplorerPdfWin: null,
+      _outlineExplorerHeader: null,
+      _outlineExplorerCleanup: null,
       _outlineExplorerList: null,
       _outlineExplorerStatus: null,
+      _outlinePicker: null,
       activePdfWin: pdfWin,
       _pdfViewHandlers: new Map(),
       _pdfViewSyncTimer: null,
@@ -741,6 +747,7 @@ var ZoteroVim = {
       // Cancel any insert session that is still resolving an annotation item.
       state._insertSessionID = (state._insertSessionID || 0) + 1;
       this._stopSmoothHoldScroll(state, pdfWin);
+      this._closeReaderOutlinePicker(state, false);
       this._closeReaderOutlineExplorer(state);
       this._closeTranslationPopup(state, false);
       clearInterval(state._pdfViewSyncTimer);
@@ -836,7 +843,13 @@ var ZoteroVim = {
         Zotero.debug('[ZoteroVim] _forwardReaderKey: no pdfWin for ' + reader._instanceID);
         return;
       }
-      try { pdfWin.focus(); } catch (_) {}
+      // A chrome-level forwarded key must not move focus out of our tree or
+      // search input before the reader decides which UI owns the command.
+      const outlineFocused = state.outlineExplorerOpen
+        && this._readerOutlineExplorerFocused(state, pdfWin);
+      if (!state._outlinePicker && !outlineFocused) {
+        try { pdfWin.focus(); } catch (_) {}
+      }
       this._onKeyDown(e, reader, state, pdfWin);
     } catch (err) {
       Zotero.debug('[ZoteroVim] _forwardReaderKey error: ' + err);
@@ -858,6 +871,12 @@ var ZoteroVim = {
       if (wantedWins.includes(viewWin)) continue;
       if (state._translationPopup?.pdfWin === viewWin) {
         this._closeTranslationPopup(state, false);
+      }
+      if (state._outlinePicker?.pdfWin === viewWin) {
+        this._closeReaderOutlinePicker(state, false);
+      }
+      if (state._outlineExplorerPdfWin === viewWin) {
+        this._closeReaderOutlineExplorer(state);
       }
       try { viewWin.removeEventListener('keydown', handlers.keyDown, true); } catch (_) {}
       try { viewWin.removeEventListener('keyup', handlers.keyUp, true); } catch (_) {}
@@ -981,7 +1000,7 @@ var ZoteroVim = {
             // PDF window), so the keystroke never reaches the KeyboardManager.
             if (zv._nativeEditableFocused(reader)) return;
             const keyStr = zv._keyString(event);
-            if (zv._readerConsumesKey(state, keyStr)) return;
+            if (zv._readerConsumesKey(state, keyStr, view._iframeWindow)) return;
           } catch (_) {}
           return orig.call(view, event);
         };
@@ -1033,10 +1052,13 @@ var ZoteroVim = {
         // and caused an endless re-patch loop.
         if (patches.has(view)) continue;
         if (typeof view._textAnnotationFocused !== 'function') continue;
+        const zv = this;
         const orig = view._textAnnotationFocused;
         const wrapperFn = function () {
           try {
             if (state._translationPopup?.pdfWin === view._iframeWindow) return true;
+            if (state._outlinePicker?.pdfWin === view._iframeWindow
+                || zv._readerOutlineExplorerFocused(state, view._iframeWindow)) return true;
             const input = state._commentOverlayInput;
             if (input?.isConnected
                 && view._iframeWindow?.document?.activeElement === input) {
@@ -1168,6 +1190,9 @@ var ZoteroVim = {
   },
 
   _setMode(state, mode) {
+    if (state._outlinePicker && mode !== state.mode) {
+      this._closeReaderOutlinePicker(state, false);
+    }
     if (state._translationPopup && mode !== state.mode) {
       this._closeTranslationPopup(state, false);
     }
@@ -1418,12 +1443,17 @@ var ZoteroVim = {
     // editors loses focus.
     if (this._nativeEditableFocused(reader)) return;
 
+    if (state._outlinePicker?.pdfWin === pdfWin) {
+      this._onReaderOutlinePickerKeyDown(event, state);
+      return;
+    }
+
     if (state._translationPopup) {
       this._onTranslationPopupKeyDown(event, state);
       return;
     }
 
-    if (state.outlineExplorerOpen) {
+    if (state.outlineExplorerOpen && this._readerOutlineExplorerFocused(state, pdfWin)) {
       if (this._onReaderOutlineExplorerKeyDown(event, reader, state, pdfWin)) {
         return;
       }
@@ -1793,8 +1823,10 @@ var ZoteroVim = {
    * whether Zotero's forwarded keydown (KeyboardManager) should be allowed to
    * handle the key too (Read Aloud, hand/pointer tools, find, …).
    */
-  _readerConsumesKey(state, keyStr) {
+  _readerConsumesKey(state, keyStr, pdfWin = null) {
     if (!keyStr) return false;
+    if (state._outlinePicker && (!pdfWin || state._outlinePicker.pdfWin === pdfWin)) return true;
+    if (state.outlineExplorerOpen && this._readerOutlineExplorerFocused(state, pdfWin)) return true;
     if (state._translationPopup) return true;
     if (state.mode === 'insert') {
       if (this.getBindings()['insert:' + keyStr]) return true;
@@ -2187,7 +2219,26 @@ var ZoteroVim = {
       return true;
     }
 
-    if (!state.outlineExplorerOpen) return false;
+    if (action === 'readerOutlinePick') {
+      this._openReaderOutlinePicker(state, reader, pdfWin);
+      return true;
+    }
+
+    const outline = state._outlineExplorerOverlay;
+    if (state.outlineExplorerOpen && outline?.isConnected
+        && state._outlineExplorerPdfWin === pdfWin) {
+      if (action === 'focusReaderSplitLeft') {
+        this._focusReaderOutlineExplorer(state, reader, pdfWin);
+        return true;
+      }
+      if (action === 'focusReaderSplitRight'
+          && this._readerOutlineExplorerFocused(state, pdfWin)) {
+        this._focusReaderOutlineBody(state, pdfWin);
+        return true;
+      }
+    }
+
+    if (!state.outlineExplorerOpen || !this._readerOutlineExplorerFocused(state, pdfWin)) return false;
 
     switch (action) {
       case 'scrollDown':

@@ -188,9 +188,290 @@ Object.assign(ZoteroVim, {
     else this._showStatus(state, forward ? 'No later reading position' : 'No earlier reading position', 1200);
   },
 
+  // ── Heading picker and outline explorer ────────────────────────────────────
+
+  /**
+   * Track the reader's chosen region instead of comparing Gecko window wrappers.
+   * DOM focus can temporarily be on the iframe body during chrome forwarding,
+   * or .focus() can leave activeElement unchanged in restored reader frames.
+   */
+  _readerOutlineExplorerFocused(state, pdfWin = null) {
+    const overlay = state._outlineExplorerOverlay;
+    return !!(state.outlineExplorerOpen && overlay?.isConnected
+      && overlay.style.visibility !== 'hidden' && state._outlineExplorerFocused
+      && (!pdfWin || state._outlineExplorerPdfWin === pdfWin));
+  },
+
+  /** Update both the command owner and the visible focus cue. */
+  _setReaderOutlineExplorerFocus(state, focused) {
+    state._outlineExplorerFocused = focused;
+    const overlay = state._outlineExplorerOverlay;
+    if (overlay) overlay.style.borderRightColor = focused ? '#89b4fa' : '#313244';
+    if (state._outlineExplorerHeader) {
+      const zh = this._isZhLocale();
+      state._outlineExplorerHeader.textContent = zh
+        ? '目录 · ' + (focused ? '已聚焦 · Ctrl+l 返回正文' : 'Ctrl+h 聚焦')
+        : 'Outline · ' + (focused ? 'Focused · Ctrl+l for PDF' : 'Ctrl+h to focus');
+    }
+  },
+
+  /** Explicit focus intent survives a failed DOM focus and preserves tree scroll. */
+  _focusReaderOutlineElement(state) {
+    const overlay = state._outlineExplorerOverlay;
+    if (!overlay?.isConnected) return;
+    const viewWin = state._outlineExplorerPdfWin;
+    state.activePdfWin = viewWin;
+    try { viewWin?.focus(); } catch (_) {}
+    try { overlay.focus(); } catch (_) {}
+    this._setReaderOutlineExplorerFocus(state, true);
+  },
+
+  _focusReaderOutlineBody(state, pdfWin) {
+    this._setReaderOutlineExplorerFocus(state, false);
+    this._clearReaderOutlineExplorerHintBuffer(state);
+    this._clearReaderOutlineExplorerCmdBuffer(state);
+    try { state._outlineExplorerOverlay?.blur(); } catch (_) {}
+    this._focusReaderPdfWindow(pdfWin, state);
+  },
+
+  /**
+   * Both <space>fh and tree-local / open this picker in the originating PDF
+   * pane. Hiding the existing tree preserves its nodes, selection and scroll.
+   * Async results belong to this popup instance and are ignored after closing.
+   */
+  async _openReaderOutlinePicker(state, reader, pdfWin, fromOutline = false) {
+    if (state._outlinePicker) {
+      state._outlinePicker.input.focus();
+      return;
+    }
+    const app = pdfWin?.PDFViewerApplication;
+    if (!app?.pdfDocument) {
+      this._showStatus(state, app ? 'PDF is still loading'
+        : 'Title search is only available in PDF readers', 1500);
+      return;
+    }
+    const doc = pdfWin.document;
+    const h = tag => doc.createElementNS('http://www.w3.org/1999/xhtml', tag);
+    const zh = this._isZhLocale();
+    const overlay = h('div');
+    overlay.id = 'zv-outline-picker';
+    overlay.style.cssText =
+      'position:fixed;inset:0;z-index:100000;background:rgba(0,0,0,0.6);' +
+      'display:flex;align-items:flex-start;justify-content:center;padding-top:10vh;';
+    const modal = h('div');
+    modal.style.cssText =
+      'width:min(680px,90%);max-height:75vh;display:flex;flex-direction:column;' +
+      'background:#1e1e2e;color:#cdd6f4;border-radius:8px;overflow:hidden;' +
+      'box-shadow:0 16px 48px rgba(0,0,0,0.6);font:13px/1.4 sans-serif;';
+    const input = h('input');
+    input.type = 'text';
+    input.placeholder = zh ? '搜索 PDF 目录标题…' : 'Search PDF headings…';
+    input.setAttribute('aria-label', input.placeholder);
+    input.style.cssText =
+      'box-sizing:border-box;width:100%;padding:12px;background:#313244;' +
+      'color:#cdd6f4;border:0;outline:none;font:inherit;flex-shrink:0;';
+    const list = h('div');
+    list.style.cssText = 'overflow:auto;min-height:0;max-height:55vh;';
+    const status = h('div');
+    status.style.cssText =
+      'padding:8px 12px;border-top:1px solid #313244;color:#a6adc8;font-size:11px;';
+    status.textContent = zh
+      ? '输入筛选 · Ctrl+j/k 或 ↑/↓ 选择 · Enter 跳转 · Esc 返回'
+      : 'Type to filter · Ctrl+j/k or ↑/↓ select · Enter jump · Esc back';
+    for (const node of [input, list, status]) modal.appendChild(node);
+    overlay.appendChild(modal);
+    const popup = {
+      overlay, input, list, status, pdfWin, reader, state, zh,
+      outlineOverlay: fromOutline ? state._outlineExplorerOverlay : null,
+      outlineScrollTop: state._outlineExplorerList?.scrollTop || 0,
+      items: [], filtered: [], selected: 0, rows: [], loading: true,
+      error: '', composing: false, activating: false,
+    };
+    state._outlinePicker = popup;
+    if (popup.outlineOverlay) popup.outlineOverlay.style.visibility = 'hidden';
+    this._stopSmoothHoldScroll(state, pdfWin);
+    this._clearMarkKey(state);
+    input.addEventListener('input', () => {
+      if (state._outlinePicker !== popup) return;
+      popup.selected = 0;
+      this._filterReaderOutlinePicker(popup);
+    });
+    input.addEventListener('compositionstart', () => { popup.composing = true; });
+    input.addEventListener('compositionend', () => { popup.composing = false; });
+    overlay.addEventListener('mousedown', event => {
+      if (event.target === overlay) this._closeReaderOutlinePicker(state);
+    });
+    (doc.body || doc.documentElement).appendChild(overlay);
+    this._renderReaderOutlinePicker(popup);
+    input.focus();
+    try {
+      const tree = popup.outlineOverlay && state.outlineExplorerTree
+        ? state.outlineExplorerTree : await this._fetchReaderOutlineTree(reader, pdfWin);
+      if (state._outlinePicker !== popup) return;
+      const paths = new Map();
+      popup.items = this._flattenReaderOutlineTree(tree).map(entry => {
+        const parents = paths.get(entry.parentID) || [];
+        const path = parents.concat(entry.title);
+        paths.set(entry.id, path);
+        return { entry, breadcrumb: parents.join(' › '), searchStr: path.join(' ').toLowerCase() };
+      });
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] _openReaderOutlinePicker error: ' + e);
+      popup.error = zh ? '目录加载失败' : 'Error loading outline';
+    }
+    if (state._outlinePicker !== popup) return;
+    popup.loading = false;
+    this._filterReaderOutlinePicker(popup);
+  },
+
+  _filterReaderOutlinePicker(popup) {
+    const query = popup.input.value.toLowerCase().trim();
+    popup.filtered = popup.items.filter(item => {
+      let index = 0;
+      for (const char of query) {
+        const found = item.searchStr.indexOf(char, index);
+        if (found < 0) return false;
+        index = found + char.length;
+      }
+      return true;
+    });
+    popup.selected = Math.min(popup.selected, Math.max(0, popup.filtered.length - 1));
+    this._renderReaderOutlinePicker(popup);
+  },
+
+  _renderReaderOutlinePicker(popup) {
+    const doc = popup.pdfWin.document;
+    const h = tag => doc.createElementNS('http://www.w3.org/1999/xhtml', tag);
+    const list = popup.list;
+    while (list.firstChild) list.removeChild(list.firstChild);
+    popup.rows = [];
+    if (popup.loading || popup.error || !popup.filtered.length) {
+      const message = h('div');
+      message.style.cssText = 'padding:14px;color:#a6adc8;';
+      message.textContent = popup.loading ? (popup.zh ? '正在加载目录…' : 'Loading outline…')
+        : popup.error || (popup.items.length ? (popup.zh ? '无匹配标题' : 'No matching headings')
+          : (popup.zh ? '此 PDF 没有目录' : 'No outline available for this PDF'));
+      list.appendChild(message);
+      return;
+    }
+    // Render all matches so keyboard navigation can reach every heading.
+    const fragment = doc.createDocumentFragment();
+    popup.filtered.forEach((item, index) => {
+      const row = h('div');
+      row.style.cssText = 'padding:8px 12px;border-left:3px solid transparent;cursor:pointer;';
+      const title = h('div');
+      title.textContent = item.entry.title;
+      const context = h('div');
+      context.style.cssText = 'font-size:11px;color:#a6adc8;overflow-wrap:anywhere;';
+      const page = typeof item.entry.pageIndex === 'number'
+        ? (popup.zh ? '第 ' + (item.entry.pageIndex + 1) + ' 页' : 'p. ' + (item.entry.pageIndex + 1))
+        : '';
+      context.textContent = [item.breadcrumb, page].filter(Boolean).join(' · ');
+      row.appendChild(title);
+      row.appendChild(context);
+      row.addEventListener('click', () => {
+        popup.selected = index;
+        this._activateReaderOutlinePicker(popup.state);
+      });
+      popup.rows.push(row);
+      fragment.appendChild(row);
+    });
+    list.appendChild(fragment);
+    this._updateReaderOutlinePickerSelection(popup);
+  },
+
+  /** Moving selection changes styles only; a stationary mouse cannot reset it. */
+  _updateReaderOutlinePickerSelection(popup) {
+    popup.rows.forEach((row, index) => {
+      row.style.backgroundColor = index === popup.selected ? '#313244' : 'transparent';
+      row.style.borderLeftColor = index === popup.selected ? '#89b4fa' : 'transparent';
+    });
+    popup.rows[popup.selected]?.scrollIntoView({ block: 'nearest' });
+  },
+
+  _onReaderOutlinePickerKeyDown(event, state) {
+    const popup = state._outlinePicker;
+    if (!popup) return;
+    event.stopImmediatePropagation();
+    if (event.isComposing || popup.composing || event.keyCode === 229) return;
+    const key = this._keyString(event);
+    if (key === 'escape') {
+      event.preventDefault();
+      this._closeReaderOutlinePicker(state);
+    } else if (key === 'enter' || key === 'return') {
+      event.preventDefault();
+      this._activateReaderOutlinePicker(state);
+    } else if (['arrowdown', 'ctrl+j', 'ctrl+n', 'arrowup', 'ctrl+k', 'ctrl+p'].includes(key)) {
+      event.preventDefault();
+      const down = ['arrowdown', 'ctrl+j', 'ctrl+n'].includes(key);
+      popup.selected = Math.max(0, Math.min(popup.filtered.length - 1,
+        popup.selected + (down ? 1 : -1)));
+      this._updateReaderOutlinePickerSelection(popup);
+    } else if (key === 'tab') {
+      event.preventDefault();
+      popup.input.focus();
+    }
+    // Text, Backspace, clipboard shortcuts and IME retain native input behavior.
+  },
+
+  async _activateReaderOutlinePicker(state) {
+    const popup = state._outlinePicker;
+    const item = popup?.filtered[popup.selected];
+    if (!item || popup.activating) return;
+    const ir = popup.reader?._internalReader;
+    if (![ir?._primaryView, ir?._secondaryView]
+      .some(view => view?._iframeWindow === popup.pdfWin)) {
+      this._closeReaderOutlinePicker(state, false);
+      return;
+    }
+    popup.activating = true;
+    const ok = await this._goToReaderOutlineEntry(popup.reader, popup.pdfWin, item.entry);
+    if (state._outlinePicker !== popup) return;
+    if (![ir?._primaryView, ir?._secondaryView]
+      .some(view => view?._iframeWindow === popup.pdfWin)) {
+      this._closeReaderOutlinePicker(state, false);
+      return;
+    }
+    popup.activating = false;
+    if (!ok) {
+      popup.status.textContent = popup.zh ? '跳转失败 · Esc 返回' : 'Jump failed · Esc back';
+      return;
+    }
+    this._closeReaderOutlinePicker(state, false);
+    this._closeReaderOutlineExplorer(state);
+    this._setMode(state, 'normal');
+    state.activePdfWin = popup.pdfWin;
+    popup.pdfWin.focus();
+    this._recordReaderHistoryPoint(popup.reader, state, popup.pdfWin);
+  },
+
+  /** Dismiss without re-rendering the saved tree or refocusing a removed pane. */
+  _closeReaderOutlinePicker(state, restoreFocus = true) {
+    const popup = state._outlinePicker;
+    if (!popup) return;
+    state._outlinePicker = null;
+    popup.overlay.remove();
+    const tree = popup.outlineOverlay;
+    if (tree && tree === state._outlineExplorerOverlay && tree.isConnected) {
+      tree.style.visibility = '';
+      if (restoreFocus) this._focusReaderOutlineElement(state);
+      if (state._outlineExplorerList) {
+        state._outlineExplorerList.scrollTop = popup.outlineScrollTop;
+      }
+    } else if (restoreFocus) {
+      popup.pdfWin.focus();
+    }
+  },
+
   _onReaderOutlineExplorerKeyDown(event, reader, state, pdfWin) {
     const keyStr = this._keyString(event);
     if (!keyStr) return false;
+
+    if (keyStr === '/') {
+      event.preventDefault(); event.stopImmediatePropagation();
+      this._openReaderOutlinePicker(state, reader, pdfWin, true);
+      return true;
+    }
 
     if (keyStr === 'g') {
       event.preventDefault(); event.stopPropagation();
@@ -256,10 +537,6 @@ Object.assign(ZoteroVim, {
         event.preventDefault(); event.stopPropagation();
         this._closeReaderOutlineExplorer(state, pdfWin);
         return true;
-      case 'ctrl+h':
-        event.preventDefault(); event.stopPropagation();
-        this._focusReaderOutlineExplorer(state, reader, pdfWin);
-        return true;
       default:
         return false;
     }
@@ -278,7 +555,7 @@ Object.assign(ZoteroVim, {
       await this._openReaderOutlineExplorer(state, reader, pdfWin);
       return;
     }
-    try { state._outlineExplorerOverlay?.focus?.(); } catch (_) {}
+    this._focusReaderOutlineElement(state);
     if (!state.outlineExplorerVisible?.length && !state.outlineExplorerLoading) {
       await this._loadReaderOutlineExplorer(state, reader, pdfWin);
     }
@@ -289,13 +566,20 @@ Object.assign(ZoteroVim, {
     state.outlineExplorerOpen = true;
     this._createReaderOutlineExplorer(state, pdfWin);
     this._renderReaderOutlineExplorer(state);
-    try { state._outlineExplorerOverlay?.focus?.(); } catch (_) {}
+    this._focusReaderOutlineElement(state);
     await this._loadReaderOutlineExplorer(state, reader, pdfWin);
   },
 
   _closeReaderOutlineExplorer(state, pdfWin = null) {
+    if (state._outlinePicker?.outlineOverlay
+        && state._outlinePicker.outlineOverlay === state._outlineExplorerOverlay) {
+      this._closeReaderOutlinePicker(state, false);
+    }
     state.outlineExplorerOpen = false;
     state.outlineExplorerLoading = false;
+    state._outlineExplorerCleanup?.();
+    state._outlineExplorerCleanup = null;
+    this._setReaderOutlineExplorerFocus(state, false);
     this._clearReaderOutlineExplorerHintBuffer(state);
     this._clearReaderOutlineExplorerCmdBuffer(state);
     try {
@@ -303,6 +587,8 @@ Object.assign(ZoteroVim, {
       if (overlay?.parentNode) overlay.parentNode.removeChild(overlay);
     } catch (_) {}
     state._outlineExplorerOverlay = null;
+    state._outlineExplorerPdfWin = null;
+    state._outlineExplorerHeader = null;
     state._outlineExplorerList = null;
     state._outlineExplorerStatus = null;
     state.outlineExplorerVisible = [];
@@ -337,16 +623,46 @@ Object.assign(ZoteroVim, {
     const status = h('div');
     status.style.cssText = 'padding:6px 12px;border-top:1px solid #313244;color:#6c7086;font-size:11px;';
     status.textContent =
-      'j/k move  ·  Ctrl+d/u fast  ·  gg/G top/bottom  ·  R/M expand/collapse all  ·  Enter jump';
+      'j/k move  ·  Ctrl+d/u fast  ·  gg/G top/bottom  ·  R/M expand/collapse all  ·  ' +
+      '/ search headings  ·  Enter jump';
 
     overlay.appendChild(header);
     overlay.appendChild(list);
     overlay.appendChild(status);
     root.appendChild(overlay);
-
     state._outlineExplorerOverlay = overlay;
+    state._outlineExplorerPdfWin = pdfWin;
+    state._outlineExplorerHeader = header;
     state._outlineExplorerList = list;
     state._outlineExplorerStatus = status;
+    // Keep ownership in sync with real clicks/focus changes. Prevent the
+    // default mousedown focus reset on non-focusable tree rows. Listening on
+    // the document also observes a click back into the PDF while the tree stays open.
+    const pointer = event => {
+      if (state._outlinePicker) return;
+      const inside = overlay.contains(event.target);
+      this._setReaderOutlineExplorerFocus(state, inside);
+      if (inside) {
+        this._focusReaderOutlineElement(state);
+        if (event.type === 'mousedown' && event.button === 0) event.preventDefault();
+      }
+    };
+    const focus = event => {
+      // Gecko may asynchronously focus the frame body during key forwarding.
+      // Body/root focus alone is ambiguous; clicks and explicit PDF-focus
+      // commands already hand ownership back. Real controls still take focus.
+      if (event.target === doc.body || event.target === doc.documentElement) return;
+      this._setReaderOutlineExplorerFocus(state, overlay.contains(event.target));
+    };
+    doc.addEventListener('pointerdown', pointer, true);
+    doc.addEventListener('mousedown', pointer, true);
+    doc.addEventListener('focusin', focus, true);
+    state._outlineExplorerCleanup = () => {
+      doc.removeEventListener('pointerdown', pointer, true);
+      doc.removeEventListener('mousedown', pointer, true);
+      doc.removeEventListener('focusin', focus, true);
+    };
+    this._setReaderOutlineExplorerFocus(state, false);
   },
 
   async _loadReaderOutlineExplorer(state, reader, pdfWin) {
@@ -610,14 +926,16 @@ Object.assign(ZoteroVim, {
 
   async _goToReaderOutlineEntry(reader, pdfWin, entry) {
     try {
-      const app = pdfWin.PDFViewerApplication || reader?._internalReader?._primaryView?._iframeWindow?.PDFViewerApplication;
+      const app = pdfWin?.PDFViewerApplication;
       const pdfDoc = app?.pdfDocument;
       const linkService = app?.pdfLinkService;
       const originalDest = entry.dest;
+      const contentDest = dest => dest && typeof dest === 'object'
+        ? Components.utils.cloneInto(dest, pdfWin) : dest;
 
       if (originalDest && typeof linkService?.getDestinationHash === 'function' && typeof linkService?.setHash === 'function') {
         try {
-          const hash = linkService.getDestinationHash(originalDest);
+          const hash = linkService.getDestinationHash(contentDest(originalDest));
           if (hash) {
             linkService.setHash(String(hash).replace(/^#/, ''));
             return true;
@@ -635,13 +953,13 @@ Object.assign(ZoteroVim, {
 
       if (originalDest && typeof linkService?.goToDestination === 'function') {
         try {
-          await linkService.goToDestination(originalDest);
+          await linkService.goToDestination(contentDest(originalDest));
           return true;
         } catch (_) {}
       }
       if (originalDest && typeof linkService?.navigateTo === 'function') {
         try {
-          await linkService.navigateTo(originalDest);
+          await linkService.navigateTo(contentDest(originalDest));
           return true;
         } catch (_) {}
       }
@@ -652,7 +970,7 @@ Object.assign(ZoteroVim, {
       }
       if (dest && typeof linkService?.getDestinationHash === 'function' && typeof linkService?.setHash === 'function') {
         try {
-          const hash = linkService.getDestinationHash(dest);
+          const hash = linkService.getDestinationHash(contentDest(dest));
           if (hash) {
             linkService.setHash(String(hash).replace(/^#/, ''));
             return true;
@@ -661,28 +979,37 @@ Object.assign(ZoteroVim, {
       }
       if (dest && typeof linkService?.goToDestination === 'function') {
         try {
-          await linkService.goToDestination(dest);
+          await linkService.goToDestination(contentDest(dest));
           return true;
         } catch (_) {}
       }
       if (dest && typeof linkService?.navigateTo === 'function') {
         try {
-          await linkService.navigateTo(dest);
+          await linkService.navigateTo(contentDest(dest));
           return true;
         } catch (_) {}
       }
 
-      if (this._clickNativeReaderOutlineEntry(reader, pdfWin, entry)) {
-        return true;
-      }
-
       const resolvedPageIndex = await this._resolveReaderOutlinePageIndex(entry, dest, pdfDoc);
       if (typeof resolvedPageIndex === 'number') {
-        const readerWin = reader?._iframeWindow || pdfWin;
-        const payload = Components.utils.cloneInto({ pageIndex: resolvedPageIndex }, readerWin);
-        await reader?._internalReader?.navigate?.(payload);
-        return true;
+        // A hash addresses this exact pane, even if Zotero's last-view state
+        // still points at its sibling. Avoid reader-level navigation here.
+        if (typeof linkService?.setHash === 'function') {
+          linkService.setHash('page=' + (resolvedPageIndex + 1));
+          return true;
+        }
+        const view = [reader?._internalReader?._primaryView, reader?._internalReader?._secondaryView]
+          .find(candidate => candidate?._iframeWindow === pdfWin);
+        if (typeof view?.navigate === 'function') {
+          const targetWin = reader._iframeWindow || pdfWin;
+          await view.navigate(Components.utils.cloneInto({ pageIndex: resolvedPageIndex }, targetWin));
+          return true;
+        }
       }
+      // Native sidebar links are shared between panes and can target the
+      // primary one. Only use that legacy fallback in a single-pane reader.
+      if (!reader?._internalReader?._secondaryView
+          && this._clickNativeReaderOutlineEntry(reader, pdfWin, entry)) return true;
     } catch (e) {
       Zotero.debug('[ZoteroVim] _goToReaderOutlineEntry error: ' + e);
     }
@@ -843,7 +1170,8 @@ Object.assign(ZoteroVim, {
       state.outlineExplorerSelected = exact.idx;
       this._renderReaderOutlineExplorer(state);
       this._clearReaderOutlineExplorerHintBuffer(state, false);
-      this._setReaderOutlineExplorerStatus(state, 'Selected ' + exact.item.hint + '  ·  Enter jump');
+      this._setReaderOutlineExplorerStatus(state,
+        'Selected ' + exact.item.hint + '  ·  / search headings  ·  Enter jump');
       return;
     }
 
@@ -855,7 +1183,8 @@ Object.assign(ZoteroVim, {
     clearTimeout(state._outlineExplorerHintTimer);
     state._outlineExplorerHintTimer = null;
     if (resetStatus && state._outlineExplorerStatus) {
-      state._outlineExplorerStatus.textContent = 'j/k move  ·  l expand  ·  h collapse  ·  Enter jump  ·  Esc close';
+      state._outlineExplorerStatus.textContent =
+        'j/k move  ·  l expand  ·  h collapse  ·  / search headings  ·  Enter jump  ·  Esc close';
     }
   },
 
@@ -879,7 +1208,8 @@ Object.assign(ZoteroVim, {
     state._outlineExplorerCmdTimer = null;
     if (resetStatus && state._outlineExplorerStatus && !state.outlineExplorerHintBuffer) {
       state._outlineExplorerStatus.textContent =
-        'j/k move  ·  Ctrl+d/u fast  ·  gg/G top/bottom  ·  R/M expand/collapse all  ·  Enter jump';
+        'j/k move  ·  Ctrl+d/u fast  ·  gg/G top/bottom  ·  R/M expand/collapse all  ·  ' +
+        '/ search headings  ·  Enter jump';
     }
   },
 

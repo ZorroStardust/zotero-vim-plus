@@ -3500,7 +3500,10 @@ Object.assign(ZoteroVim, {
     if (!viewWin) return false;
 
     try {
-      if (state) state.activePdfWin = viewWin;
+      if (state) {
+        state.activePdfWin = viewWin;
+        if (state.outlineExplorerOpen) this._setReaderOutlineExplorerFocus(state, false);
+      }
       viewWin.focus?.();
 
       const doc = viewWin.document;

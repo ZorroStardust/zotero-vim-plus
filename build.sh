@@ -20,6 +20,7 @@ if command -v node >/dev/null 2>&1; then
   node --check content/prefs.js
   node tools/check-sync.js
   node tools/check-bindings.js
+  node tools/check-fuzzy-picker.js
   node tools/check-reader-history.js
   node tools/check-reader-layout.js
   node tools/check-reader-text.js

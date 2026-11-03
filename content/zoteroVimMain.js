@@ -40,6 +40,7 @@ Object.assign(ZoteroVim, {
       _pickerFiltered: [],
       _pickerItems: [],
       _pickerSelected: 0,
+      _pickerPointer: null,
       _pickerWin: win,
       _pickerCleanup: null,
       _pickerPrevFocus: null,      // element focused before the picker opened
@@ -110,7 +111,7 @@ Object.assign(ZoteroVim, {
 
     // Window-level capture listener while the picker is open: window capture
     // runs before ANY document listener, so picker keys (Ctrl+j/k, arrows,
-    // Ctrl+o, y/yy, Enter, Escape) are handled even if something at the
+    // Ctrl+o, Ctrl+y, Enter, Escape) are handled even if something at the
     // document level would otherwise swallow them (e.g. browser-style
     // shortcuts such as Ctrl+j).  _onPickerKeyDown guards re-entrancy with
     // the _zvPickerHandled flag.
@@ -4230,7 +4231,8 @@ Object.assign(ZoteroVim, {
       'padding:4px 12px;font-size:11px;color:#6c7086;border-top:1px solid #313244;flex-shrink:0;';
     hintBar.textContent = scope === 'tabs'
       ? 'Type hint letter (empty query) or search title  ·  Ctrl+j/k navigate  ·  Enter select  ·  Esc close'
-      : 'Ctrl+j/k navigate  ·  Enter select  ·  Ctrl+o open PDF  ·  y yank citation  ·  yy yank citekey  ·  Esc close';
+      : 'Ctrl+j/k navigate  ·  Enter select  ·  Ctrl+o open PDF  ·  ' +
+        'Ctrl+y yank citation  ·  Ctrl+Shift+y yank citekey  ·  Esc close';
 
     inputWrap.appendChild(input);
     modal.appendChild(inputWrap);
@@ -4244,14 +4246,14 @@ Object.assign(ZoteroVim, {
     winState._pickerResults  = results;
     winState._pickerSelected = 0;
     winState._pickerFiltered = [];
-    winState._pickerLastKey  = null;
-    winState._pickerYTimer   = null;
+    winState._pickerPointer  = null;
     winState._pickerScope    = scope;
 
     // Dismiss on backdrop click
     overlay.addEventListener('mousedown', (ev) => {
       if (ev.target === overlay) this._closeFuzzyPicker(win, winState);
     });
+    overlay.addEventListener('mousemove', (ev) => this._onPickerMouseMove(ev, winState));
 
     const onInput = () => {
       winState._pickerSelected = 0;
@@ -4262,7 +4264,6 @@ Object.assign(ZoteroVim, {
 
     winState._pickerCleanup = () => {
       try { input.removeEventListener('input', onInput); } catch (_) {}
-      clearTimeout(winState._pickerYTimer);
     };
 
     setTimeout(() => { try { input.focus(); } catch (_) {} }, 30);
@@ -4345,15 +4346,11 @@ Object.assign(ZoteroVim, {
 
     if (k === 'Escape') {
       e.preventDefault(); e.stopPropagation();
-      clearTimeout(winState._pickerYTimer);
-      winState._pickerLastKey = null;
       this._closeFuzzyPicker(win, winState);
       return;
     }
     if (k === 'Enter') {
       e.preventDefault(); e.stopPropagation();
-      clearTimeout(winState._pickerYTimer);
-      winState._pickerLastKey = null;
       this._pickerSelectItem(win, winState);
       return;
     }
@@ -4364,8 +4361,6 @@ Object.assign(ZoteroVim, {
     // attachment.
     if (e.ctrlKey && !e.altKey && !e.shiftKey && keyLower === 'o' && winState._pickerScope !== 'tabs') {
       e.preventDefault(); e.stopPropagation();
-      clearTimeout(winState._pickerYTimer);
-      winState._pickerLastKey = null;
       this._pickerSelectItem(win, winState);
       this._mainOpenPDF(win, winState);
       return;
@@ -4375,18 +4370,14 @@ Object.assign(ZoteroVim, {
 
     if (k === 'ArrowDown' || isCtrlDown) {
       e.preventDefault(); e.stopPropagation();
-      clearTimeout(winState._pickerYTimer);
-      winState._pickerLastKey = null;
       winState._pickerSelected = Math.min(winState._pickerSelected + 1, maxIdx);
-      this._renderPickerResults(winState);
+      this._updatePickerSelection(winState);
       return;
     }
     if (k === 'ArrowUp' || isCtrlUp) {
       e.preventDefault(); e.stopPropagation();
-      clearTimeout(winState._pickerYTimer);
-      winState._pickerLastKey = null;
       winState._pickerSelected = Math.max(winState._pickerSelected - 1, 0);
-      this._renderPickerResults(winState);
+      this._updatePickerSelection(winState);
       return;
     }
     if (winState._pickerScope === 'tabs' && !e.ctrlKey && !e.metaKey && !e.altKey && k.length === 1) {
@@ -4395,40 +4386,24 @@ Object.assign(ZoteroVim, {
         const idx = this._pickerIndexFromHint(k, winState._pickerFiltered.length || 0);
         if (idx >= 0) {
           e.preventDefault(); e.stopPropagation();
-          clearTimeout(winState._pickerYTimer);
-          winState._pickerLastKey = null;
           winState._pickerSelected = idx;
           this._pickerSelectItem(win, winState);
           return;
         }
       }
     }
-    // y = yank full citation; yy = yank citekey only
-    if (k === 'y') {
-      if (winState._pickerScope === 'tabs') {
-        e.stopPropagation();
-        return;
-      }
+    // Search text, including y/yy, stays native. Copy only with an explicit
+    // modifier, immediately, so typing speed never changes the action.
+    if (e.ctrlKey && !e.metaKey && !e.altKey && keyLower === 'y'
+        && winState._pickerScope !== 'tabs') {
       e.preventDefault(); e.stopPropagation();
-      if (winState._pickerLastKey === 'y') {
-        clearTimeout(winState._pickerYTimer);
-        winState._pickerLastKey = null;
-        this._pickerYankCitekey(win, winState);
-      } else {
-        winState._pickerLastKey = 'y';
-        clearTimeout(winState._pickerYTimer);
-        winState._pickerYTimer = setTimeout(() => {
-          winState._pickerLastKey = null;
-          this._pickerYankCitation(win, winState);
-        }, 400);
-      }
+      if (e.shiftKey) this._pickerYankCitekey(win, winState);
+      else this._pickerYankCitation(win, winState);
       return;
     }
     // All other keys: stop Zotero from reacting but allow the key to type in
     // the input element (no preventDefault).
     e.stopPropagation();
-    winState._pickerLastKey = null;
-    clearTimeout(winState._pickerYTimer);
   },
 
   _pickerYankCitation(win, winState) {
@@ -4455,7 +4430,6 @@ Object.assign(ZoteroVim, {
     const container = winState._pickerResults;
     if (!container) return;
     const items    = winState._pickerFiltered || [];
-    const selected = winState._pickerSelected;
     const doc = container.ownerDocument;
     const H   = 'http://www.w3.org/1999/xhtml';
     const h   = (tag) => doc.createElementNS(H, tag);
@@ -4476,10 +4450,8 @@ Object.assign(ZoteroVim, {
 
     items.forEach((item, i) => {
       const row = h('div');
-      const isSel = i === selected;
-      row.style.cssText =
-        'padding:6px 12px;cursor:pointer;border-left:3px solid ' +
-        (isSel ? '#89b4fa;background:#313244;' : 'transparent;');
+      row.dataset.zvPickerIndex = String(i);
+      row.style.cssText = 'padding:6px 12px;cursor:pointer;border-left:3px solid transparent;';
 
       const line1 = h('div');
       const cite  = h('span');
@@ -4511,18 +4483,41 @@ Object.assign(ZoteroVim, {
         winState._pickerSelected = i;
         this._pickerSelectItem(win, winState);
       });
-      row.addEventListener('mouseenter', () => {
-        winState._pickerSelected = i;
-        this._renderPickerResults(winState);
-      });
     });
 
     container.appendChild(frag);
+    this._updatePickerSelection(winState);
+  },
 
-    // Scroll selected row into view
-    if (container.children[selected]) {
-      container.children[selected].scrollIntoView({ block: 'nearest' });
+  /** Update highlights in place so navigation never recreates hovered rows. */
+  _updatePickerSelection(winState, scroll = true) {
+    const container = winState._pickerResults;
+    if (!container || !winState._pickerFiltered.length) return;
+    const selected = winState._pickerSelected;
+    for (let i = 0; i < container.children.length; i++) {
+      const row = container.children[i];
+      row.style.borderLeftColor = i === selected ? '#89b4fa' : 'transparent';
+      row.style.backgroundColor = i === selected ? '#313244' : 'transparent';
     }
+    if (scroll) container.children[selected]?.scrollIntoView({ block: 'nearest' });
+  },
+
+  /**
+   * Keep a pointer baseline across filtering and keyboard scrolling. Gecko
+   * can synthesize mouse events after layout changes without pointer movement;
+   * those must not override keyboard selection. Hover never scrolls the list.
+   */
+  _onPickerMouseMove(event, winState) {
+    const previous = winState._pickerPointer;
+    const point = { x: event.screenX, y: event.screenY };
+    winState._pickerPointer = point;
+    if (!previous || (previous.x === point.x && previous.y === point.y)) return;
+    const row = event.target?.closest?.('[data-zv-picker-index]');
+    if (!row || !winState._pickerResults?.contains(row)) return;
+    const index = Number(row.dataset.zvPickerIndex);
+    if (index === winState._pickerSelected) return;
+    winState._pickerSelected = index;
+    this._updatePickerSelection(winState, false);
   },
 
   _pickerSelectItem(win, winState) {
@@ -4641,7 +4636,7 @@ Object.assign(ZoteroVim, {
     winState._pickerResults  = null;
     winState._pickerFiltered = [];
     winState._pickerCleanup  = null;
-    winState._pickerLastKey  = null;
+    winState._pickerPointer  = null;
     winState._pickerScope    = null;
 
     // Restore focus to wherever it was before the picker opened.  The overlay

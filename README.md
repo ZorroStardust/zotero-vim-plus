@@ -230,14 +230,18 @@ order). Then:
 | `↑` / `↓` (or `Ctrl+n` / `Ctrl+p`, `Ctrl+j` / `Ctrl+k`) | Move selection up / down |
 | `Enter` | Select the item in the item list / jump to the selected tab |
 | `Ctrl+o` | Open the selected item's PDF (items picker only) |
-| `y` | Copy the selected item's full citation to the clipboard |
-| `yy` | Copy the selected item's citekey to the clipboard |
+| `Ctrl+y` | Copy the selected item's full citation to the clipboard (items picker only) |
+| `Ctrl+Shift+y` | Copy the selected item's citekey to the clipboard (items picker only) |
 | `Escape` | Close the picker |
+
+Plain `y` and `yy` type into the item search box. Keyboard navigation keeps
+the selection even with the mouse over the results; move the mouse to select
+a different row, or click a row to activate it.
 
 The **tab picker** (`<space>bj`) uses the same interface for the currently
 open tabs, plus **hint letters**: each tab shows a letter label, and typing
 its letter(s) selects that tab directly (single- or double-letter hints
-depending on the number of tabs). `y`/`yy` copying is not available in the
+depending on the number of tabs). Citation/citekey copying is not available in the
 tab picker.
 
 #### Notes layout overlay

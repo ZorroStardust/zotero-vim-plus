@@ -190,15 +190,19 @@ carácter debe aparecer en orden). Luego:
 | `↑` / `↓` (o `Ctrl+n` / `Ctrl+p`, `Ctrl+j` / `Ctrl+k`) | Mover la selección hacia arriba / abajo |
 | `Enter` | Seleccionar el elemento en la lista de elementos / saltar a la pestaña seleccionada |
 | `Ctrl+o` | Abrir el PDF del elemento seleccionado (solo selector de elementos) |
-| `y` | Copiar la cita completa del elemento seleccionado al portapapeles |
-| `yy` | Copiar la citekey del elemento seleccionado al portapapeles |
+| `Ctrl+y` | Copiar la cita completa del elemento seleccionado (solo selector de elementos) |
+| `Ctrl+Shift+y` | Copiar la citekey del elemento seleccionado (solo selector de elementos) |
 | `Escape` | Cerrar el selector |
+
+Las teclas `y` e `yy` escriben en la búsqueda de elementos. La navegación con
+el teclado mantiene la selección aunque el ratón esté sobre los resultados;
+mueve el ratón para seleccionar otra fila o haz clic para activarla.
 
 El **selector de pestañas** (`<space>bj`) usa la misma interfaz para las
 pestañas abiertas actualmente, más **letras de pista**: cada pestaña muestra
 una etiqueta de letra, y escribir su(s) letra(s) selecciona esa pestaña
 directamente (pistas de una o dos letras según el número de pestañas). La
-copia `y`/`yy` no está disponible en el selector de pestañas.
+copia de citas o citekeys no está disponible en el selector de pestañas.
 
 #### Superposición de diseño de notas
 

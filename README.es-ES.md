@@ -263,6 +263,9 @@ También puedes pulsar `Ctrl+h` en el panel PDF correspondiente para enfocar
 su árbol abierto y `Ctrl+l` en el árbol para volver al PDF. Un contorno interior
 sutil indica el foco actual. Fuera de este cambio entre árbol y PDF, las mismas teclas
 conservan sus acciones de foco entre paneles divididos y notas.
+En una división vertical, `Ctrl+h` desde el árbol enfocado del panel derecho
+pasa al PDF izquierdo sin cerrar el árbol. Si no hay un panel PDF a su izquierda,
+el foco permanece en el árbol.
 
 El mismo contorno se adapta al tema y señala el panel PDF o editor de notas
 lateral activo, incluso con Vim de notas desactivado. Solo se enfatiza una región.

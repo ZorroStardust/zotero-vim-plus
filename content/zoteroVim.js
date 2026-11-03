@@ -2248,6 +2248,14 @@ var ZoteroVim = {
     if (state.outlineExplorerOpen && outline?.isConnected
         && state._outlineExplorerPdfWin === pdfWin) {
       if (action === 'focusReaderSplitLeft') {
+        const ir = reader?._internalReader;
+        if (this._readerOutlineExplorerFocused(state, pdfWin)
+            && ir?.splitType === 'vertical' && ir._secondaryView?._iframeWindow === pdfWin
+            && ir._primaryView?._iframeWindow) {
+          // The right tree is left of its PDF but still right of the other
+          // pane. Let normal split navigation continue one region left.
+          return false;
+        }
         this._focusReaderOutlineExplorer(state, reader, pdfWin);
         return true;
       }

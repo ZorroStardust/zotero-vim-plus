@@ -321,6 +321,50 @@ async function main() {
     z.getPref = (_name, fallback) => fallback;
   });
 
+  await check('Ctrl+h leaves a right-pane tree for the left PDF without closing or resetting it', async () => {
+    const f = fixture();
+    await z._openReaderOutlineExplorer(f.state, f.reader, f.secondary.win);
+    const tree = f.state._outlineExplorerOverlay;
+    const rows = [...f.state._outlineExplorerList.children];
+    const expanded = f.state.outlineExplorerTree[0].expanded;
+    f.state.outlineExplorerSelected = 1;
+    f.state._outlineExplorerList.scrollTop = 137;
+    // Gecko can still report the outer reader while the logical tree owns input.
+    context.Services.focus.focusedWindow = f.reader._iframeWindow;
+    assert.equal(key(f, 'h', { ctrlKey: true }, f.secondary).prevented, true);
+    assert.equal(f.state.activePdfWin, f.primary.win);
+    assert.equal(z._readerOutlineExplorerFocused(f.state), false);
+    assert.equal(f.state.outlineExplorerOpen, true);
+    assert.equal(tree.isConnected, true);
+    assert.equal(f.state._outlineExplorerOverlay, tree);
+    assert.equal(f.state.outlineExplorerSelected, 1);
+    assert.equal(f.state._outlineExplorerList.scrollTop, 137);
+    assert.equal(f.state.outlineExplorerTree[0].expanded, expanded);
+    assert.deepEqual(f.state._outlineExplorerList.children, rows);
+
+    key(f, 'l', { ctrlKey: true });
+    assert.equal(f.state.activePdfWin, f.secondary.win);
+    assert.equal(z._readerOutlineExplorerFocused(f.state), false);
+    key(f, 'h', { ctrlKey: true }, f.secondary);
+    assert.equal(z._readerOutlineExplorerFocused(f.state, f.secondary.win), true);
+    assert.equal(f.state._outlineExplorerList.scrollTop, 137);
+    key(f, 'l', { ctrlKey: true }, f.secondary);
+    assert.equal(f.state.activePdfWin, f.secondary.win);
+    assert.equal(z._readerOutlineExplorerFocused(f.state), false);
+  });
+
+  await check('Ctrl+h stays in a tree without a PDF pane to its left', async () => {
+    for (const [splitType, origin] of [['vertical', 'primary'], ['horizontal', 'secondary'], ['', 'primary']]) {
+      const f = fixture();
+      f.reader._internalReader.splitType = splitType;
+      const pane = f[origin];
+      await z._openReaderOutlineExplorer(f.state, f.reader, pane.win);
+      key(f, 'h', { ctrlKey: true }, pane);
+      assert.equal(z._readerOutlineExplorerFocused(f.state, pane.win), true);
+      assert.equal(f.state.activePdfWin, pane.win);
+    }
+  });
+
   await check('real pointer focus changes select the command region and listeners are removed on close', async () => {
     const f = fixture();
     await z._openReaderOutlineExplorer(f.state, f.reader, f.primary.win);

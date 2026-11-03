@@ -311,6 +311,8 @@ remains visible; click the tree to resume outline navigation. You can also use
 `Ctrl+h` from that PDF pane to focus its open tree, and `Ctrl+l` from the tree
 to return to the PDF. A subtle inner frame shows which region is active. Outside
 this tree/PDF handoff, the same keys retain their split-pane and note focus actions.
+In a vertical split, `Ctrl+h` from the right pane's focused tree moves to the
+left PDF without closing the tree. With no PDF pane to its left, focus stays in the tree.
 
 The same theme-aware frame follows the active PDF split pane and the right-side
 note editor. Only one region is emphasized, including with note Vim disabled.

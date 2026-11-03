@@ -514,6 +514,33 @@ async function main() {
     assert.equal(tree.style.borderRightColor, undefined);
   });
 
+  await check('leaving a right-pane tree moves focus and the sole marker to the left PDF', () => {
+    const f = fixture();
+    f.reader._internalReader.splitType = 'vertical';
+    const tree = f.secondary.document.createElementNS('', 'div');
+    tree.rect = rectangle(0, 0, 180, 650);
+    f.secondary.document.body.appendChild(tree);
+    Object.assign(f.state, { outlineExplorerOpen: true, _outlineExplorerOverlay: tree,
+      _outlineExplorerPdfWin: f.secondary });
+    f.z._setReaderOutlineExplorerFocus(f.state, true); f.win.flush();
+    assertRing(f, 'outline');
+    f.z._executeAction('focusReaderSplitLeft', f.reader, f.state, f.secondary, 1);
+    f.win.flush();
+    assertRing(f, 'pdf', [1, 1, 448, 648]);
+    const cue = f.state._focusCue;
+    assert.equal(cue.owner.win, f.primary);
+    assert.equal(f.state.activePdfWin, f.primary);
+    assert.equal(f.context.Services.focus.focusedWindow, f.primary);
+    assert.equal(f.state._outlineExplorerFocused, false);
+    assert.equal(f.state.outlineExplorerOpen, true);
+    assert.equal(tree.isConnected, true);
+    const visible = [...cue.layers.values()].filter(layer => layer.element.style.opacity === '1');
+    assert.equal(visible.length, 1);
+    assert.equal(visible[0].win, f.primary);
+    assert.equal(visible[0].marker.style.display, 'block');
+    assert.equal(cue.layers.get(f.secondary.document).element.style.opacity, '0');
+  });
+
   await check('sidebar notes own the sole ring with Vim disabled and leave native contents/input untouched', () => {
     const f = fixture(false);
     const before = [...f.note.document.body.children];

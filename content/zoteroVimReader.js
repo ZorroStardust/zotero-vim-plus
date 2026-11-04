@@ -234,6 +234,110 @@ Object.assign(ZoteroVim, {
     this._focusReaderPdfWindow(pdfWin, state);
   },
 
+  /** Snapshot this pane before the picker takes focus; coordinates are PDF units. */
+  _readerOutlineReadingPosition(pdfWin) {
+    const viewer = pdfWin.PDFViewerApplication?.pdfViewer;
+    const location = viewer?._location;
+    const pageNumber = Number.isInteger(viewer?.currentPageNumber) && viewer.currentPageNumber > 0
+      ? viewer.currentPageNumber : Math.max(1, location?.pageNumber || 1);
+    const position = { pageIndex: pageNumber - 1, left: null, top: null, viewport: null };
+    if (location?.pageNumber === pageNumber) {
+      if (Number.isFinite(location.left)) position.left = location.left;
+      if (Number.isFinite(location.top)) position.top = location.top;
+    }
+    try {
+      const page = viewer?.getPageView?.(position.pageIndex) || viewer?._pages?.[position.pageIndex];
+      position.viewport = page?.viewport || null;
+      if (position.top === null) {
+        const container = this._getScrollContainer(pdfWin);
+        const bounds = container?.getBoundingClientRect?.();
+        const rect = page?.div?.getBoundingClientRect?.();
+        if (bounds && rect) {
+          const x = Math.max(0, bounds.left + (container.clientLeft || 0)
+            - rect.left - (page.div.clientLeft || 0));
+          const y = Math.max(0, bounds.top + (container.clientTop || 0)
+            - rect.top - (page.div.clientTop || 0));
+          const point = page.getPagePoint?.(x, y) || position.viewport?.convertToPdfPoint?.(x, y);
+          if (Number.isFinite(point?.[0])) position.left = point[0];
+          if (Number.isFinite(point?.[1])) position.top = point[1];
+        }
+      }
+    } catch (_) {} // Older/unrendered viewers can still be located by page number.
+    return position;
+  },
+
+  /** Resolve destination metadata without navigating or modifying the saved tree. */
+  async _readerOutlineHeadingPosition(entry, pdfDoc) {
+    const position = { pageIndex: Number.isInteger(entry.pageIndex) && entry.pageIndex >= 0
+      ? entry.pageIndex : null, left: null, top: null };
+    try {
+      let dest = entry.dest;
+      if (!dest && entry.url) {
+        const info = await this._resolveReaderOutlineUrlInfo(entry.url, pdfDoc);
+        if (position.pageIndex === null) position.pageIndex = info.pageIndex;
+        dest = info.dest;
+      }
+      if (typeof dest === 'string' && typeof pdfDoc?.getDestination === 'function') {
+        dest = await pdfDoc.getDestination(dest);
+      }
+      if (position.pageIndex === null) {
+        position.pageIndex = await this._resolveReaderOutlinePageIndex(entry, dest, pdfDoc);
+      }
+      if (!Array.isArray(dest)) return position;
+      const mode = dest[1]?.name;
+      const left = mode === 'XYZ' || mode === 'FitR' ? dest[2] : null;
+      const top = mode === 'XYZ' ? dest[3]
+        : mode === 'FitH' || mode === 'FitBH' ? dest[2] : mode === 'FitR' ? dest[5] : null;
+      if (Number.isFinite(left)) position.left = left;
+      if (Number.isFinite(top)) position.top = top;
+    } catch (_) {} // Broken destinations retain any usable page metadata.
+    return position;
+  },
+
+  /**
+   * Locate the last heading reached in the originating pane, across every depth.
+   * Compare page-local destinations in viewport order (including rotation).
+   * Page-only outlines degrade to page/order matching; an unknown outline starts at zero.
+   */
+  async _readerOutlinePickerInitialIndex(popup) {
+    const reading = popup.readingPosition;
+    const toViewY = point => {
+      if (!Number.isFinite(point.top)) return null;
+      try {
+        const left = Number.isFinite(point.left) ? point.left : reading.left || 0;
+        const result = reading.viewport?.convertToViewportPoint?.(left, point.top);
+        if (Number.isFinite(result?.[1])) return result[1];
+      } catch (_) {}
+      return -point.top;
+    };
+    const currentY = toViewY(reading);
+    const pdfDoc = popup.pdfWin.PDFViewerApplication?.pdfDocument;
+    const positions = await Promise.all(popup.items.map(item =>
+      this._readerOutlineHeadingPosition(item.entry, pdfDoc)));
+    let selected = -1;
+    let bestPage = -1;
+    let bestY = -Infinity;
+    let first = 0;
+    let firstPage = Infinity;
+    positions.forEach((position, index) => {
+      const page = position.pageIndex;
+      if (!Number.isInteger(page) || page < 0) return;
+      if (page < firstPage) { first = index; firstPage = page; }
+      if (page > reading.pageIndex) return;
+      let y = -Infinity;
+      if (page === reading.pageIndex && currentY !== null) {
+        y = toViewY(position) ?? -Infinity;
+        if (y > currentY + 1) return;
+      }
+      if (page > bestPage || (page === bestPage && y >= bestY)) {
+        selected = index;
+        bestPage = page;
+        bestY = y;
+      }
+    });
+    return selected >= 0 ? selected : first;
+  },
+
   /**
    * Both <space>fh and tree-local / open this picker in the originating PDF
    * pane. Hiding the existing tree preserves its nodes, selection and scroll.
@@ -282,6 +386,7 @@ Object.assign(ZoteroVim, {
     overlay.appendChild(modal);
     const popup = {
       overlay, input, list, status, pdfWin, reader, state, zh,
+      readingPosition: this._readerOutlineReadingPosition(pdfWin), selectionTouched: false,
       outlineOverlay: fromOutline ? state._outlineExplorerOverlay : null,
       outlineScrollTop: state._outlineExplorerList?.scrollTop || 0,
       items: [], filtered: [], selected: 0, rows: [], loading: true,
@@ -293,6 +398,7 @@ Object.assign(ZoteroVim, {
     this._clearMarkKey(state);
     input.addEventListener('input', () => {
       if (state._outlinePicker !== popup) return;
+      popup.selectionTouched = true;
       popup.selected = 0;
       this._filterReaderOutlinePicker(popup);
     });
@@ -315,6 +421,9 @@ Object.assign(ZoteroVim, {
         paths.set(entry.id, path);
         return { entry, breadcrumb: parents.join(' › '), searchStr: path.join(' ').toLowerCase() };
       });
+      const initial = await this._readerOutlinePickerInitialIndex(popup);
+      if (state._outlinePicker !== popup) return;
+      if (!popup.selectionTouched && !popup.input.value.trim()) popup.selected = initial;
     } catch (e) {
       Zotero.debug('[ZoteroVim] _openReaderOutlinePicker error: ' + e);
       popup.error = zh ? '目录加载失败' : 'Error loading outline';
@@ -386,7 +495,10 @@ Object.assign(ZoteroVim, {
       row.style.backgroundColor = index === popup.selected ? '#313244' : 'transparent';
       row.style.borderLeftColor = index === popup.selected ? '#89b4fa' : 'transparent';
     });
-    popup.rows[popup.selected]?.scrollIntoView({ block: 'nearest' });
+    const selected = popup.rows[popup.selected];
+    if (selected) {
+      selected.scrollIntoView(Components.utils.cloneInto({ block: 'nearest' }, popup.pdfWin));
+    }
   },
 
   _onReaderOutlinePickerKeyDown(event, state) {
@@ -403,6 +515,7 @@ Object.assign(ZoteroVim, {
       this._activateReaderOutlinePicker(state);
     } else if (['arrowdown', 'ctrl+j', 'ctrl+n', 'arrowup', 'ctrl+k', 'ctrl+p'].includes(key)) {
       event.preventDefault();
+      popup.selectionTouched = true;
       const down = ['arrowdown', 'ctrl+j', 'ctrl+n'].includes(key);
       popup.selected = Math.max(0, Math.min(popup.filtered.length - 1,
         popup.selected + (down ? 1 : -1)));

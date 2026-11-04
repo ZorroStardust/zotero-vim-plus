@@ -195,6 +195,175 @@ async function main() {
     z.getPref = (_name, fallback) => fallback;
   });
 
+  await check('both entry points start at the reading chapter in their own pane, including collapsed children', async () => {
+    for (const fromOutline of [false, true]) {
+      for (const origin of ['primary', 'secondary']) {
+        const f = fixture();
+        f.primary.app.pdfViewer.currentPageNumber = 5;
+        f.secondary.app.pdfViewer.currentPageNumber = 8;
+        const pane = f[origin];
+        let tree;
+        if (fromOutline) {
+          await z._openReaderOutlineExplorer(f.state, f.reader, pane.win);
+          tree = f.state._outlineExplorerOverlay;
+          f.state.outlineExplorerTree[0].expanded = false;
+          z._refreshReaderOutlineExplorer(f.state);
+          f.state.outlineExplorerSelected = 0; // Deliberately different from the reading chapter.
+          f.state._outlineExplorerList.scrollTop = 93;
+        }
+        // The other pane and Zotero's last-view state must not decide the location.
+        f.reader._internalReader._lastView = f.primary.view;
+        context.Services.focus.focusedWindow = f.primary.win;
+        await z._openReaderOutlinePicker(f.state, f.reader, pane.win, fromOutline);
+        const popup = f.state._outlinePicker;
+        assert.equal(popup.filtered[popup.selected].entry.title,
+          origin === 'primary' ? 'Deep 中文 heading' : 'Chapter Two');
+        assert.ok(popup.rows[popup.selected].scrollCount > 0);
+        assert.equal(pane.doc.activeElement, popup.input);
+        assert.deepEqual(f.primary.calls, []);
+        assert.deepEqual(f.secondary.calls, []);
+        assert.equal(f.primary.app.pdfViewer.currentPageNumber, 5);
+        assert.equal(f.secondary.app.pdfViewer.currentPageNumber, 8);
+        z._closeReaderOutlinePicker(f.state);
+        if (tree) {
+          assert.equal(f.state._outlineExplorerOverlay, tree);
+          assert.equal(f.state.outlineExplorerSelected, 0);
+          assert.equal(f.state.outlineExplorerTree[0].expanded, false);
+          assert.equal(f.state._outlineExplorerList.scrollTop, 93);
+        }
+      }
+    }
+  });
+
+  await check('same-page headings use PDF destination heights instead of the next unread section', async () => {
+    const data = [
+      { title: 'Previous chapter', dest: [0, { name: 'Fit' }] },
+      { title: 'XYZ section', dest: [2, { name: 'XYZ' }, 0, 700, null] },
+      { title: 'Named section', dest: 'named-section' },
+      { title: 'Bounding section', dest: [2, { name: 'FitBH' }, 350] },
+      { title: 'Rectangle section', dest: [2, { name: 'FitR' }, 0, 100, 600, 200] },
+    ];
+    for (const [top, expected] of [[750, 'Previous chapter'], [650, 'XYZ section'],
+      [400, 'Named section'], [300, 'Bounding section'], [100, 'Rectangle section']]) {
+      const f = fixture(async () => data);
+      f.primary.app.pdfDocument.getDestination = async () => [{ num: 10, gen: 0 },
+        { name: 'FitH' }, 500];
+      f.primary.app.pdfDocument.getPageIndex = async ref => {
+        assert.equal(ref.num, 10); return 2;
+      };
+      Object.assign(f.primary.app.pdfViewer, { currentPageNumber: 3,
+        _location: { pageNumber: 3, left: 0, top } });
+      await z._openReaderOutlinePicker(f.state, f.reader, f.primary.win);
+      const popup = f.state._outlinePicker;
+      assert.equal(popup.filtered[popup.selected].entry.title, expected);
+      assert.deepEqual(f.primary.calls, []);
+    }
+  });
+
+  await check('rotated page coordinates and older viewers without a saved location locate the reading section', async () => {
+    const rotated = fixture(async () => [
+      { title: 'Earlier', dest: [0, { name: 'XYZ' }, 100, 500, null] },
+      { title: 'Current', dest: [0, { name: 'XYZ' }, 400, 500, null] },
+      { title: 'Later', dest: [0, { name: 'XYZ' }, 800, 500, null] },
+    ]);
+    Object.assign(rotated.primary.app.pdfViewer, {
+      _location: { pageNumber: 1, left: 500, top: 300 },
+      getPageView: () => ({ viewport: { convertToViewportPoint: (x, y) => [y, x] } }),
+    });
+    await z._openReaderOutlinePicker(rotated.state, rotated.reader, rotated.primary.win);
+    let popup = rotated.state._outlinePicker;
+    assert.equal(popup.filtered[popup.selected].entry.title, 'Current');
+
+    const older = fixture(async () => [
+      { title: 'Current', dest: [0, { name: 'XYZ' }, 0, 700, null] },
+      { title: 'Later', dest: [0, { name: 'XYZ' }, 0, 450, null] },
+    ]);
+    Object.assign(older.primary.app.pdfViewer, {
+      container: { getBoundingClientRect: () => ({ left: 0, top: 0 }) },
+      getPageView: () => ({
+        div: { getBoundingClientRect: () => ({ left: 0, top: -300 }) },
+        getPagePoint: (x, y) => [x, 800 - y],
+        viewport: { convertToViewportPoint: (x, y) => [x, 800 - y] },
+      }),
+    });
+    await z._openReaderOutlinePicker(older.state, older.reader, older.primary.win);
+    popup = older.state._outlinePicker;
+    assert.equal(popup.filtered[popup.selected].entry.title, 'Current');
+  });
+
+  await check('page-only and broken metadata fall back without treating native sidebar selection as current', async () => {
+    const f = fixture(async () => [
+      { title: 'Unknown', dest: 'broken' },
+      { title: 'Chapter two', pageIndex: 4 },
+      { title: 'Future', dest: [8, { name: 'Fit' }] },
+    ]);
+    f.primary.app.pdfDocument.getDestination = async () => { throw Error('Missing destination'); };
+    f.primary.app.pdfViewer.currentPageNumber = 6;
+    const nativeSelection = z._findNativeCurrentOutlineSelection;
+    z._findNativeCurrentOutlineSelection = () => ({ title: 'Future' });
+    try { await z._openReaderOutlinePicker(f.state, f.reader, f.primary.win); }
+    finally { z._findNativeCurrentOutlineSelection = nativeSelection; }
+    const popup = f.state._outlinePicker;
+    assert.equal(popup.filtered[popup.selected].entry.title, 'Chapter two');
+    assert.equal(popup.error, '');
+    const before = fixture(async () => [{ title: 'First chapter', dest: [3, { name: 'Fit' }] }]);
+    await z._openReaderOutlinePicker(before.state, before.reader, before.primary.win);
+    assert.equal(before.state._outlinePicker.selected, 0);
+  });
+
+  await check('slow destination resolution preserves typing and opening-time position', async () => {
+    for (const typed of [false, true]) {
+      const destination = deferred();
+      const f = fixture(async () => [
+        { title: 'Introduction', dest: [0, { name: 'Fit' }] },
+        { title: 'Current chapter', dest: 'late' },
+      ]);
+      f.primary.app.pdfViewer.currentPageNumber = 10;
+      f.primary.app.pdfDocument.getDestination = () => destination.promise;
+      const opening = z._openReaderOutlinePicker(f.state, f.reader, f.primary.win);
+      await settle();
+      const popup = f.state._outlinePicker;
+      if (typed) input(popup, 'intro');
+      f.primary.app.pdfViewer.currentPageNumber = 1;
+      destination.resolve([8, { name: 'Fit' }]);
+      await opening;
+      assert.equal(popup.filtered[popup.selected].entry.title,
+        typed ? 'Introduction' : 'Current chapter');
+      assert.equal(popup.input.value, typed ? 'intro' : '');
+      assert.equal(f.primary.doc.activeElement, popup.input);
+      assert.deepEqual(f.primary.calls, []);
+    }
+  });
+
+  await check('closing during destination resolution cannot move a newer picker or restore old focus', async () => {
+    const firstDestination = deferred();
+    const secondDestination = deferred();
+    const f = fixture(async () => [
+      { title: 'Introduction', dest: [0, { name: 'Fit' }] },
+      { title: 'Current chapter', dest: 'late' },
+    ]);
+    let calls = 0;
+    f.primary.app.pdfDocument.getDestination = () =>
+      (++calls === 1 ? firstDestination.promise : secondDestination.promise);
+    f.primary.app.pdfViewer.currentPageNumber = 10;
+    const first = z._openReaderOutlinePicker(f.state, f.reader, f.primary.win);
+    await settle();
+    const old = f.state._outlinePicker;
+    key(f, 'Escape');
+    f.primary.app.pdfViewer.currentPageNumber = 1;
+    const second = z._openReaderOutlinePicker(f.state, f.reader, f.primary.win);
+    await settle();
+    const current = f.state._outlinePicker;
+    secondDestination.resolve([8, { name: 'Fit' }]);
+    await second;
+    firstDestination.resolve([8, { name: 'Fit' }]);
+    await first;
+    assert.equal(f.state._outlinePicker, current);
+    assert.equal(current.filtered[current.selected].entry.title, 'Introduction');
+    assert.equal(f.primary.doc.activeElement, current.input);
+    assert.equal(old.overlay.isConnected, false);
+  });
+
   await check('search includes deep collapsed headings, parent paths, pages and duplicate titles', async () => {
     const f = fixture();
     await z._openReaderOutlineExplorer(f.state, f.reader, f.primary.win);
@@ -204,6 +373,7 @@ async function main() {
     z._renderReaderOutlineExplorer(f.state);
     assert.equal(f.state.outlineExplorerVisible.length, 3);
     key(f, '/');
+    await settle();
     const popup = f.state._outlinePicker;
     assert.equal(popup.items.length, 5);
     input(popup, 'd中h');
@@ -484,6 +654,7 @@ async function main() {
     assert.equal(context.Services.focus.focusedWindow, f.secondary.win);
     await z._openReaderOutlineExplorer(f.state, f.reader, f.primary.win);
     key(f, '/');
+    await settle();
     f.state._outlinePicker.rows[1].emit('click');
     await settle();
     assert.equal(f.state.outlineExplorerOpen, false);

@@ -249,7 +249,13 @@ Si el número de elementos es pequeño, las pistas son caracteres simples; de lo
 
 La búsqueda incluye todos los niveles, incluso los nodos colapsados. Escribe
 para filtrar títulos y rutas superiores con coincidencia difusa; cada resultado
-muestra su ruta y página. Usa `Ctrl+j/k`, `Ctrl+n/p` o las flechas para seleccionar
+muestra su ruta y página.
+Con `<space>fh` o `/` desde el árbol, la selección inicial corresponde a la
+posición de lectura del panel PDF de origen y se desplaza hasta quedar visible,
+manteniendo el foco en el campo de búsqueda. Se usan posiciones dentro de la
+página cuando están disponibles; si faltan, se aproxima por página o se elige
+el primer título. La escritura o selección manual durante la carga tiene prioridad.
+Usa `Ctrl+j/k`, `Ctrl+n/p` o las flechas para seleccionar
 y `Enter` (o un clic) para saltar en el panel PDF de origen y volver al modo Normal.
 Si abriste la búsqueda con `/`, `Escape` restaura el árbol, su selección,
 expansión y desplazamiento. Con `<space>fh`, vuelve al PDF. Las letras,

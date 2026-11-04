@@ -333,8 +333,14 @@ expand to two-character hints. Typing a hint only changes the current selection;
 you still press `Enter` to jump.
 
 Heading search includes every level, including collapsed nodes. Type a fuzzy
-query to filter titles and parent paths; results show their parent path and
-page number. Use `Ctrl+j/k`, `Ctrl+n/p` or arrows to select, and `Enter` (or a
+query to filter titles and parent paths; results show their parent path and page number.
+Both `<space>fh` and tree-local `/` initially highlight the chapter at the
+originating PDF pane's reading position
+and scroll it into view, keeping the search input focused. Page-local destination
+coordinates distinguish headings on the same page when available; otherwise
+selection falls back to page metadata, or the first heading when none is usable.
+Typing or manually selecting while loading takes priority over initial positioning.
+Use `Ctrl+j/k`, `Ctrl+n/p` or arrows to select, and `Enter` (or a
 mouse click) to jump in the originating PDF pane and return to Normal mode.
 `Escape` returns to the original tree with its selection, expansion and scroll
 preserved when opened with `/`; opening directly with `<space>fh` returns to

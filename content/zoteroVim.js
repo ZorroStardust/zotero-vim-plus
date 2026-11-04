@@ -639,6 +639,7 @@ var ZoteroVim = {
       sidebarOutlineIndex: -1,
       outlineExplorerOpen: false,
       outlineExplorerLoading: false,
+      _outlineExplorerLoad: null,
       outlineExplorerTree: null,
       outlineExplorerVisible: [],
       outlineExplorerSelected: 0,

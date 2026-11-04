@@ -244,7 +244,11 @@ Si la pestaña actual es un lector de PDF, abrir una nota desde esta superposici
 | `Enter` | Saltar al elemento de esquema seleccionado y volver al modo Normal |
 | `Escape` | Cerrar el explorador de esquema |
 
-Cuando el explorador de esquema se abre, intentará preseleccionar el elemento de esquema más cercano o actual para tu posición de lectura; si los metadatos del PDF no permiten un mapeo confiable, se cae al primer elemento de esquema visible. Cada elemento visible también muestra una etiqueta de pista.
+Al abrir el explorador, se selecciona el capítulo en la posición de lectura del
+panel PDF actual, se expanden sus antecesores y el título queda visible. Las otras
+ramas conservan su estado. Se usa la misma posición de página y coordenadas que
+en la búsqueda de títulos; si faltan metadatos, se aproxima por página o se elige
+el primer título disponible. Cada elemento visible también muestra una pista.
 Si el número de elementos es pequeño, las pistas son caracteres simples; de lo contrario, se expanden a pistas de dos caracteres. Escribir una pista solo cambia la selección actual; aún debes presionar `Enter` para saltar.
 
 La búsqueda incluye todos los niveles, incluso los nodos colapsados. Escribe

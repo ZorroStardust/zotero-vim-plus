@@ -235,6 +235,130 @@ async function main() {
     }
   });
 
+  await check('opening the tree reveals a deep current chapter by expanding only its parent path', async () => {
+    const f = fixture();
+    f.state.outlineExplorerTree = await z._fetchReaderOutlineTree(f.reader, f.primary.win);
+    const tree = f.state.outlineExplorerTree;
+    tree[0].expanded = false;
+    tree[0].children[0].expanded = false;
+    tree[1].expanded = false;
+    f.primary.app.pdfViewer.currentPageNumber = 5;
+    for (const value of ' e') key(f, value);
+    await settle();
+    const selected = f.state.outlineExplorerVisible[f.state.outlineExplorerSelected];
+    assert.equal(selected.title, 'Deep 中文 heading');
+    assert.equal(tree[0].expanded, true);
+    assert.equal(tree[0].children[0].expanded, true);
+    assert.equal(tree[1].expanded, false);
+    assert.ok(f.state._outlineExplorerList.children[f.state.outlineExplorerSelected].scrollCount > 0);
+    assert.equal(f.primary.doc.activeElement, f.state._outlineExplorerOverlay);
+    assert.equal(f.primary.app.pdfViewer.currentPageNumber, 5);
+    assert.deepEqual(f.primary.calls, []);
+
+    z._closeReaderOutlineExplorer(f.state);
+    f.secondary.app.pdfViewer.currentPageNumber = 9;
+    context.Services.focus.focusedWindow = f.primary.win;
+    for (const value of ' e') key(f, value, {}, f.secondary);
+    await settle();
+    const current = f.state.outlineExplorerVisible[f.state.outlineExplorerSelected];
+    assert.equal(current, tree[1].children[0]);
+    assert.equal(tree[1].expanded, true);
+    assert.equal(tree[0].children[0].expanded, true); // Other branches retain their state.
+    assert.equal(f.state._outlineExplorerPdfWin, f.secondary.win);
+    assert.equal(f.secondary.doc.activeElement, f.state._outlineExplorerOverlay);
+    assert.deepEqual(f.secondary.calls, []);
+  });
+
+  await check('tree and picker agree on same-page chapters and newly opened trees use the new reading position', async () => {
+    const f = fixture(async () => [{ title: 'Root', dest: [0, { name: 'Fit' }], items: [
+      { title: 'Earlier', dest: [2, { name: 'XYZ' }, 0, 700, null], items: [
+        { title: 'Current', dest: [2, { name: 'XYZ' }, 0, 450, null], items: [
+          { title: 'Later', dest: [2, { name: 'XYZ' }, 0, 200, null] },
+        ] },
+      ] },
+    ] }]);
+    Object.assign(f.primary.app.pdfViewer, { currentPageNumber: 3,
+      _location: { pageNumber: 3, left: 0, top: 400 } });
+    await z._openReaderOutlineExplorer(f.state, f.reader, f.primary.win);
+    let selected = f.state.outlineExplorerVisible[f.state.outlineExplorerSelected];
+    assert.equal(selected.title, 'Current');
+    assert.equal(selected.expanded, false); // Reveal the chapter, not all of its children.
+    z._closeReaderOutlineExplorer(f.state);
+    await z._openReaderOutlinePicker(f.state, f.reader, f.primary.win);
+    const popup = f.state._outlinePicker;
+    assert.equal(popup.filtered[popup.selected].entry.title, selected.title);
+    z._closeReaderOutlinePicker(f.state);
+    f.primary.app.pdfViewer._location.top = 100;
+    await z._openReaderOutlineExplorer(f.state, f.reader, f.primary.win);
+    selected = f.state.outlineExplorerVisible[f.state.outlineExplorerSelected];
+    assert.equal(selected.title, 'Later');
+    assert.equal(f.primary.app.pdfViewer.currentPageNumber, 3);
+    assert.deepEqual(f.primary.calls, []);
+  });
+
+  await check('late outline loading cannot overwrite a tree reopened in another pane', async () => {
+    const oldOutline = deferred();
+    const newOutline = deferred();
+    const f = fixture(() => oldOutline.promise);
+    f.secondary.app.pdfDocument.getOutline = () => newOutline.promise;
+    f.primary.app.pdfViewer.currentPageNumber = 5;
+    const first = z._openReaderOutlineExplorer(f.state, f.reader, f.primary.win);
+    const oldOverlay = f.state._outlineExplorerOverlay;
+    z._closeReaderOutlineExplorer(f.state);
+    f.secondary.app.pdfViewer.currentPageNumber = 9;
+    const second = z._openReaderOutlineExplorer(f.state, f.reader, f.secondary.win);
+    const newOverlay = f.state._outlineExplorerOverlay;
+    newOutline.resolve(outline()); await second;
+    oldOutline.resolve([{ title: 'Stale chapter', dest: [0, { name: 'Fit' }] }]); await first;
+    assert.equal(f.state._outlineExplorerOverlay, newOverlay);
+    assert.equal(oldOverlay.isConnected, false);
+    assert.equal(f.state.outlineExplorerVisible[f.state.outlineExplorerSelected].title, 'Methods');
+    assert.equal(f.state.outlineExplorerVisible.some(item => item.title === 'Stale chapter'), false);
+    assert.equal(f.state.outlineExplorerLoading, false);
+    assert.equal(f.secondary.doc.activeElement, newOverlay);
+  });
+
+  await check('late heading positions cannot reposition a newer tree or steal PDF focus', async () => {
+    const oldDestination = deferred();
+    const newDestination = deferred();
+    const f = fixture(async () => [
+      { title: 'Introduction', dest: [0, { name: 'Fit' }] },
+      { title: 'Current chapter', dest: 'late' },
+    ]);
+    let calls = 0;
+    f.primary.app.pdfDocument.getDestination = () =>
+      (++calls === 1 ? oldDestination.promise : newDestination.promise);
+    f.primary.app.pdfViewer.currentPageNumber = 10;
+    const first = z._openReaderOutlineExplorer(f.state, f.reader, f.primary.win);
+    await settle();
+    z._closeReaderOutlineExplorer(f.state);
+    f.primary.app.pdfViewer.currentPageNumber = 1;
+    const second = z._openReaderOutlineExplorer(f.state, f.reader, f.primary.win);
+    await settle();
+    newDestination.resolve([8, { name: 'Fit' }]); await second;
+    f.primary.doc.body.emit('pointerdown'); f.primary.doc.body.focus();
+    oldDestination.resolve([8, { name: 'Fit' }]); await first;
+    assert.equal(f.state.outlineExplorerVisible[f.state.outlineExplorerSelected].title, 'Introduction');
+    assert.equal(f.primary.doc.activeElement, f.primary.doc.body);
+    assert.equal(z._readerOutlineExplorerFocused(f.state), false);
+  });
+
+  await check('collapsing all while positions load takes priority over automatic ancestor expansion', async () => {
+    const destination = deferred();
+    const f = fixture();
+    f.state.outlineExplorerTree = await z._fetchReaderOutlineTree(f.reader, f.primary.win);
+    f.primary.app.pdfDocument.getDestination = () => destination.promise;
+    f.primary.app.pdfViewer.currentPageNumber = 5;
+    const opening = z._openReaderOutlineExplorer(f.state, f.reader, f.primary.win);
+    await settle();
+    key(f, 'M');
+    destination.resolve([6, { name: 'Fit' }]); await opening;
+    assert.equal(f.state.outlineExplorerTree[0].expanded, false);
+    assert.equal(f.state.outlineExplorerTree[0].children[0].expanded, false);
+    assert.equal(f.state.outlineExplorerVisible.length, 2);
+    assert.equal(f.state.outlineExplorerSelected, 0);
+  });
+
   await check('same-page headings use PDF destination heights instead of the next unread section', async () => {
     const data = [
       { title: 'Previous chapter', dest: [0, { name: 'Fit' }] },
@@ -299,10 +423,15 @@ async function main() {
     ]);
     f.primary.app.pdfDocument.getDestination = async () => { throw Error('Missing destination'); };
     f.primary.app.pdfViewer.currentPageNumber = 6;
-    const nativeSelection = z._findNativeCurrentOutlineSelection;
-    z._findNativeCurrentOutlineSelection = () => ({ title: 'Future' });
-    try { await z._openReaderOutlinePicker(f.state, f.reader, f.primary.win); }
-    finally { z._findNativeCurrentOutlineSelection = nativeSelection; }
+    const doc = f.reader._iframeWindow.document;
+    const nativeOutline = doc.createElementNS('', 'div');
+    const nativeSelected = doc.createElementNS('', 'a');
+    nativeSelected.textContent = 'Future';
+    nativeSelected.getAttribute = () => '#page=9';
+    nativeOutline.querySelector = () => nativeSelected;
+    nativeOutline.querySelectorAll = () => [];
+    doc.querySelector = selector => selector.includes('#outlineView') ? nativeOutline : null;
+    await z._openReaderOutlinePicker(f.state, f.reader, f.primary.win);
     const popup = f.state._outlinePicker;
     assert.equal(popup.filtered[popup.selected].entry.title, 'Chapter two');
     assert.equal(popup.error, '');

@@ -299,8 +299,7 @@ Object.assign(ZoteroVim, {
    * Compare page-local destinations in viewport order (including rotation).
    * Page-only outlines degrade to page/order matching; an unknown outline starts at zero.
    */
-  async _readerOutlinePickerInitialIndex(popup) {
-    const reading = popup.readingPosition;
+  async _readerOutlineCurrentIndex(entries, pdfWin, reading) {
     const toViewY = point => {
       if (!Number.isFinite(point.top)) return null;
       try {
@@ -311,9 +310,9 @@ Object.assign(ZoteroVim, {
       return -point.top;
     };
     const currentY = toViewY(reading);
-    const pdfDoc = popup.pdfWin.PDFViewerApplication?.pdfDocument;
-    const positions = await Promise.all(popup.items.map(item =>
-      this._readerOutlineHeadingPosition(item.entry, pdfDoc)));
+    const pdfDoc = pdfWin.PDFViewerApplication?.pdfDocument;
+    const positions = await Promise.all(entries.map(entry =>
+      this._readerOutlineHeadingPosition(entry, pdfDoc)));
     let selected = -1;
     let bestPage = -1;
     let bestY = -Infinity;
@@ -421,7 +420,8 @@ Object.assign(ZoteroVim, {
         paths.set(entry.id, path);
         return { entry, breadcrumb: parents.join(' › '), searchStr: path.join(' ').toLowerCase() };
       });
-      const initial = await this._readerOutlinePickerInitialIndex(popup);
+      const initial = await this._readerOutlineCurrentIndex(
+        popup.items.map(item => item.entry), pdfWin, popup.readingPosition);
       if (state._outlinePicker !== popup) return;
       if (!popup.selectionTouched && !popup.input.value.trim()) popup.selected = initial;
     } catch (e) {
@@ -676,14 +676,16 @@ Object.assign(ZoteroVim, {
 
   async _openReaderOutlineExplorer(state, reader, pdfWin) {
     if (state.outlineExplorerOpen) return;
+    const reading = this._readerOutlineReadingPosition(pdfWin);
     state.outlineExplorerOpen = true;
     this._createReaderOutlineExplorer(state, pdfWin);
     this._renderReaderOutlineExplorer(state);
     this._focusReaderOutlineElement(state);
-    await this._loadReaderOutlineExplorer(state, reader, pdfWin);
+    await this._loadReaderOutlineExplorer(state, reader, pdfWin, reading);
   },
 
   _closeReaderOutlineExplorer(state, pdfWin = null) {
+    state._outlineExplorerLoad = null;
     if (state._outlinePicker?.outlineOverlay
         && state._outlinePicker.outlineOverlay === state._outlineExplorerOverlay) {
       this._closeReaderOutlinePicker(state, false);
@@ -779,28 +781,51 @@ Object.assign(ZoteroVim, {
     this._setReaderOutlineExplorerFocus(state, false);
   },
 
-  async _loadReaderOutlineExplorer(state, reader, pdfWin) {
+  /** Locate once per opening, expanding only the current chapter's parent path. */
+  async _loadReaderOutlineExplorer(state, reader, pdfWin,
+    reading = this._readerOutlineReadingPosition(pdfWin)) {
+    const load = { overlay: state._outlineExplorerOverlay, interacted: false };
+    state._outlineExplorerLoad = load;
+    const current = () => {
+      if (state._outlineExplorerLoad !== load || !state.outlineExplorerOpen
+          || state._outlineExplorerOverlay !== load.overlay
+          || state._outlineExplorerPdfWin !== pdfWin) return false;
+      try { return !!load.overlay?.isConnected; } catch (_) { return false; }
+    };
     state.outlineExplorerLoading = true;
     this._renderReaderOutlineExplorer(state);
     try {
-      if (!state.outlineExplorerTree) {
-        state.outlineExplorerTree = await this._fetchReaderOutlineTree(reader, pdfWin);
+      const tree = state.outlineExplorerTree || await this._fetchReaderOutlineTree(reader, pdfWin);
+      if (!current()) return;
+      state.outlineExplorerTree = tree;
+      const entries = this._flattenReaderOutlineTree(tree);
+      const initial = await this._readerOutlineCurrentIndex(entries, pdfWin, reading);
+      if (!current()) return;
+      const selected = entries[initial];
+      if (selected && !load.interacted) {
+        const byID = new Map(entries.map(entry => [entry.id, entry]));
+        let parent = byID.get(selected.parentID);
+        while (parent) {
+          parent.expanded = true;
+          parent = byID.get(parent.parentID);
+        }
       }
       this._refreshReaderOutlineExplorer(state);
-      // Best effort: preselect nearest/current outline entry when metadata is
-      // available; otherwise fall back to the first item.
-      if (!this._selectCurrentReaderOutlineEntry(state, pdfWin)) {
-        state.outlineExplorerSelected = 0;
+      if (selected && !load.interacted) {
+        state.outlineExplorerSelected = Math.max(0, state.outlineExplorerVisible.indexOf(selected));
       }
       if (!state.outlineExplorerVisible.length) {
         this._setReaderOutlineExplorerStatus(state, 'No outline available');
       }
     } catch (e) {
+      if (!current()) return;
       Zotero.debug('[ZoteroVim] _loadReaderOutlineExplorer error: ' + e);
       state.outlineExplorerTree = [];
       this._refreshReaderOutlineExplorer(state);
       this._setReaderOutlineExplorerStatus(state, 'Error loading outline');
     }
+    if (!current()) return;
+    state._outlineExplorerLoad = null;
     state.outlineExplorerLoading = false;
     this._renderReaderOutlineExplorer(state);
   },
@@ -993,7 +1018,9 @@ Object.assign(ZoteroVim, {
     });
     list.appendChild(frag);
     const selRow = list.children[state.outlineExplorerSelected];
-    if (selRow) selRow.scrollIntoView({ block: 'nearest' });
+    if (selRow) {
+      selRow.scrollIntoView(Components.utils.cloneInto({ block: 'nearest' }, doc.defaultView));
+    }
   },
 
   _moveReaderOutlineExplorer(state, dir, amount = 1) {
@@ -1343,6 +1370,9 @@ Object.assign(ZoteroVim, {
   },
 
   _setReaderOutlineAllExpanded(state, expand) {
+    if (state._outlineExplorerLoad && state.outlineExplorerTree?.length) {
+      state._outlineExplorerLoad.interacted = true;
+    }
     const walk = (nodes) => {
       for (const node of nodes || []) {
         if (node.children?.length) node.expanded = !!expand;
@@ -1354,76 +1384,6 @@ Object.assign(ZoteroVim, {
     state.outlineExplorerSelected = Math.max(0, Math.min(state.outlineExplorerSelected, (state.outlineExplorerVisible.length || 1) - 1));
     this._renderReaderOutlineExplorer(state);
     this._setReaderOutlineExplorerStatus(state, expand ? 'Expanded all' : 'Collapsed all');
-  },
-
-  _selectCurrentReaderOutlineEntry(state, pdfWin) {
-    const items = state.outlineExplorerVisible || [];
-    if (!items.length) return false;
-
-    const nativeSelected = this._findNativeCurrentOutlineSelection(state.reader, pdfWin);
-    if (nativeSelected) {
-      const byNative = this._findReaderOutlineIndexBySignature(items, nativeSelected);
-      if (byNative >= 0) {
-        state.outlineExplorerSelected = byNative;
-        this._renderReaderOutlineExplorer(state);
-        return true;
-      }
-    }
-
-    const currentPageIndex = Math.max(0, (pdfWin.PDFViewerApplication?.pdfViewer?.currentPageNumber || 1) - 1);
-    let bestIdx = -1;
-    let bestPage = -Infinity;
-    for (let i = 0; i < items.length; i++) {
-      const pageIndex = items[i].pageIndex;
-      if (typeof pageIndex !== 'number') continue;
-      if (pageIndex <= currentPageIndex && pageIndex >= bestPage) {
-        bestPage = pageIndex;
-        bestIdx = i;
-      }
-    }
-    if (bestIdx < 0) {
-      bestIdx = items.findIndex((item) => typeof item.pageIndex === 'number');
-    }
-    if (bestIdx >= 0) {
-      state.outlineExplorerSelected = bestIdx;
-      this._renderReaderOutlineExplorer(state);
-      return true;
-    }
-    return false;
-  },
-
-  _findNativeCurrentOutlineSelection(reader, pdfWin) {
-    try {
-      const els = this._readerSidebarElements(reader, pdfWin);
-      const doc = els?.doc;
-      if (!doc) return null;
-      const root = doc.querySelector('#outlineView, [role="tree"], .outline, .outlineView');
-      if (!root) return null;
-      const anchor = root.querySelector(
-        'a.selected, .selected > a, [aria-current="true"], [aria-selected="true"], a:focus'
-      );
-      if (!anchor) return null;
-      const title = String(anchor.textContent || '').replace(/\s+/g, ' ').trim();
-      const url = String(anchor.getAttribute('href') || '');
-      const hash = url.replace(/^[^#]*#?/, '');
-      return { title, hash };
-    } catch (_) {
-      return null;
-    }
-  },
-
-  _findReaderOutlineIndexBySignature(items, sig) {
-    if (!sig) return -1;
-    const wantedTitle = String(sig.title || '').replace(/\s+/g, ' ').trim();
-    const wantedHash = String(sig.hash || '');
-    for (let i = 0; i < items.length; i++) {
-      const item = items[i];
-      const title = String(item.title || '').replace(/\s+/g, ' ').trim();
-      const hash = String(item.url || '').replace(/^[^#]*#?/, '');
-      if (wantedHash && hash && wantedHash === hash) return i;
-      if (wantedTitle && title && wantedTitle === title) return i;
-    }
-    return -1;
   },
 
   _readerSidebarDocs(reader, pdfWin) {

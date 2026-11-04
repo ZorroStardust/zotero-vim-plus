@@ -324,10 +324,11 @@ prefer Zotero's right-side note editor so you can read and edit side by side.
 | `Enter` | Jump to selected outline entry and return to Normal mode |
 | `Escape` | Close the outline explorer |
 
-When the outline explorer opens, it will try to preselect the nearest/current
-outline entry for your reading position; if the PDF metadata does not allow
-reliable mapping, it falls back to the first visible outline item. Each visible
-item also shows a hint label.
+When the outline explorer opens, it selects the chapter at the current PDF pane's
+reading position, expands that heading's parent path and scrolls it into view.
+Other branches retain their expansion state. It uses the same page and in-page
+position matching as heading search; missing metadata falls back to page matching
+or the first usable heading. Each visible item also shows a hint label.
 If the number of items is small the hints are single characters; otherwise they
 expand to two-character hints. Typing a hint only changes the current selection;
 you still press `Enter` to jump.
@@ -1268,6 +1269,10 @@ ordinary reader bindings while leaving native input/IME behavior intact;
 both the forwarding wrapper and `_textAnnotationFocused` guard suppress
 Zotero shortcuts in that pane. Closing a pane or reader invalidates its popup;
 late outline results must never replace another popup or restore stale focus.
+Tree and picker initialization share `_readerOutlineCurrentIndex()` over the
+complete flattened outline. Tree loads belong to their overlay instance through
+`_outlineExplorerLoad`; closing or replacing it invalidates both outline fetches
+and delayed destination resolution before they can update a newer tree.
 
 **Enter opening the annotation popup (Zotero 9).**  The popup is opened by
 `PdfView._handleKeyDown()` — a bound capture listener on the PDF iframe

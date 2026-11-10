@@ -256,19 +256,31 @@ with a count jump to that page number (`5G` / `5gg` = page 5).
 
 | Key | Action |
 |-----|--------|
-| `<space>ff` | Open fuzzy picker over all items in the current library |
-| `<space>fb` | Open fuzzy picker over items in the current collection |
+| `<space>ff` | Open the item picker for the current library |
+| `<space>fb` | Open the item picker for the current collection |
 | `<space>bj` | Open tab picker (see below) |
 
-The picker opens a search box in the middle of the screen. Start typing to
-filter items (sequential fuzzy matching — every character must appear in
-order). Then:
+The item picker starts with references ordered by date added, newest first.
+Titles appear first in each row, followed by a citekey when available. Use
+`Ctrl+h` / `Ctrl+l` or click a search mode above the results. Switching modes
+keeps the query in the input.
+
+- **Title, Creator, Year** searches titles, all creators, years, and citekeys.
+  Exact and whole-word matches come first, followed by prefixes, substrings,
+  and fuzzy matches. Separate words can match different fields in any order.
+- **All Fields & Tags** uses Zotero's metadata, tag, note, and annotation search.
+- **Everything** also searches indexed attachment text. With **References** or
+  **Top-level** selected, a match in a child item can surface its parent.
+
+Use `Ctrl+Shift+h` / `Ctrl+Shift+l` or click an item type to switch between
+**References**, **Any item**, **Top-level**, **Attachments**, **Notes**, and
+**Annotations**. The type applies independently of the search mode.
 
 | Key | Action |
 |-----|--------|
 | `↑` / `↓` (or `Ctrl+n` / `Ctrl+p`, `Ctrl+j` / `Ctrl+k`) | Move selection up / down |
-| `Enter` | Select the item in the item list / jump to the selected tab |
-| `Ctrl+o` | Open the selected item's PDF (items picker only) |
+| `Enter` | Select the item in the item list, jump to an annotation, or switch tabs |
+| `Ctrl+o` | Open the highlighted item or jump to its annotation (items picker only) |
 | `Ctrl+y` | Copy the selected item's full citation to the clipboard (items picker only) |
 | `Ctrl+Shift+y` | Copy the selected item's citekey to the clipboard (items picker only) |
 | `Escape` | Close the picker |

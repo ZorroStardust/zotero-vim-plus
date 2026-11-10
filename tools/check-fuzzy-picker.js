@@ -1,6 +1,5 @@
 /* global require, __dirname, console, process */
-// Regression checks for issue #8: search typing, explicit copy shortcuts and
-// selection ownership when keyboard navigation and mouse hovering overlap.
+// Regression checks for picker ranking, scope, async search and input handling.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -32,10 +31,13 @@ plugin._mainShowStatus = () => {};
 
 // Minimal DOM with persistent node identity, bubbling mouse/input events,
 // focus and observable scrolling. Layout-generated events are supplied below.
-function element(doc, fragment = false) {
+function element(doc, fragment = false, localName = '') {
   return {
-    ownerDocument: doc, fragment, children: [], parentNode: null,
+    ownerDocument: doc, fragment, localName, children: [], parentNode: null,
     style: {}, dataset: {}, listeners: {}, value: '', isConnected: true,
+    attributes: {},
+    setAttribute(name, value) { this.attributes[name] = value; },
+    click() { this.emit('click'); },
     focusCount: 0, scrollCount: 0,
     get firstChild() { return this.children[0] || null; },
     appendChild(child) {
@@ -83,43 +85,59 @@ function element(doc, fragment = false) {
 function flushTimers() {
   const pending = [...timers.values()];
   timers.clear();
-  for (const fn of pending) fn();
+  return Promise.all(pending.map(fn => fn()));
 }
 
-async function fixture(scope = 'all', count = 4, citekey = true) {
+function makeItem(id, title, overrides = {}) {
+  return {
+    id, title, itemType: 'book', year: '2026', citekey: '', kind: 'reader',
+    dateAdded: '2026-01-01 12:00:00',
+    searchStr: title.toLowerCase(),
+    getField(field) { return this[field]; },
+    getDisplayTitle() { return this.title; },
+    getCreators: () => [{ lastName: 'Author' }],
+    getAttachments: () => [], getNotes: () => [], getAnnotations: () => [],
+    isRegularItem() { return this.itemType === 'book'; },
+    isAttachment() { return this.itemType === 'attachment'; },
+    isFileAttachment() { return this.isAttachment(); },
+    ...overrides,
+  };
+}
+
+async function fixture(scope = 'all', count = 4, citekey = true, overrides = {}) {
   copies.length = 0;
   timers.clear();
   const doc = {};
-  doc.createElementNS = () => element(doc);
+  doc.createElementNS = (_ns, tag) => element(doc, false, tag);
   doc.createDocumentFragment = () => element(doc, true);
   doc.body = element(doc);
   const previousFocus = element(doc);
   doc.body.appendChild(previousFocus);
   doc.activeElement = previousFocus;
-  const items = Array.from({ length: count }, (_, i) => ({
-    id: i + 1, title: 'Yearly study ' + i, citekey: citekey ? 'study' + i : '',
-    year: '2026', author: 'Author', kind: 'reader',
-    searchStr: 'yearly study ' + i,
-    getField(field) { return this[field]; },
-    getCreators: () => [{ lastName: 'Author' }],
-    isAttachment: () => false, isNote: () => false,
-  }));
+  const items = overrides.items || Array.from({ length: count }, (_, i) =>
+    makeItem(i + 1, 'Yearly study ' + i, {
+      citekey: citekey ? 'study' + i : '',
+      dateAdded: new Date(Date.UTC(2026, 0, 1, 0, 0, count - i)).toISOString(),
+    }));
   context.Zotero.Items.getAll = async () => items;
+  context.Zotero.Items.get = ids => ids.map(id => items.find(item => item.id === id));
   context.Zotero.BetterBibTeX = {
-    KeyManager: { get: id => ({ citationKey: items[id - 1].citekey }) },
+    KeyManager: { get: id => ({ citationKey: items.find(item => item.id === id)?.citekey }) },
   };
   const selected = [];
   const opened = [];
   const win = { document: doc, ZoteroPane: {
     selectItem: id => selected.push(id),
-    collectionsView: { getSelectedCollection: () => ({ getChildItems: () => items }) },
+    viewAttachment: (id, _event, _noLocate, data) => opened.push({ id, data }),
+    collectionsView: { getSelectedCollection: () => ({ libraryID: 2,
+      getChildItems: () => overrides.collection || items }) },
   } };
   plugin._buildTabPickerItems = () => items;
   plugin._mainSelectTab = (_win, id) => selected.push(id);
-  plugin._mainOpenPDF = () => opened.push(true);
+  plugin._mainOpenPDF = (_win, _state, item) => opened.push(item);
   const state = {};
   await plugin._openFuzzyPicker(win, state, scope);
-  flushTimers(); // Initial input focus only; typing must not add copy timers.
+  await flushTimers(); // Initial input focus only; typing must not add copy timers.
   return { win, state, selected, opened, previousFocus, input: state._pickerInput };
 }
 
@@ -271,10 +289,112 @@ async function main() {
     for (const action of ['Enter', 'o']) {
       const f = await fixture();
       key(f, action, { ctrlKey: action === 'o' });
+      await Promise.resolve();
       assert.deepEqual(f.selected, [1]);
       assert.equal(f.opened.length, action === 'o' ? 1 : 0);
       assert.equal(f.state.pickerOpen, false);
     }
+  });
+
+  await check('default view is recent references and ranks exact coauthors before the cap', async () => {
+    const exact = makeItem(1, 'Introductory Econometrics', {
+      dateAdded: '2020-01-01 00:00:00',
+      getCreators: () => [{ lastName: 'Smith' }, { firstName: 'Jeffrey', lastName: 'Wooldridge' }],
+    });
+    const weak = Array.from({ length: 101 }, (_, i) =>
+      makeItem(2 + i, 'w a o a o a l a d a r a i a d a g a e'));
+    const notes = makeItem(105, 'Notebook', { itemType: 'note' });
+    const f = await fixture('all', 0, false, { items: [exact, ...weak, notes] });
+    const rows = () => Array.from(f.state._pickerFiltered, row => row.id);
+    const query = value => { f.input.value = value; f.input.emit('input'); };
+    assert.equal(rows().length, 100);
+    assert.equal(rows()[0], 102);
+    assert.equal(rows().includes(notes.id), false);
+    assert.equal(f.state._pickerResults.children[0].children[0].children.length, 1);
+    query('wooldridge');
+    assert.equal(rows()[0], exact.id);
+    assert.equal(rows().length, 100);
+    query('2026 wooldridge econometrics');
+    assert.deepEqual(rows(), [exact.id]);
+    key(f, 'Escape');
+  });
+
+  await check('type controls preserve query, collection scope and annotation navigation', async () => {
+    const parent = makeItem(1, 'Parent', { getAttachments: () => [2], getNotes: () => [3] });
+    const annotation = makeItem(4, 'Synthesis', { itemType: 'annotation', parentID: 2, key: 'ABCDE123' });
+    const attachment = makeItem(2, 'Local PDF', { itemType: 'attachment', parentID: 1,
+      getAnnotations: () => [annotation] });
+    const note = makeItem(3, 'Synthesis', { itemType: 'note', parentID: 1 });
+    const outside = makeItem(5, 'Synthesis', { itemType: 'note' });
+    const f = await fixture('collection', 0, false,
+      { items: [parent, attachment, note, annotation, outside], collection: [parent] });
+    f.input.value = 'synthesis';
+    f.input.emit('input');
+    assert.equal(f.state._pickerFiltered.length, 0);
+    key(f, 'L', { ctrlKey: true, shiftKey: true });
+    assert.deepEqual(Array.from(f.state._pickerFiltered, row => row.id), [4, 3]);
+    const buttons = f.state._pickerItemSearch.buttons.type;
+    assert.equal(buttons[1].attributes['aria-pressed'], 'true');
+    buttons[5].click();
+    assert.equal(f.input.value, 'synthesis');
+    assert.equal(f.state._pickerFiltered.length, 1);
+    assert.equal(f.state._pickerFiltered[0].id, annotation.id);
+    key(f, 'Enter', { isComposing: true });
+    assert.equal(f.state.pickerOpen, true);
+    key(f, 'Enter');
+    assert.equal(f.opened[0].id, attachment.id);
+    assert.equal(f.opened[0].data.location.annotationID, annotation.key);
+  });
+
+  await check('native modes use the captured library and discard out-of-order responses', async () => {
+    const parent = makeItem(1, 'Parent', { getAttachments: () => [2] });
+    const attachment = makeItem(2, 'Local PDF', { itemType: 'attachment', parentID: 1 });
+    const outside = makeItem(3, 'Other collection');
+    const requests = [];
+    context.Zotero.Search = function () {
+      this.addCondition = (...condition) => { this.condition = condition; };
+      this.search = () => new Promise(resolve => {
+        requests.push({ libraryID: this.libraryID, condition: this.condition, resolve });
+      });
+    };
+    const f = await fixture('collection', 0, false,
+      { items: [parent, attachment, outside], collection: [parent] });
+    f.input.value = 'inside attachment';
+    key(f, 'l', { ctrlKey: true });
+    const older = flushTimers();
+    assert.equal(f.state._pickerResults.children[0].textContent, 'Searching…');
+    key(f, 'o', { ctrlKey: true });
+    assert.deepEqual(f.opened, []);
+    key(f, 'l', { ctrlKey: true });
+    const newer = flushTimers();
+    assert.deepEqual(requests.map(r => [r.libraryID, ...r.condition]), [
+      [2, 'quicksearch-fields', 'contains', 'inside attachment'],
+      [2, 'quicksearch-everything', 'contains', 'inside attachment'],
+    ]);
+    requests[1].resolve([2, 3]);
+    await newer;
+    assert.deepEqual(Array.from(f.state._pickerFiltered, row => row.id), [1]);
+    requests[0].resolve([]);
+    await older;
+    assert.deepEqual(Array.from(f.state._pickerFiltered, row => row.id), [1]);
+    key(f, 'l', { ctrlKey: true });
+    assert.equal(f.state._pickerItemSearch.mode, 0);
+    assert.equal(f.state._pickerFiltered.length, 0);
+    key(f, 'Escape');
+  });
+
+  await check('Ctrl+o opens the captured picker item after asynchronous selection', async () => {
+    const f = await fixture();
+    let finishSelection;
+    f.win.ZoteroPane.selectItem = () => new Promise(resolve => { finishSelection = resolve; });
+    key(f, 'j', { ctrlKey: true });
+    const highlighted = f.state._pickerFiltered[1].source;
+    key(f, 'o', { ctrlKey: true });
+    assert.equal(f.state.pickerOpen, false);
+    assert.deepEqual(f.opened, []);
+    finishSelection();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(f.opened, [highlighted]);
   });
   console.log('Fuzzy picker checks passed (' + passed + ' cases).');
 }

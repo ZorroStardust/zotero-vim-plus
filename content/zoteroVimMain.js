@@ -1,6 +1,20 @@
 /* global Zotero, Components, Services */
 /* eslint-disable no-unused-vars */
 
+const ITEM_PICKER_MODES = [
+  ['', 'Title, Creator, Year', '标题、创建者、年份'],
+  ['fields', 'All Fields & Tags', '所有字段和标签'],
+  ['everything', 'Everything', '所有内容'],
+];
+const ITEM_PICKER_TYPES = [
+  ['regular', 'References', '文献'],
+  ['any', 'Any item', '任意条目'],
+  ['top', 'Top-level', '顶级条目'],
+  ['attachment', 'Attachments', '附件'],
+  ['note', 'Notes', '笔记'],
+  ['annotation', 'Annotations', '批注'],
+];
+
 /**
  * Zotero Vim Plus — main-window methods: window injection, note
  * editor, split views, fuzzy picker, notes layout. Loaded by
@@ -4096,7 +4110,7 @@ Object.assign(ZoteroVim, {
     }
   },
 
-  async _mainOpenPDF(win, winState) {
+  async _mainOpenPDF(win, winState, item = null) {
     // Mirrors Zotero's native Enter/double-click behaviour (zoteroPane.js
     // viewItems): attachments open via viewAttachment, regular items open
     // their best attachment (Zotero's getBestAttachment order — PDF matching
@@ -4104,13 +4118,15 @@ Object.assign(ZoteroVim, {
     // without any attachment fall back to the URL field / DOI in an external
     // browser.  Notes open as notes.
     try {
-      let items = win.ZoteroPane.getSelectedItems();
-      if (!items.length) {
-        this._mainEnsureItemsSelection(win.ZoteroPane?.itemsView);
-        items = win.ZoteroPane.getSelectedItems();
+      if (!item) {
+        let items = win.ZoteroPane.getSelectedItems();
+        if (!items.length) {
+          this._mainEnsureItemsSelection(win.ZoteroPane?.itemsView);
+          items = win.ZoteroPane.getSelectedItems();
+        }
+        item = items[0];
       }
-      if (!items.length) { this._mainShowStatus(win, '✗ No item selected'); return; }
-      const item = items[0];
+      if (!item) { this._mainShowStatus(win, '✗ No item selected'); return; }
 
       if (item.isAttachment()) {
         win.ZoteroPane.viewAttachment(item.id);
@@ -4360,6 +4376,8 @@ Object.assign(ZoteroVim, {
 
     const input = h('input');
     input.type = 'text';
+    const isItemPicker = scope === 'all' || scope === 'collection';
+    const zh = String(Zotero.locale || '').startsWith('zh');
     input.placeholder = scope === 'tabs' ? 'Pick tab by hint or search tab title...'
       : scope === 'collections' ? 'Search collections...' : 'Search items...';
     input.style.cssText =
@@ -4379,8 +4397,10 @@ Object.assign(ZoteroVim, {
     hintBar.textContent = scope === 'tabs'
       ? 'Type hint letter (empty query) or search title  ·  Ctrl+j/k navigate  ·  Enter select  ·  Esc close'
       : scope === 'collections' ? 'Ctrl+j/k navigate  ·  Enter select collection  ·  Esc close'
-      : 'Ctrl+j/k navigate  ·  Enter select  ·  Ctrl+o open PDF  ·  ' +
-        'Ctrl+y yank citation  ·  Ctrl+Shift+y yank citekey  ·  Esc close';
+      : zh ? 'Ctrl+j/k 导航 · Enter 选择 · Ctrl+o 打开 · Ctrl+y 复制引文 · ' +
+        'Ctrl+Shift+y 复制引用键 · Esc 关闭'
+      : 'Ctrl+j/k navigate · Enter select · Ctrl+o open · Ctrl+y yank citation · ' +
+        'Ctrl+Shift+y yank citekey · Esc close';
 
     inputWrap.appendChild(input);
     modal.appendChild(inputWrap);
@@ -4397,6 +4417,9 @@ Object.assign(ZoteroVim, {
     winState._pickerItems    = [];
     winState._pickerPointer  = null;
     winState._pickerScope    = scope;
+    const itemSearch = isItemPicker ? { zh, mode: 0, type: 0, data: null, request: 0 } : null;
+    winState._pickerItemSearch = itemSearch;
+    if (itemSearch) this._buildItemPickerControls(winState, inputWrap);
 
     // Dismiss on backdrop click
     overlay.addEventListener('mousedown', (ev) => {
@@ -4415,7 +4438,9 @@ Object.assign(ZoteroVim, {
       try { input.removeEventListener('input', onInput); } catch (_) {}
     };
 
-    setTimeout(() => { try { input.focus(); } catch (_) {} }, 30);
+    setTimeout(() => {
+      if (winState._pickerInput === input) input.focus();
+    }, 30);
 
     // ── Load items ──────────────────────────────────────────────────────────
     try {
@@ -4424,36 +4449,11 @@ Object.assign(ZoteroVim, {
         pickerItems = this._buildTabPickerItems(win);
       } else if (scope === 'collections') {
         pickerItems = await this._buildCollectionPickerItems();
-      } else {
-        const libID = Zotero.Libraries.userLibraryID;
-        let items;
-        if (scope === 'collection') {
-          const cv   = win.ZoteroPane.collectionsView;
-          const coll = cv?.getSelectedCollection?.();
-          // getChildItems is synchronous; getAll is async - must await
-          items = coll ? Array.from(coll.getChildItems(false, false) || [])
-                       : Array.from((await Zotero.Items.getAll(libID, true, false)) || []);
-        } else {
-          // onlyTopLevel=true avoids duplicates from child items; deleted=false
-          items = Array.from((await Zotero.Items.getAll(libID, true, false)) || []);
-        }
-        items = items.filter(item => !item.isAttachment() && !item.isNote());
-
-        pickerItems = items.map(item => {
-          const citekey  = Zotero.BetterBibTeX?.KeyManager?.get(item.id)?.citationKey || '';
-          const title    = item.getField('title') || '';
-          const year     = item.getField('year')  || '';
-          const creators = item.getCreators?.() || [];
-          const author   = creators.length > 0
-            ? (creators[0].lastName || creators[0].name || '') : '';
-          return {
-            id: item.id, citekey, title, year, author,
-            searchStr: [citekey, title, author, year].join(' ').toLowerCase(),
-          };
-        });
+      } else if (itemSearch) {
+        itemSearch.data = await this._loadItemPickerItems(win, scope);
       }
       if (!winState.pickerOpen || winState._pickerInput !== input) return;
-      winState._pickerItems = pickerItems;
+      winState._pickerItems = pickerItems || [];
     } catch (e) {
       if (!winState.pickerOpen || winState._pickerInput !== input) return;
       Zotero.debug('[ZoteroVim] _openFuzzyPicker load error: ' + e);
@@ -4471,6 +4471,10 @@ Object.assign(ZoteroVim, {
   },
 
   _filterAndRenderPicker(winState, query) {
+    if (winState._pickerItemSearch) {
+      this._filterItemPicker(winState, query);
+      return;
+    }
     const q = query.toLowerCase().trim();
     if (!q) {
       winState._pickerFiltered = winState._pickerItems.slice(0, 100);
@@ -4489,6 +4493,201 @@ Object.assign(ZoteroVim, {
     this._renderPickerResults(winState);
   },
 
+  /** Add independent mode and type controls. Both use the same path as their shortcuts. */
+  _buildItemPickerControls(winState, container) {
+    const search = winState._pickerItemSearch;
+    const h = tag => container.ownerDocument.createElementNS('http://www.w3.org/1999/xhtml', tag);
+    const groups = [
+      ['mode', ITEM_PICKER_MODES, search.zh ? '搜索范围' : 'Search in', 'Ctrl+h/l'],
+      ['type', ITEM_PICKER_TYPES, search.zh ? '条目类型' : 'Item type', 'Ctrl+Shift+h/l'],
+    ];
+    search.buttons = {};
+    for (const [setting, choices, label, keys] of groups) {
+      const group = h('div');
+      group.setAttribute('role', 'group');
+      group.setAttribute('aria-label', label);
+      group.style.cssText = 'display:flex;flex-wrap:wrap;align-items:center;gap:4px;margin-top:6px;';
+      const caption = h('span');
+      caption.style.cssText = 'color:#a6adc8;font-size:11px;margin-right:4px;';
+      caption.textContent = label + ' · ' + keys;
+      group.appendChild(caption);
+      search.buttons[setting] = choices.map((choice, index) => {
+        const button = h('button');
+        button.type = 'button';
+        button.textContent = choice[search.zh ? 2 : 1];
+        button.style.cssText = 'cursor:pointer;color:#cdd6f4;border:1px solid #45475a;' +
+          'border-radius:4px;padding:2px 6px;font:inherit;font-size:11px;';
+        button.addEventListener('click', () => this._setItemPickerOption(winState, setting, index));
+        group.appendChild(button);
+        return button;
+      });
+      container.appendChild(group);
+      this._updateItemPickerButtons(search, setting);
+    }
+  },
+
+  _updateItemPickerButtons(search, setting) {
+    search.buttons[setting].forEach((button, index) => {
+      const active = search[setting] === index;
+      button.setAttribute('aria-pressed', String(active));
+      button.style.backgroundColor = active ? '#45475a' : 'transparent';
+      button.style.borderColor = active ? '#89b4fa' : '#45475a';
+    });
+  },
+
+  _setItemPickerOption(winState, setting, index) {
+    const search = winState._pickerItemSearch;
+    const input = winState._pickerInput;
+    search[setting] = index;
+    this._updateItemPickerButtons(search, setting);
+    winState._pickerSelected = 0;
+    input.focus();
+    this._filterItemPicker(winState, input.value);
+  },
+
+  /** Capture the picker scope and resolve each item's top-level parent for grouped hits. */
+  async _loadItemPickerItems(win, scope) {
+    const pane = win.ZoteroPane;
+    const collection = scope === 'collection' ? pane.collectionsView?.getSelectedCollection?.() : null;
+    const selectedLibraryID = pane.getSelectedLibraryIDs
+      ? pane.getSelectedLibraryIDs()[0] : pane.getSelectedLibraryID?.();
+    const libraryID = collection?.libraryID ?? selectedLibraryID ?? Zotero.Libraries.userLibraryID;
+    const items = collection ? Array.from(collection.getChildItems(false, false))
+      : await Zotero.Items.getAll(libraryID, false, false);
+    if (collection) {
+      for (const item of items) {
+        if (item.isRegularItem()) {
+          const childIDs = item.getAttachments().concat(item.getNotes());
+          if (childIDs.length) items.push(...Zotero.Items.get(childIDs));
+        } else if (item.isAttachment() && item.isFileAttachment()) {
+          items.push(...item.getAnnotations());
+        }
+      }
+    }
+
+    const itemsByID = new Map(items.filter(item => !item.deleted).map(item => [item.id, item]));
+    const records = new Map();
+    for (const item of itemsByID.values()) {
+      let root = item;
+      while (root?.parentID) root = itemsByID.get(root.parentID);
+      if (!root) continue; // An ancestor is outside the scope or in the trash.
+      records.set(item.id, { item, rootID: root.id,
+        type: item.isRegularItem() ? 'regular' : item.itemType, dateAdded: item.dateAdded || '' });
+    }
+    const recent = [...records.values()].sort((a, b) =>
+      b.dateAdded.localeCompare(a.dateAdded) || b.item.id - a.item.id);
+    return { libraryID, records, recent };
+  },
+
+  _itemPickerSearchText(value) {
+    return String(value || '').normalize('NFKC').toLowerCase().trim().replace(/\s+/g, ' ');
+  },
+
+  /** Build and cache the fields only when a record is needed for matching or display. */
+  _itemPickerRow(record, search) {
+    if (record.row) return record.row;
+    const { item, type, rootID } = record;
+    const rawTitle = item.getDisplayTitle?.() || item.getField('title')
+      || (type === 'annotation' && (item.annotationText || item.annotationComment)) || '';
+    const creators = type === 'regular' ? item.getCreators() : [];
+    const author = creators[0]?.lastName || creators[0]?.name || '';
+    const year = type === 'regular' ? item.getField('year') || '' : '';
+    const citekey = type === 'regular' ? (
+      Zotero.BetterBibTeX?.KeyManager?.get(item.id)?.citationKey
+      || (Zotero.ItemFields?.getID('citationKey') && item.getField('citationKey')) || ''
+    ) : '';
+    const fields = [rawTitle, year, citekey, ...creators.flatMap(creator => [
+      creator.name, creator.lastName, [creator.firstName, creator.lastName].filter(Boolean).join(' '),
+    ])].map(value => this._itemPickerSearchText(value)).filter(Boolean)
+      .map(text => ({ text, words: text.split(/[^\p{L}\p{M}\p{N}]+/u).filter(Boolean) }));
+    const typeChoice = ITEM_PICKER_TYPES.find(choice => choice[0] === type);
+    const kind = type === 'regular' ? '' : typeChoice?.[search.zh ? 2 : 1] || type;
+    const parent = rootID === item.id ? '' : search.data.records.get(rootID)?.item.getDisplayTitle?.();
+    record.row = { id: item.id, source: item, type, title: rawTitle || (search.zh ? '无标题' : 'Untitled'),
+      citekey, author, year, kind, parent, fields };
+    return record.row;
+  },
+
+  /** Rank by the weakest term first so a scattered match cannot outrank complete words. */
+  _itemPickerRank(fields, query, terms) {
+    const weight = terms.length * 4 + 1;
+    if (fields.some(field => field.text === query)) return 5 * weight;
+    let weakest = 4;
+    let total = 0;
+    for (const term of terms) {
+      let best = 0;
+      for (const { text, words } of fields) {
+        if (text === term || words.includes(term)) { best = 4; break; }
+        if (words.some(word => word.startsWith(term))) best = Math.max(best, 3);
+        else if (text.includes(term)) best = Math.max(best, 2);
+        else if (!best) {
+          let offset = 0;
+          for (const char of term) {
+            const index = text.indexOf(char, offset);
+            if (index < 0) { offset = 0; break; }
+            offset = index + char.length;
+          }
+          if (offset) best = 1;
+        }
+      }
+      if (!best) return 0;
+      weakest = Math.min(weakest, best);
+      total += best;
+    }
+    return weakest * weight + total;
+  },
+
+  /** Apply the active item type and search mode. Stale native searches cannot replace rows. */
+  _filterItemPicker(winState, input) {
+    const search = winState._pickerItemSearch;
+    const data = search.data;
+    if (!data) return;
+    clearTimeout(search.timer);
+    const request = ++search.request;
+    const mode = ITEM_PICKER_MODES[search.mode][0];
+    const type = ITEM_PICKER_TYPES[search.type][0];
+    const query = this._itemPickerSearchText(input).replace(/(^| )@(?=\S)/g, '$1');
+    const terms = query.split(' ');
+    const candidates = data.recent.filter(({ item, rootID, type: itemType }) =>
+      type === 'any' || (type === 'top' ? item.id === rootID : itemType === type));
+    const show = (rows, message) => {
+      winState._pickerFiltered = rows;
+      this._renderPickerResults(winState, message);
+    };
+    const rank = (records, native = false) => records.map(record => {
+      const row = this._itemPickerRow(record, search);
+      return { row, rank: this._itemPickerRank(row.fields, query, terms) };
+    }).filter(match => native || match.rank > 0).sort((a, b) => b.rank - a.rank)
+      .slice(0, 100).map(match => match.row);
+
+    if (!query) {
+      show(candidates.slice(0, 100).map(record => this._itemPickerRow(record, search)));
+    } else if (!mode) {
+      show(rank(candidates));
+    } else {
+      show([], search.zh ? '搜索中…' : 'Searching…');
+      const isCurrent = () => winState._pickerItemSearch === search && search.request === request;
+      search.timer = setTimeout(async () => {
+        try {
+          const native = new Zotero.Search();
+          native.libraryID = data.libraryID;
+          native.addCondition('quicksearch-' + mode, 'contains', input.trim());
+          const results = await native.search();
+          if (!isCurrent()) return;
+          const matches = new Set();
+          for (const id of results) {
+            const record = data.records.get(id);
+            if (record) matches.add(type === 'regular' || type === 'top' ? record.rootID : id);
+          }
+          show(rank(candidates.filter(record => matches.has(record.item.id)), true));
+        } catch (e) {
+          Zotero.debug('[ZoteroVim] _filterItemPicker search error: ' + e);
+          if (isCurrent()) show([], search.zh ? '搜索失败' : 'Search failed');
+        }
+      }, 150);
+    }
+  },
+
   _onPickerKeyDown(e, win, winState) {
     // The picker is also routed through a window-level capture listener
     // (registered in _injectIntoMainWindow) so that keys like Ctrl+j/k are
@@ -4500,6 +4699,26 @@ Object.assign(ZoteroVim, {
     const keyLower = String(k || '').toLowerCase();
     const code = String(e.code || '');
     const maxIdx = Math.max(0, (winState._pickerFiltered.length || 1) - 1);
+    const itemSearch = winState._pickerItemSearch;
+
+    if (e.isComposing || e.keyCode === 229) {
+      e.stopPropagation();
+      return;
+    }
+    if (itemSearch && e.ctrlKey && !e.altKey && !e.metaKey
+        && (keyLower === 'h' || keyLower === 'l')) {
+      e.preventDefault(); e.stopPropagation();
+      const setting = e.shiftKey ? 'type' : 'mode';
+      const count = itemSearch.buttons[setting].length;
+      const offset = keyLower === 'h' ? -1 : 1;
+      this._setItemPickerOption(winState, setting, (itemSearch[setting] + offset + count) % count);
+      return;
+    }
+    if (itemSearch && e.target?.localName === 'button' && (k === 'Enter' || k === ' ')) {
+      e.preventDefault(); e.stopPropagation();
+      e.target.click();
+      return;
+    }
 
     if (k === 'Escape') {
       e.preventDefault(); e.stopPropagation();
@@ -4511,16 +4730,10 @@ Object.assign(ZoteroVim, {
       this._pickerSelectItem(win, winState);
       return;
     }
-    // Ctrl+o = open the PDF of the selected item (items scope only — in the
-    // tab picker 'o' stays a hint letter).  A bare 'o' always types into the
-    // search box so queries containing 'o' are unaffected.  _pickerSelectItem
-    // selects the item and closes the picker; _mainOpenPDF then opens its PDF
-    // attachment.
-    if (e.ctrlKey && !e.altKey && !e.shiftKey && keyLower === 'o'
-        && !['tabs', 'collections'].includes(winState._pickerScope)) {
+    // Pass the picker result to the open action, even while Zotero is updating selection.
+    if (itemSearch && e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey && keyLower === 'o') {
       e.preventDefault(); e.stopPropagation();
-      this._pickerSelectItem(win, winState);
-      this._mainOpenPDF(win, winState);
+      this._pickerSelectItem(win, winState, true);
       return;
     }
     const isCtrlDown = e.ctrlKey && (keyLower === 'n' || keyLower === 'j' || code === 'KeyN' || code === 'KeyJ');
@@ -4552,8 +4765,7 @@ Object.assign(ZoteroVim, {
     }
     // Search text, including y/yy, stays native. Copy only with an explicit
     // modifier, immediately, so typing speed never changes the action.
-    if (e.ctrlKey && !e.metaKey && !e.altKey && keyLower === 'y'
-        && !['tabs', 'collections'].includes(winState._pickerScope)) {
+    if (itemSearch && e.ctrlKey && !e.metaKey && !e.altKey && keyLower === 'y') {
       e.preventDefault(); e.stopPropagation();
       if (e.shiftKey) this._pickerYankCitekey(win, winState);
       else this._pickerYankCitation(win, winState);
@@ -4567,6 +4779,11 @@ Object.assign(ZoteroVim, {
   _pickerYankCitation(win, winState) {
     const item = (winState._pickerFiltered || [])[winState._pickerSelected];
     if (!item) return;
+    if (item.type !== 'regular') {
+      this._mainShowStatus(win, winState._pickerItemSearch.zh
+        ? '请选择文献以复制引文' : 'Select a reference to copy its citation');
+      return;
+    }
     const parts = [];
     if (item.citekey) parts.push('@' + item.citekey);
     if (item.title)   parts.push(item.title);
@@ -4584,7 +4801,7 @@ Object.assign(ZoteroVim, {
     this._closeFuzzyPicker(win, winState);
   },
 
-  _renderPickerResults(winState) {
+  _renderPickerResults(winState, message) {
     const container = winState._pickerResults;
     if (!container) return;
     const items    = winState._pickerFiltered || [];
@@ -4597,14 +4814,15 @@ Object.assign(ZoteroVim, {
     if (items.length === 0) {
       const noEl = h('div');
       noEl.style.cssText = 'padding:12px;color:#6c7086';
-      noEl.textContent = 'No results';
+      noEl.textContent = message || (winState._pickerItemSearch?.zh ? '无结果' : 'No results');
       container.appendChild(noEl);
       return;
     }
 
     const frag = doc.createDocumentFragment();
-    const win  = winState._pickerWin;
+    const win = winState._pickerWin;
     const isTabPicker = winState._pickerScope === 'tabs';
+    const isCollectionPicker = winState._pickerScope === 'collections';
 
     items.forEach((item, i) => {
       const row = h('div');
@@ -4617,26 +4835,32 @@ Object.assign(ZoteroVim, {
       if (isTabPicker) {
         const hint = this._pickerHintForIndex(i);
         cite.textContent = hint ? '[' + hint + ']' : '[' + String(i + 1) + ']';
-      } else if (winState._pickerScope === 'collections') {
+      } else if (isCollectionPicker) {
         cite.textContent = item.kind;
       } else {
-        cite.textContent = item.citekey ? '@' + item.citekey : '(no citekey)';
+        cite.textContent = item.citekey ? '@' + item.citekey : '';
       }
       const titleSpan = h('span');
       titleSpan.style.cssText = 'color:#cdd6f4;';
       titleSpan.textContent   = item.title.length > 72
         ? item.title.slice(0, 72) + '…' : item.title;
-      line1.appendChild(cite);
+      if (isTabPicker || isCollectionPicker) line1.appendChild(cite);
       line1.appendChild(titleSpan);
+      if (item.citekey && !isTabPicker && !isCollectionPicker) {
+        cite.style.marginRight = '0';
+        cite.style.marginLeft = '8px';
+        line1.appendChild(cite);
+      }
 
       const meta = h('div');
       meta.style.cssText = 'color:#6c7086;font-size:11px;margin-top:1px;padding-left:2px;';
-      meta.textContent = winState._pickerScope === 'collections' ? item.path : isTabPicker
+      meta.textContent = isCollectionPicker ? item.path : isTabPicker
         ? [item.kind, item.selected ? 'selected' : ''].filter(Boolean).join(' · ')
-        : [item.author, item.year].filter(Boolean).join(', ');
+        : [[item.author, item.year].filter(Boolean).join(', '), item.kind, item.parent]
+          .filter(Boolean).join(' · ');
 
       row.appendChild(line1);
-      row.appendChild(meta);
+      if (meta.textContent) row.appendChild(meta);
       frag.appendChild(row);
 
       row.addEventListener('click', () => {
@@ -4680,9 +4904,10 @@ Object.assign(ZoteroVim, {
     this._updatePickerSelection(winState, false);
   },
 
-  async _pickerSelectItem(win, winState) {
+  async _pickerSelectItem(win, winState, open = false) {
     const item = (winState._pickerFiltered || [])[winState._pickerSelected];
     if (!item) return;
+    const input = winState._pickerInput;
     try {
       if (winState._pickerScope === 'tabs') {
         this._mainSelectTab(win, item.id);
@@ -4700,13 +4925,21 @@ Object.assign(ZoteroVim, {
         }
         return;
       } else {
-        win.ZoteroPane.selectItem(item.id);
-        Zotero.debug('[ZoteroVim] pickerSelectItem: id=' + item.id);
+        this._closeFuzzyPicker(win, winState);
+        if (item.type === 'annotation') {
+          await win.ZoteroPane.viewAttachment(item.source.parentID, null, false, {
+            location: { annotationID: item.source.key },
+          });
+        } else {
+          await win.ZoteroPane.selectItem(item.id);
+          if (open && !win.closed) await this._mainOpenPDF(win, winState, item.source);
+        }
+        return;
       }
     } catch (e) {
       Zotero.debug('[ZoteroVim] _pickerSelectItem error: ' + e);
     }
-    this._closeFuzzyPicker(win, winState);
+    if (winState._pickerInput === input) this._closeFuzzyPicker(win, winState);
   },
 
   _buildTabPickerItems(win) {
@@ -4806,10 +5039,13 @@ Object.assign(ZoteroVim, {
     winState._pickerOverlay  = null;
     winState._pickerInput    = null;
     winState._pickerResults  = null;
+    winState._pickerItems    = [];
     winState._pickerFiltered = [];
     winState._pickerCleanup  = null;
     winState._pickerPointer  = null;
     winState._pickerScope    = null;
+    clearTimeout(winState._pickerItemSearch?.timer);
+    winState._pickerItemSearch = null;
 
     // Restore focus to wherever it was before the picker opened.  The overlay
     // removal leaves focus on <body>: if the selected tab is a reader, the

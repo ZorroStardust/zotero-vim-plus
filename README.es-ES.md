@@ -177,19 +177,36 @@ página 5).
 
 | Tecla | Acción |
 |-----|--------|
-| `<space>ff` | Abrir selector difuso sobre todos los elementos de la biblioteca actual |
-| `<space>fb` | Abrir selector difuso sobre los elementos de la colección actual |
+| `<space>ff` | Abrir el selector de elementos de la biblioteca actual |
+| `<space>fb` | Abrir el selector de elementos de la colección actual |
 | `<space>bj` | Abrir selector de pestañas (ver abajo) |
 
-El selector abre una caja de búsqueda en el centro de la pantalla. Empieza a
-escribir para filtrar elementos (coincidencia difusa secuencial — cada
-carácter debe aparecer en orden). Luego:
+El selector muestra primero las referencias añadidas más recientemente. Cada
+fila empieza por el título y muestra la clave de cita cuando está disponible.
+Usa `Ctrl+h` / `Ctrl+l` o haz clic en un modo encima de los resultados para
+cambiar el alcance de la búsqueda y conservar la consulta.
+
+- **Title, Creator, Year** busca en el título, todos los creadores, el año y la
+  clave de cita. Las coincidencias exactas y de palabras completas tienen
+  prioridad, seguidas de prefijos, subcadenas y coincidencias difusas. Las
+  palabras pueden coincidir en distintos campos y en cualquier orden.
+- **All Fields & Tags** usa la búsqueda de Zotero para consultar metadatos,
+  etiquetas, notas y anotaciones.
+- **Everything** también busca en el texto indexado de los adjuntos. En los
+  modos que usan la búsqueda de Zotero, una coincidencia en un elemento hijo
+  puede mostrar su elemento padre al elegir **References** o **Top-level**.
+
+Usa `Ctrl+Shift+h` / `Ctrl+Shift+l` o haz clic en el tipo de elemento para
+elegir referencias (**References**), cualquier elemento (**Any item**),
+elementos de nivel superior (**Top-level**), adjuntos (**Attachments**),
+notas (**Notes**) o anotaciones (**Annotations**). Puedes combinar el tipo
+con cualquier modo de búsqueda.
 
 | Tecla | Acción |
 |-----|--------|
 | `↑` / `↓` (o `Ctrl+n` / `Ctrl+p`, `Ctrl+j` / `Ctrl+k`) | Mover la selección hacia arriba / abajo |
-| `Enter` | Seleccionar el elemento en la lista de elementos / saltar a la pestaña seleccionada |
-| `Ctrl+o` | Abrir el PDF del elemento seleccionado (solo selector de elementos) |
+| `Enter` | Seleccionar el elemento en la lista, saltar a la anotación o cambiar de pestaña |
+| `Ctrl+o` | Abrir el elemento resaltado o saltar a la anotación (solo selector de elementos) |
 | `Ctrl+y` | Copiar la cita completa del elemento seleccionado (solo selector de elementos) |
 | `Ctrl+Shift+y` | Copiar la citekey del elemento seleccionado (solo selector de elementos) |
 | `Escape` | Cerrar el selector |
@@ -503,8 +520,8 @@ lector), sobre lo que tenga el foco:
 
 | Tecla | Acción |
 |-----|--------|
-| `<space>ff` | Selector difuso sobre todos los elementos de la biblioteca actual |
-| `<space>fb` | Selector difuso sobre los elementos de la colección actual |
+| `<space>ff` | Selector de elementos de la biblioteca actual |
+| `<space>fb` | Selector de elementos de la colección actual |
 | `<space>bj` | Abrir selector de pestañas |
 | `<space>n` | Alternar superposición de diseño de notas |
 | `<space>e` | Enfocar el árbol de colecciones |
@@ -792,8 +809,8 @@ Abrir **Editar → Preferencias** (macOS: **Zotero → Ajustes**) y navegar al p
 | `cursorToVisual` | Entrar en modo Visual desde cursor actual |
 | `mainTabPick` | Abrir selector de pestañas para pestañas Zotero abiertas actualmente |
 | `mainNotesLayout` | Alternar superposición de diseño de notas (lista izquierda + vista previa derecha) |
-| `mainFuzzyAll` | Abrir selector difuso sobre todos los elementos de la biblioteca actual |
-| `mainFuzzyCollection` | Abrir selector difuso sobre los elementos de la colección actual |
+| `mainFuzzyAll` | Abrir el selector de elementos de la biblioteca actual |
+| `mainFuzzyCollection` | Abrir el selector de elementos de la colección actual |
 | `mainYankCitekey` | Copiar la citekey del elemento seleccionado al portapapeles |
 | `mainOpenPDF` | Abrir el PDF del elemento seleccionado |
 | `mainClosePDF` | Cerrar la pestaña de PDF activa |

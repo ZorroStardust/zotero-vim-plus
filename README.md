@@ -740,7 +740,8 @@ keys appear in the shortcut hints.
 
 Use `<space>fg` or **Search PDF figure and table captions** in the `:` command
 palette to search by caption label, text or page. The first search indexes the
-local PDF. A figure or table jump goes to its caption or explicit outline entry.
+local PDF. A jump briefly outlines the matched figure or table and its caption.
+When the body cannot be identified, the jump uses the caption or outline entry.
 Selected annotations are highlighted in the PDF and scrolled to in the sidebar.
 
 | Key | Action |

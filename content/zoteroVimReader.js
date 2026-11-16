@@ -569,7 +569,10 @@ Object.assign(ZoteroVim, {
     }
     popup.activating = true;
     const ok = popup.captions
-      ? await this._goToReaderCaption(popup.reader, popup.pdfWin, item.entry)
+      ? await this._goToReaderCaption(state, popup.reader, popup.pdfWin, item.entry,
+        () => state._outlinePicker === popup && !popup.pdfWin.closed
+          && popup.pdfWin.PDFViewerApplication?.pdfDocument === popup.pdfDoc
+          && [ir?._primaryView, ir?._secondaryView].some(view => view?._iframeWindow === popup.pdfWin))
       : await this._goToReaderOutlineEntry(popup.reader, popup.pdfWin, item.entry);
     if (state._outlinePicker !== popup) return;
     if (![ir?._primaryView, ir?._secondaryView]
@@ -589,6 +592,7 @@ Object.assign(ZoteroVim, {
     this._setMode(state, 'normal');
     state.activePdfWin = popup.pdfWin;
     popup.pdfWin.focus();
+    if (popup.captions) this._rememberReaderTargetJump(state, popup.pdfWin, item.entry.kind, item.entry);
     this._recordReaderHistoryPoint(popup.reader, state, popup.pdfWin);
   },
 
@@ -654,7 +658,7 @@ Object.assign(ZoteroVim, {
   },
 
   /** Zotero's optional structured document API exposes typed local caption blocks. */
-  async _readerStructuredCaptions(itemID, isCurrent) {
+  async _readerStructuredCaptions(itemID, isCurrent, cache) {
     if (!itemID || typeof Zotero.SDT?.getReader !== 'function') return [];
     const source = await Zotero.SDT.getReader(itemID);
     if (!isCurrent() || !source || typeof source.getBlocks !== 'function') return [];
@@ -666,24 +670,33 @@ Object.assign(ZoteroVim, {
       : Array.isArray(part?.content) ? part.content.map(textOf).join(
         part.content.every(child => typeof child?.text === 'string') ? '' : ' ') : '';
     const captions = [];
+    const bodies = new Map();
     for (const block of blocks) {
-      if (block?.type !== 'caption' || block.reference) continue;
-      const title = textOf(block).replace(/\s+/gu, ' ').trim();
-      const label = this._readerCaptionLabel(title);
+      if (!['caption', 'image', 'table'].includes(block?.type) || block.reference) continue;
       const anchors = block.anchor?.pageRects;
-      if (!label || !Array.isArray(anchors)) continue;
-      const anchor = anchors.filter(rect => Array.isArray(rect) && rect.length === 5
+      if (!Array.isArray(anchors)) continue;
+      const valid = anchors.filter(rect => Array.isArray(rect) && rect.length === 5
         && rect.every(Number.isFinite) && Number.isInteger(rect[0]) && rect[0] >= 0
-        && rect[3] > rect[1] && rect[4] > rect[2])
-        .sort((a, b) => a[0] - b[0] || b[4] - a[4] || a[1] - b[1])[0];
-      if (anchor) captions.push({ ...label, title, pageIndex: anchor[0],
-        left: anchor[1], top: anchor[4] });
+        && rect[3] > rect[1] && rect[4] > rect[2]);
+      if (!valid.length) continue;
+      const pageIndex = Math.min(...valid.map(anchor => anchor[0]));
+      const samePage = valid.filter(anchor => anchor[0] === pageIndex);
+      const rect = samePage.map(anchor => anchor.slice(1)).reduce(this._readerUnionRects);
+      if (block.type === 'caption') {
+        const title = textOf(block).replace(/\s+/gu, ' ').trim();
+        const label = this._readerCaptionLabel(title);
+        if (label) captions.push({ ...label, title, pageIndex, left: rect[0], top: rect[3], rect });
+      } else if (samePage.length === valid.length) {
+        if (!bodies.has(pageIndex)) bodies.set(pageIndex, []);
+        bodies.get(pageIndex).push({ kind: block.type === 'image' ? 'figure' : 'table', rect });
+      }
     }
+    cache.nativeBodies = bodies;
     return captions;
   },
 
-  /** Rebuild caption leads from PDF.js text runs, in page coordinates at any zoom. */
-  _readerPdfPageCaptions(items, pageIndex) {
+  /** Rebuild lines from PDF.js text runs in page coordinates, keeping columns apart. */
+  _readerPdfTextLines(items) {
     const chunks = [];
     for (const item of items) {
       const [a, b, , , x, y] = item.transform || [];
@@ -719,6 +732,10 @@ Object.assign(ZoteroVim, {
       line.text = line.text.normalize('NFKC').replace(/\s+/gu, ' ').trim();
       line.label = this._readerCaptionLabel(line.text);
     }
+    return lines;
+  },
+
+  _readerPdfPageCaptions(items, pageIndex, lines = this._readerPdfTextLines(items)) {
     return lines.flatMap((line, index) => {
       const label = line.label;
       if (!label) return [];
@@ -733,6 +750,7 @@ Object.assign(ZoteroVim, {
       let previous = line;
       let title = line.text;
       let left = line.x;
+      let right = line.right;
       let parts = 1;
       for (let j = index + 1; j < lines.length && parts < 8; j++) {
         const next = lines[j];
@@ -746,11 +764,14 @@ Object.assign(ZoteroVim, {
         const joinWord = /-$/u.test(title) && /^\p{Ll}/u.test(next.text);
         title += (joinWord ? '' : ' ') + next.text;
         left = Math.min(left, next.x);
+        right = Math.max(right, next.right);
         previous = next;
         parts++;
         if (/[.!?。！？]$/u.test(next.text)) break;
       }
-      return [{ ...label, title, pageIndex, left, top: line.y + size }];
+      const top = line.y + size;
+      return [{ ...label, title, pageIndex, left, top,
+        rect: [left, previous.y - size * 0.22, right, top] }];
     });
   },
 
@@ -769,7 +790,7 @@ Object.assign(ZoteroVim, {
         entries.push(target);
       };
       try {
-        const native = await this._readerStructuredCaptions(reader.itemID, isCurrent);
+        const native = await this._readerStructuredCaptions(reader.itemID, isCurrent, cache);
         native.filter(entry => entry.pageIndex < pdfDoc.numPages).forEach(add);
       } catch (e) {
         Zotero.debug('[ZoteroVim] SDT captions: ' + e);
@@ -810,16 +831,265 @@ Object.assign(ZoteroVim, {
       || (a.left ?? 0) - (b.left ?? 0);
   },
 
-  /** Jump to the caption's PDF coordinates without changing the zoom or sibling pane. */
-  async _goToReaderCaption(reader, pdfWin, entry) {
-    if (entry.outline) return this._goToReaderOutlineEntry(reader, pdfWin, entry.outline);
-    const viewer = pdfWin.PDFViewerApplication?.pdfViewer;
+  _readerUnionRects(a, b) {
+    return [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[2], b[2]), Math.max(a[3], b[3])];
+  },
+
+  /** Follow PDF transforms to expose image, vector group and painted path bounds. */
+  _readerPaintedRects(list, ops) {
+    const result = [];
+    if (!ops || !list?.fnArray || !list.argsArray) return result;
+    const paint = new Set(['stroke', 'closeStroke', 'fill', 'eoFill', 'fillStroke',
+      'eoFillStroke', 'closeFillStroke', 'closeEOFillStroke'].map(name => ops[name]).filter(Number.isFinite));
+    const images = new Set(['paintImageXObject', 'paintInlineImageXObject', 'paintImageMaskXObject']
+      .map(name => ops[name]).filter(Number.isFinite));
+    let matrix = [1, 0, 0, 1, 0, 0];
+    const stack = [];
+    const multiply = ([a, b, c, d, e, f], [g, h, i, j, k, l]) =>
+      [a * g + c * h, b * g + d * h, a * i + c * j, b * i + d * j, a * k + c * l + e, b * k + d * l + f];
+    const bounds = (box, [a, b, c, d, e, f] = matrix) => {
+      if (box?.length !== 4 || !Array.from(box).every(Number.isFinite)) return null;
+      const [l, btm, r, t] = box;
+      const xs = [a * l + c * btm, a * l + c * t, a * r + c * btm, a * r + c * t];
+      const ys = [b * l + d * btm, b * l + d * t, b * r + d * btm, b * r + d * t];
+      return [Math.min(...xs) + e, Math.min(...ys) + f, Math.max(...xs) + e, Math.max(...ys) + f];
+    };
+    const add = (rect, type) => {
+      if (!rect || rect[2] - rect[0] < 20) return;
+      result.push({ rect, type });
+    };
+    let path = null;
+    for (let i = 0; i < list.fnArray.length; i++) {
+      const op = list.fnArray[i];
+      const args = list.argsArray[i] || [];
+      if (op === ops.save) stack.push({ matrix });
+      else if (op === ops.beginGroup || op === ops.paintFormXObjectBegin) {
+        const group = op === ops.beginGroup;
+        const transform = group ? args[0]?.matrix : args[0];
+        const transformed = transform?.length === 6 ? multiply(matrix, transform) : matrix;
+        const rect = bounds(group ? args[0]?.bbox : args[1], transformed);
+        stack.push({ matrix, rect, start: result.length });
+        if (!group) matrix = transformed;
+      } else if (op === ops.restore || op === ops.endGroup || op === ops.paintFormXObjectEnd) {
+        const frame = stack.pop();
+        if (frame) {
+          if (result.length > frame.start) add(frame.rect, 'group');
+          matrix = frame.matrix;
+        }
+      } else if (op === ops.transform && args.length === 6) matrix = multiply(matrix, args);
+      else if (images.has(op)) add(bounds([0, 0, 1, 1]), 'image');
+      else if (op === ops.constructPath) {
+        const rect = bounds(args[2]);
+        if (typeof args[0] !== 'number') path = path && rect ? this._readerUnionRects(path, rect) : rect;
+        else if (paint.has(args[0])) add(rect, 'path');
+      } else if (paint.has(op) || op === ops.endPath) {
+        if (paint.has(op)) add(path, 'path');
+        path = null;
+      }
+    }
+    return result;
+  },
+
+  /** Read graphics only on pages the user jumps to. Keep the caption index lightweight. */
+  _readerCaptionGeometry(cache, pdfWin, pageIndex) {
+    const pages = cache.graphicPages || (cache.graphicPages = new Map());
+    if (pages.has(pageIndex)) return pages.get(pageIndex);
+    const pdfDoc = pdfWin.PDFViewerApplication.pdfDocument;
+    const ops = pdfWin.pdfjsLib?.OPS;
+    const geometry = (async () => {
+      const page = await pdfDoc.getPage(pageIndex + 1);
+      const [text, list] = await Promise.allSettled([
+        page.getTextContent(), ops && page.getOperatorList?.(Components.utils.cloneInto({
+          annotationMode: 0,
+        }, pdfWin)),
+      ]);
+      const lines = this._readerPdfTextLines(text.value?.items || []);
+      return { lines, captions: this._readerPdfPageCaptions([], pageIndex, lines),
+        painted: this._readerPaintedRects(list.value, ops), pageRect: page.view };
+    })();
+    pages.set(pageIndex, geometry);
+    geometry.catch(() => pages.delete(pageIndex));
+    return geometry;
+  },
+
+  /** Ruled tables without structured tags can be bounded by aligned rules and cells. */
+  _readerRuledTableRects(painted, lines) {
+    const rules = painted.filter(({ rect: r, type }) => type === 'path'
+      && r[2] - r[0] >= 65 && r[3] - r[1] <= 2).map(({ rect }) => rect)
+      .sort((a, b) => b[3] - a[3]);
+    return rules.flatMap((top, index) => {
+      let bottom = null;
+      let last = top;
+      for (let i = index + 1; i < rules.length; i++) {
+        const rule = rules[i];
+        if (last[3] - rule[3] > 75 || top[3] - rule[3] > 360) break;
+        if (Math.abs(top[0] - rule[0]) > 5 || Math.abs(top[2] - rule[2]) > 5) continue;
+        if (top[3] - rule[3] >= 12) bottom = rule;
+        last = rule;
+      }
+      if (!bottom) return [];
+      const cells = lines.filter(line => line.y < top[3] && line.y > bottom[1]
+        && line.x >= top[0] - 3 && line.right <= top[2] + 3);
+      return cells.some((cell, i) => cells.slice(i + 1).some(other =>
+        Math.abs(other.y - cell.y) < 2 && other.x > cell.right + 7))
+        ? [this._readerUnionRects(top, bottom)] : [];
+    });
+  },
+
+  /** Pair on the same page and in the same column, with no text or rival caption in the gap. */
+  _readerCaptionRegion(entry, entries, geometry, native) {
+    const caption = entry.rect;
+    const { painted = [], lines = [], pageRect = null } = geometry || {};
+    const width = rect => rect[2] - rect[0];
+    const overlap = (a, b) => Math.min(a[2], b[2]) - Math.max(a[0], b[0]);
+    const gap = (a, b) => Math.max(a[1], b[1]) - Math.min(a[3], b[3]);
+    const aligned = (a, b) => overlap(a, b) >= Math.min(width(a), width(b)) * 0.62;
+    const siblings = entries.filter(other => other !== entry && other.rect);
+    const scoreBody = body => {
+      const distance = gap(body, caption);
+      if (distance < -5 || distance > 50 || !aligned(body, caption)) return null;
+      const above = body[3] > caption[3];
+      const bottom = above ? caption[3] : body[3];
+      const top = above ? body[1] : caption[1];
+      if (lines.some(line => line.y + line.height * 0.45 > bottom + 1
+          && line.y + line.height * 0.45 < top - 1 && line.text.length >= 8
+          && !/^\([a-z]\)\s/iu.test(line.text)
+          && line.x < Math.min(body[2], caption[2]) && line.right > Math.max(body[0], caption[0]))) return null;
+      if (siblings.some(other => aligned(body, other.rect)
+          && gap(body, other.rect) < distance - 1)) return null;
+      return Math.max(0, distance) + (above === (entry.kind === 'figure') ? 0 : 13);
+    };
+    const match = candidates => candidates.map(body => ({ body, score: scoreBody(body) }))
+      .filter(item => item.score !== null)
+      .sort((a, b) => a.score - b.score || width(b.body) - width(a.body))[0]?.body;
+    const nativeRects = native.filter(item => item.kind === entry.kind).map(item => item.rect);
+    const joinPanels = (body, panels) => {
+      if (!body) return body;
+      let combined = body;
+      for (const other of panels) {
+        const vertical = Math.min(body[3], other[3]) - Math.max(body[1], other[1]);
+        if (vertical < Math.min(body[3] - body[1], other[3] - other[1]) * 0.65
+            || overlap(body, other) > 2 || overlap(body, other) < -24) continue;
+        const union = this._readerUnionRects(combined, other);
+        if (aligned(other, caption) && scoreBody(union) !== null) combined = union;
+      }
+      return combined;
+    };
+    let body = match(nativeRects);
+    if (entry.kind === 'figure') body = joinPanels(body, nativeRects);
+    if (!body && entry.kind === 'table') body = match(this._readerRuledTableRects(painted, lines));
+    if (!body && entry.kind === 'figure') {
+      const candidates = painted.filter(({ rect, type }) => width(rect) >= 36
+        && rect[3] - rect[1] >= 18 && (!pageRect || (width(rect) <= width(pageRect) * 0.94
+          && rect[3] - rect[1] < (pageRect[3] - pageRect[1]) * 0.83))
+        && (type !== 'path' || (width(rect) >= width(caption) * 0.5 && gap(rect, caption) <= 18)))
+        .map(({ rect }) => rect);
+      // Prefer the outer drawing bounds when smaller panels are part of the same object.
+      const colocated = candidates.filter(rect => scoreBody(rect) !== null);
+      body = match(colocated.filter(rect => !colocated.some(outer => outer !== rect
+        && outer[0] <= rect[0] + 1 && outer[1] <= rect[1] + 1
+        && outer[2] >= rect[2] - 1 && outer[3] >= rect[3] - 1
+        && (width(outer) > width(rect) + 2 || outer[3] - outer[1] > rect[3] - rect[1] + 2))));
+      body = joinPanels(body, colocated);
+    }
+    return body ? this._readerUnionRects(caption, body) : caption;
+  },
+
+  /** Frame the region in the originating pane, shrinking only when it would be clipped. */
+  async _goToReaderCaption(state, reader, pdfWin, entry, isCurrent = () => true) {
+    const app = pdfWin.PDFViewerApplication;
+    const viewer = app?.pdfViewer;
+    const cache = this._readerTargetCache(state, pdfWin);
+    const native = cache.nativeBodies?.get(entry.pageIndex) || [];
+    let geometry;
+    if (typeof app.pdfDocument.getPage === 'function' && (pdfWin.pdfjsLib?.OPS || native.length || !entry.rect)) {
+      geometry = await this._readerCaptionGeometry(cache, pdfWin, entry.pageIndex).catch(e => {
+        Zotero.debug('[ZoteroVim] read graphic bounds: ' + e);
+      });
+    }
+    if (!isCurrent()) return false;
+    if (!entry.rect) {
+      entry = geometry?.captions.find(caption =>
+        caption.kind === entry.kind && caption.label.toLowerCase() === entry.label.toLowerCase()) || entry;
+      if (!entry.rect && entry.outline) {
+        this._clearReaderCaptionJump(state, pdfWin);
+        return this._goToReaderOutlineEntry(reader, pdfWin, entry.outline);
+      }
+    }
     if (typeof viewer?.scrollPageIntoView !== 'function') return false;
+    const page = viewer.getPageView?.(entry.pageIndex);
+    const siblings = geometry?.captions.filter(other => other.kind !== entry.kind
+      || other.label.toLowerCase() !== entry.label.toLowerCase()) || [];
+    const region = entry.rect && this._readerCaptionRegion(entry, siblings, geometry, native);
+    let left = entry.left, top = entry.top, scale = null;
+    if (region && page?.viewport && viewer.container?.clientHeight > 0 && viewer.container.clientWidth > 0) {
+      const rect = this._readerCaptionViewportRect(page.viewport, region);
+      const { clientWidth: w, clientHeight: h } = viewer.container;
+      const padding = Math.max(8, Math.min(24, w * 0.06, h * 0.06));
+      const ratio = Math.min(1, (w - padding * 2) / (rect[2] - rect[0]),
+        (h - padding * 2) / (rect[3] - rect[1]));
+      if (ratio > 0 && ratio < 1 && viewer.currentScale > 0) scale = viewer.currentScale * ratio;
+      const applied = scale ? ratio : 1;
+      const offsetX = (w / applied - (rect[2] - rect[0])) / 2;
+      const offsetY = (h / applied - (rect[3] - rect[1])) / 2;
+      const clamp = (position, pageSize, viewSize) =>
+        Math.max(0, Math.min(position, pageSize - viewSize / applied));
+      [left, top] = page.viewport.convertToPdfPoint(
+        clamp(rect[0] - offsetX, page.viewport.width, w),
+        clamp(rect[1] - offsetY, page.viewport.height, h));
+    }
     viewer.scrollPageIntoView(Components.utils.cloneInto({
       pageNumber: entry.pageIndex + 1,
-      destArray: [null, { name: 'XYZ' }, entry.left, entry.top, null],
+      destArray: [null, { name: 'XYZ' }, left, top, scale],
     }, pdfWin));
+    if (region) this._showReaderCaptionJump(state, pdfWin, page, region);
     return true;
+  },
+
+  _readerCaptionViewportRect(viewport, rect) {
+    const [x1, y1, x2, y2] = viewport.convertToViewportRectangle(rect);
+    return [Math.min(x1, x2), Math.min(y1, y2), Math.max(x1, x2), Math.max(y1, y2)];
+  },
+
+  /** A brief, non-interactive outline follows the PDF page in its own pane. */
+  _showReaderCaptionJump(state, pdfWin, page, region) {
+    const repeated = state._readerCaptionJumps?.get(pdfWin)?.node === page?.div;
+    this._clearReaderCaptionJump(state, pdfWin);
+    const viewport = page?.viewport;
+    const node = page?.div;
+    if (!node || !viewport || !(viewport.width > 0) || !(viewport.height > 0)) return;
+    const [left, top, right, bottom] = this._readerCaptionViewportRect(viewport, region);
+    // A pseudo-element survives PDF.js replacing the page's rendered layers.
+    if (repeated) void node.offsetWidth;
+    const inset = [
+      top / viewport.height, 1 - right / viewport.width,
+      1 - bottom / viewport.height, left / viewport.width,
+    ].map(ratio => (ratio * 100) + '%').join(' ');
+    node.style.setProperty('--zv-caption-jump-inset', inset);
+    node.setAttribute('data-zv-caption-jump', '');
+    const hints = state._readerCaptionJumps || (state._readerCaptionJumps = new Map());
+    const timer = setTimeout(() => this._clearReaderCaptionJump(state, pdfWin), 1450);
+    hints.set(pdfWin, { node, timer });
+  },
+
+  _clearReaderCaptionJump(state, pdfWin) {
+    const hint = state._readerCaptionJumps?.get(pdfWin);
+    if (!hint) return;
+    clearTimeout(hint.timer);
+    hint.node.removeAttribute('data-zv-caption-jump');
+    hint.node.style.removeProperty('--zv-caption-jump-inset');
+    state._readerCaptionJumps.delete(pdfWin);
+  },
+
+  _rememberReaderTargetJump(state, pdfWin, kind, entry) {
+    const app = pdfWin.PDFViewerApplication;
+    const container = this._getScrollContainer(pdfWin);
+    const marks = state._readerLastJumps || (state._readerLastJumps = new WeakMap());
+    marks.set(pdfWin, {
+      pdfDoc: app?.pdfDocument, kind, entry, page: app?.pdfViewer?.currentPageNumber,
+      scale: app?.pdfViewer?.currentScale, scrollTop: container?.scrollTop || 0,
+      scrollLeft: container?.scrollLeft || 0,
+    });
   },
 
   /** Step relative to the active pane, wrapping at either end like Neo. */
@@ -862,8 +1132,7 @@ Object.assign(ZoteroVim, {
       }
 
       const container = this._getScrollContainer(pdfWin);
-      const marks = state._readerLastJumps || (state._readerLastJumps = new WeakMap());
-      const previous = marks.get(pdfWin);
+      const previous = state._readerLastJumps?.get(pdfWin);
       const index = previous?.kind === kind && previous.pdfDoc === pdfDoc
           && previous.page === viewer?.currentPageNumber && previous.scale === viewer?.currentScale
           && Math.abs(previous.scrollTop - (container?.scrollTop || 0)) <= 2
@@ -910,7 +1179,7 @@ Object.assign(ZoteroVim, {
       } else {
         const ok = kind === 'heading'
           ? await this._goToReaderOutlineEntry(reader, pdfWin, target.outline)
-          : await this._goToReaderCaption(reader, pdfWin, target);
+          : await this._goToReaderCaption(state, reader, pdfWin, target, current);
         if (!current()) return;
         if (!ok) {
           this._showStatus(state, zh ? '跳转失败' : 'Jump failed', 1500);
@@ -920,9 +1189,7 @@ Object.assign(ZoteroVim, {
         this._recordReaderHistoryPoint(reader, state, pdfWin);
         this._showStatus(state, '→ ' + target.title.slice(0, 85), 1500);
       }
-      if (current()) marks.set(pdfWin, { pdfDoc, kind, entry: target,
-        page: viewer?.currentPageNumber, scale: viewer?.currentScale,
-        scrollTop: container?.scrollTop || 0, scrollLeft: container?.scrollLeft || 0 });
+      if (current()) this._rememberReaderTargetJump(state, pdfWin, kind, target);
     } catch (e) {
       Zotero.debug('[ZoteroVim] reader jump: ' + e);
       if (current()) this._showStatus(state, zh ? '无法加载' + name : 'Could not load ' + name, 1500);

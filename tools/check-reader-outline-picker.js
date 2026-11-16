@@ -1029,6 +1029,94 @@ async function main() {
     assert.deepEqual(g.primary.calls, []);
   });
 
+  await check('figure navigation frames the translated vector group and caption in a narrow pane', async () => {
+    const f = fixture(async () => []);
+    const { pdfDocument, pdfViewer } = f.primary.app;
+    pdfDocument.numPages = 1;
+    const ops = {
+      save: 1, transform: 2, beginGroup: 3, constructPath: 4, fill: 5, endGroup: 6, restore: 7,
+    };
+    f.primary.win.pdfjsLib = { OPS: ops };
+    let drawingReads = 0;
+    pdfDocument.getPage = async () => ({
+      view: [0, 0, 612, 792],
+      getTextContent: async () => ({ items: [run('Fig. 1. Setup', 40, 660, 125)] }),
+      getOperatorList: async options => {
+        assert.equal(options.annotationMode, 0);
+        drawingReads++;
+        return {
+          fnArray: [1, 2, 3, 4, 6, 7],
+          argsArray: [[], [0.5, 0, 0, 0.5, 40, 680], [{ bbox: new Float32Array([0, 0, 400, 180]) }],
+            [5, null, new Float32Array([20, 30, 220, 130])], [], []],
+        };
+      },
+    });
+    const zoom = 2;
+    const properties = new Map(), attributes = new Map();
+    const div = { style: {
+      setProperty: (key, value) => properties.set(key, value),
+      removeProperty: key => properties.delete(key),
+    }, setAttribute: (key, value) => attributes.set(key, value),
+    removeAttribute: key => attributes.delete(key) };
+    const viewport = {
+      width: 612 * zoom, height: 792 * zoom,
+      convertToViewportRectangle: r => [r[0] * zoom, (792 - r[1]) * zoom,
+        r[2] * zoom, (792 - r[3]) * zoom],
+      convertToPdfPoint: (x, y) => [x / zoom, 792 - y / zoom],
+    };
+    pdfViewer.getPageView = () => ({ viewport, div });
+    pdfViewer.container = { clientWidth: 280, clientHeight: 160 };
+    pdfViewer.currentScale = zoom;
+    pdfViewer.scrollPageIntoView = dest => f.primary.calls.push(dest);
+    for (const prefix of [']', '[']) {
+      key(f, prefix); key(f, 'f');
+      await settle();
+      assert.equal(f.state._readerCaptionJumps.get(f.primary.win).node, div);
+      assert.equal(attributes.get('data-zv-caption-jump'), '');
+    }
+    assert.equal(drawingReads, 1);
+    assert.deepEqual(f.secondary.calls, []);
+    const { destArray } = f.primary.calls.at(-1);
+    const [, , x, y, scale] = destArray;
+    assert.ok(scale > 0 && scale < zoom);
+    assert.ok((40 - x) * scale > 0 && (240 - x) * scale < 280);
+    assert.ok((y - 770) * scale > 0 && (y - 657.8) * scale < 160);
+    const [top, , bottom, left] = properties.get('--zv-caption-jump-inset')
+      .split(' ').map(Number.parseFloat);
+    assert.ok(Math.abs(top - (792 - 770) / 792 * 100) < 0.001);
+    assert.ok(Math.abs(bottom - 657.8 / 792 * 100) < 0.001);
+    assert.ok(Math.abs(left - 40 / 612 * 100) < 0.001);
+    z._clearReaderCaptionJump(f.state, f.primary.win);
+    assert.equal(attributes.size, 0);
+    assert.equal(properties.size, 0);
+  });
+
+  await check('figure panels pair across a small gap while other columns and intervening prose stay out', () => {
+    const caption = { kind: 'figure', rect: [40, 610, 300, 640] };
+    const image = rect => ({ rect, type: 'image' });
+    const painted = [
+      image([40, 658, 160, 735]), image([171, 658, 300, 735]),
+      image([313, 652, 560, 739]),
+    ];
+    const labels = [{ x: 54, right: 135, y: 646, height: 7, text: '(a) First panel' }];
+    const paired = z._readerCaptionRegion(caption, [caption], { painted, lines: labels }, []);
+    assert.deepEqual(Array.from(paired), [40, 610, 300, 735]);
+    const prose = [{ x: 40, right: 300, y: 647, height: 8,
+      text: 'An unrelated line of body text fills the column.' }];
+    assert.equal(z._readerCaptionRegion(caption, [caption], { painted, lines: prose }, []),
+      caption.rect);
+  });
+
+  await check('table rules and distinct cell columns pair the body below its title', () => {
+    const caption = { kind: 'table', rect: [135, 665, 235, 689] };
+    const path = y => ({ rect: [40, y, 290, y + 0.4], type: 'path' });
+    const painted = [path(656), path(635), path(582)];
+    const lines = [{ x: 50, right: 91, y: 608, height: 8, text: 'Baseline' },
+      { x: 128, right: 149, y: 608, height: 8, text: '4.8' }];
+    const region = z._readerCaptionRegion(caption, [caption], { painted, lines }, []);
+    assert.deepEqual(Array.from(region), [40, 582, 290, 689]);
+  });
+
   await check('heading, bookmark and annotation jumps route to the requested pane', async () => {
     const f = fixture();
     f.secondary.app.pdfViewer.currentPageNumber = 4;

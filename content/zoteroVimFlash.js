@@ -8,11 +8,13 @@ Object.assign(ZoteroVim, {
     const points = [];
     let previous = null;
     for (const item of items) {
-      const { node, rect, pageIdx, colIdx } = item;
-      if (previous && (previous.pageIdx !== pageIdx || previous.colIdx !== colIdx)) {
+      const { node, rect, pageIdx, colIdx, line } = item;
+      if (previous && (previous.pageIdx !== pageIdx || previous.colIdx !== colIdx
+          || previous.line?.block !== line?.block)) {
         source += '\0';
         points.push(null);
-      } else if (previous && this._pdfTextHasGap(previous.rect, rect)) {
+      } else if (previous && (Number.isInteger(item.wordBreakBefore)
+          && item.wordBreakBefore === previous.domIndex || this._pdfTextHasGap(previous.rect, rect))) {
         source += ' ';
         points.push(null);
       }
@@ -28,7 +30,10 @@ Object.assign(ZoteroVim, {
       ? new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(source)
       : Array.from(source.matchAll(/[\s\S]\p{M}*/gu), m => ({ index: m.index, segment: m[0] }));
     for (const { index, segment } of graphemes) {
-      let value = segment.normalize('NFKC').replace(/\s+/g, ' ');
+      let value = segment.normalize('NFKC').replace(/[\u200B\uFEFF\p{White_Space}]+/gu, ' ');
+      if (value !== '\0' && /^[\p{Cf}\p{Cc}\p{Default_Ignorable_Code_Point}]+$/u.test(value)) {
+        value = '';
+      }
       if (value === ' ' && text.endsWith(' ')) value = '';
       const start = points[index];
       const last = points[index + segment.length - 1];
@@ -43,7 +48,7 @@ Object.assign(ZoteroVim, {
       : Array.from(text.matchAll(/[\p{L}\p{M}\p{N}_]+|[^\s]/gu),
         m => ({ index: m.index, segment: m[0] }));
     for (const { index, segment } of words) {
-      if (!starts[index]) continue;
+      if (!starts[index] || /^\s+$/u.test(segment)) continue;
       const end = index + segment.length;
       const token = { start: index, end };
       for (let i = index; i < end; i++) tokens[i] = token;
@@ -120,7 +125,8 @@ Object.assign(ZoteroVim, {
     try {
       const range = ui.doc.createRange();
       range.setStart(node, offset);
-      range.setEnd(target.end.node, target.end.offset);
+      const endOffset = target.end.node === node ? target.end.offset : node.length;
+      range.setEnd(node, endOffset);
       if (range.collapsed) return null;
       return Array.from(range.getClientRects()).find(rect => this._flashRectVisible(rect, viewport));
     } catch (_) { return null; }
@@ -139,21 +145,6 @@ Object.assign(ZoteroVim, {
     } catch (_) { return false; }
   },
 
-  _flashComparePoints(a, b) {
-    if (a.node === b.node) return a.offset - b.offset;
-    return a.node.compareDocumentPosition(b.node) & 4 ? -1 : 1;
-  },
-
-  /** Keep the original Flash word whole when the active end crosses it. */
-  _flashVisualEndpoints(anchor, target) {
-    if (!anchor) return { anchor: target.start, focus: target.end };
-    if (this._flashComparePoints(target.start, anchor.start) < 0) {
-      return { anchor: anchor.end, focus: target.start };
-    }
-    const focus = this._flashComparePoints(target.end, anchor.end) < 0 ? anchor.end : target.end;
-    return { anchor: anchor.start, focus };
-  },
-
   /** Paint the saved range independently of Gecko's selection focus. */
   _paintReaderFlashSelection(ui) {
     const { doc, pdfWin, preview } = ui;
@@ -163,33 +154,40 @@ Object.assign(ZoteroVim, {
     const saved = ui.selection;
     if (!saved.anchor.isConnected || !saved.focus.isConnected) return;
     try {
-      const anchor = { node: saved.anchor, offset: saved.anchorOffset };
-      const focus = { node: saved.focus, offset: saved.focusOffset };
-      const [start, end] = this._flashComparePoints(anchor, focus) <= 0
-        ? [anchor, focus] : [focus, anchor];
-      const range = doc.createRange();
-      range.setStart(start.node, start.offset);
-      range.setEnd(end.node, end.offset);
-      // Let Gecko paint the text range with the same bounds as a native selection.
+      let ranges = ui.ordered?.runs.map(run => run.range);
+      if (!ranges) {
+        const anchor = { node: saved.anchor, offset: saved.anchorOffset };
+        const focus = { node: saved.focus, offset: saved.focusOffset };
+        const [start, end] = this._compareReaderPoints(anchor, focus) <= 0
+          ? [anchor, focus] : [focus, anchor];
+        const range = doc.createRange();
+        range.setStart(start.node, start.offset);
+        range.setEnd(end.node, end.offset);
+        ranges = [range];
+      }
+      if (!ranges.length) return;
       try {
         const registry = pdfWin.CSS?.highlights;
         if (registry && typeof pdfWin.Highlight === 'function') {
-          registry.set('zv-flash-selection', new pdfWin.Highlight(range));
+          const highlight = new pdfWin.Highlight(ranges[0]);
+          for (const range of ranges.slice(1)) highlight.add(range);
+          registry.set('zv-flash-selection', highlight);
           ui.previewRegistry = registry;
           doc.documentElement.setAttribute('data-zv-flash-preview', '');
           return;
         }
       } catch (_) {} // Older reader runtimes can use the rectangle layer below.
 
-      const element = start.node.nodeType === 1 ? start.node : start.node.parentElement;
+      const node = ranges[0].startContainer;
+      const element = node.nodeType === 1 ? node : node.parentElement;
       const textLayer = element?.closest('.textLayer') || doc.querySelector('.textLayer');
       if (textLayer) {
-        // The preview sits outside PDF.js's translucent text layer.
         preview.style.setProperty('--zv-flash-text-layer-opacity',
           pdfWin.getComputedStyle(textLayer).opacity);
       }
-      const rects = start.node.nodeType === 3 && end.node.nodeType === 3
-        ? this._getRangeTextRects(range, doc) : range.getClientRects();
+      const rects = ranges.flatMap(range =>
+        range.startContainer.nodeType === 3 && range.endContainer.nodeType === 3
+          ? this._getRangeTextRects(range, doc) : Array.from(range.getClientRects()));
       const viewport = this._flashViewport(pdfWin);
       for (const rect of rects) {
         if (!this._flashRectVisible(rect, viewport)) continue;
@@ -245,24 +243,15 @@ Object.assign(ZoteroVim, {
     panel.appendChild(status);
     const selection = pdfWin.getSelection();
     const extending = mode === 'visual' && state.mode === 'visual';
-    let visualAnchor = null;
-    if (extending) {
-      const cursor = state.visualCursor;
-      const useCursor = cursor?.textNode?.isConnected && cursor.textNode.ownerDocument === doc;
-      const node = useCursor ? cursor.textNode : selection?.anchorNode;
-      const offset = useCursor ? cursor.offset : selection?.anchorOffset;
-      if (node?.isConnected && node.ownerDocument === doc) {
-        const source = state._flashSelection;
-        const remembered = source?.pdfWin === pdfWin && source.view === view ? source.anchor : null;
-        const matches = point => point.node === node && point.offset === offset;
-        visualAnchor = remembered?.start.node.isConnected && remembered.end.node.isConnected
-          && [remembered.start, remembered.end].some(matches)
-          ? remembered : { start: { node, offset }, end: { node, offset } };
-      }
-    }
+    const ordered = extending ? this._orderedReaderVisual(state, pdfWin) : null;
+    const endpoints = extending ? this._readerVisualEndpoints(state, pdfWin) : null;
+    const visualAnchor = endpoints?.wordAnchor
+      || (endpoints && { start: endpoints.anchor, end: endpoints.anchor });
     const ui = { pdfWin, win, doc, view, mode, zh, panel, input, status,
-      tabID: win?.Zotero_Tabs?.selectedID, visualAnchor, badges: [], label: '', composing: false,
-      selection: selection?.anchorNode && {
+      tabID: win?.Zotero_Tabs?.selectedID, visualAnchor, ordered,
+      badges: [], label: '', composing: false,
+      selection: ordered ? { anchor: ordered.anchor.node, anchorOffset: ordered.anchor.offset,
+        focus: ordered.focus.node, focusOffset: ordered.focus.offset } : selection?.anchorNode && {
         anchor: selection.anchorNode, anchorOffset: selection.anchorOffset,
         focus: selection.focusNode, focusOffset: selection.focusOffset,
       } };
@@ -274,7 +263,12 @@ Object.assign(ZoteroVim, {
       if (ui.badges.some(badge => badge.el.contains(event.target))) {
         event.preventDefault();
         event.stopImmediatePropagation();
-      } else this._closeReaderFlash(state, false);
+      } else {
+        this._closeReaderFlash(state, false);
+        if (event.button === 0 && event.target?.closest?.('.page')) {
+          this._clearOrderedReaderVisual(state, pdfWin);
+        }
+      }
     };
     state._readerFlash = ui;
     try {
@@ -321,12 +315,8 @@ Object.assign(ZoteroVim, {
     const { pdfWin, doc, input, status, zh } = ui;
     const viewport = this._flashViewport(pdfWin);
     if (!ui.index?.text || !ui.index.starts.find(Boolean)?.node.isConnected) {
-      const spans = Array.from(doc.querySelectorAll('.textLayer span')).filter(span =>
-        span.firstChild?.nodeType === 3 && span.firstChild.data);
-      const items = this._orderSpanItems(doc, spans)
-        .filter(item => this._flashRectVisible(item.rect, viewport))
-        .map(item => ({ ...item, node: item.span.firstChild }));
-      ui.index = this._buildFlashIndex(items);
+      const { items } = this._readingOrderKeys(doc, state);
+      ui.index = this._buildFlashIndex(items.filter(item => this._flashRectVisible(item.rect, viewport)));
     }
     const limit = 48;
     const targets = [];
@@ -430,22 +420,29 @@ Object.assign(ZoteroVim, {
     }
     try {
       const target = badge.target;
-      const { anchor, focus } = mode === 'visual' ? this._flashVisualEndpoints(original, target)
+      const keys = this._readingOrderKeys(ui.doc, state);
+      const admitted = original && (!state._readerBodyText
+        || [original.start, original.end].every(point => keys.byNode.has(point.node)));
+      const wordAnchor = admitted ? original : null;
+      const { anchor, focus } = mode === 'visual'
+        ? this._readerAnchoredTokenEndpoints(wordAnchor, target, keys)
         : { anchor: target.start, focus: target.start };
       this._closeReaderFlash(state, false);
       pdfWin.focus();
-      const selection = pdfWin.getSelection();
-      selection.setBaseAndExtent(anchor.node, anchor.offset, focus.node, focus.offset);
-      this._setMode(state, mode);
       state.activePdfWin = pdfWin;
-      state.visualCursor = { textNode: anchor.node, offset: anchor.offset };
       state.visualPreferredX = null;
       state.cursorPreferredX = null;
-      state.selectionParams = null;
-      // A Flash DOM range takes precedence over cached native popup parameters.
-      state._flashSelection = { pdfWin, doc: ui.doc, view: ui.view,
-        anchor: mode === 'visual' ? original || target : null };
-      this._updateVisualCursor(state, pdfWin);
+      if (mode === 'visual') {
+        this._setMode(state, 'visual');
+        this._applyReaderVisualSelection(state, pdfWin, anchor, focus,
+          { keys, wordAnchor: wordAnchor || target, updatePreferredX: false });
+      } else {
+        this._setMode(state, 'cursor');
+        pdfWin.getSelection().setBaseAndExtent(anchor.node, anchor.offset, focus.node, focus.offset);
+        state.visualCursor = { textNode: anchor.node, offset: anchor.offset };
+        state.selectionParams = null;
+        this._updateVisualCursor(state, pdfWin);
+      }
     } catch (e) {
       Zotero.debug('[ZoteroVim] Flash select: ' + e);
     }
@@ -472,7 +469,9 @@ Object.assign(ZoteroVim, {
     try {
       ui.pdfWin.focus();
       const range = ui.selection;
-      if (range?.anchor.isConnected && range.focus?.isConnected) {
+      if (ui.ordered && this._orderedReaderVisual(state, ui.pdfWin) === ui.ordered) {
+        this._paintOrderedReaderVisual(ui.pdfWin, ui.ordered);
+      } else if (!ui.ordered && range?.anchor.isConnected && range.focus?.isConnected) {
         ui.pdfWin.getSelection()?.setBaseAndExtent?.(
           range.anchor, range.anchorOffset, range.focus, range.focusOffset);
       }

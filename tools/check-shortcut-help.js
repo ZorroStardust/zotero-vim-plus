@@ -414,6 +414,20 @@ check('palette applies an unbound PDF layout to the originating split only', () 
   assert(!f.state._shortcutHelp);
 });
 
+check('the reader command palette toggles body selection without affecting another reader', () => {
+  const f = fixture();
+  const other = fixture();
+  f.secondary.PDFViewerApplication = { pdfViewer: { pagesCount: 2 } };
+  for (const enabled of [true, false]) {
+    f.pdfKey(':', f.secondary);
+    const ui = queryPalette(f, '只选正文');
+    assert.equal(ui.filtered[0]?.action, 'toggleReaderBodyText');
+    f.helpKey('Enter');
+    assert.equal(f.state._readerBodyText, enabled);
+    assert(!other.state._readerBodyText);
+  }
+});
+
 check('selection confirms once after IME, and mouse chooses its own result', () => {
   const f = fixture();
   const runs = [];

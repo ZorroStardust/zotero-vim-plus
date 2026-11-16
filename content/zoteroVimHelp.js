@@ -314,7 +314,8 @@ Object.assign(ZoteroVim, {
       if (viewer?.pagesCount) {
         if (this.isModeEnabled('cursor')) actions.push('flashCursor');
         if (this.isModeEnabled('visual')) actions.push('flashVisual');
-        actions.push('readerOutlinePick', 'toggleReaderSidebarOutline', 'toggleMarksExplorer');
+        actions.push('toggleReaderBodyText', 'readerOutlinePick',
+          'toggleReaderSidebarOutline', 'toggleMarksExplorer');
         if ([0, 1, 2].includes(viewer.spreadMode)) {
           actions.push('toggleReaderSpread', 'toggleReaderSpreadParity',
             'setReaderSinglePage', 'setReaderOddSpread', 'setReaderEvenSpread');
@@ -513,6 +514,7 @@ Object.assign(ZoteroVim, {
       }
       ui.rows = palette ? this._commandPaletteRows(ui)
         : this._compactShortcutHelpRows(this._shortcutHelpRows());
+      ui.orderedVisual = owner.reader ? this._orderedReaderVisual?.(owner, sourceWin) : null;
       const selection = sourceWin.getSelection?.();
       for (let i = 0; i < (selection?.rangeCount || 0); i++) {
         ui.ranges.push(selection.getRangeAt(i).cloneRange());
@@ -914,6 +916,10 @@ Object.assign(ZoteroVim, {
       if (ui.focus?.isConnected) ui.focus.focus();
       if (ui.textSelection && ui.focus?.isConnected) {
         ui.focus.setSelectionRange(...ui.textSelection);
+      } else if (ui.orderedVisual) {
+        if (this._orderedReaderVisual(owner, ui.sourceWin) === ui.orderedVisual) {
+          this._paintOrderedReaderVisual(ui.sourceWin, ui.orderedVisual);
+        }
       } else if (ui.anchor && ui.anchor[0].isConnected && ui.anchor[2].isConnected) {
         ui.sourceWin.getSelection().setBaseAndExtent(...ui.anchor);
       } else if (ui.ranges.length && ui.ranges.every(range => range.commonAncestorContainer.isConnected)) {

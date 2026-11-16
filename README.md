@@ -844,9 +844,9 @@ sentence hints (then to Normal mode).
 
 | Key | Action |
 |-----|--------|
-| `j` / `k` or `↓` / `↑` | Extend selection down / up by one line |
+| `j` / `k` or `↓` / `↑` | Move to the adjacent reading-order line and snap to a word boundary |
 | `h` / `l` or `←` / `→` | Extend selection left / right by one character |
-| `w` / `b` | Extend selection forward / backward by one word |
+| `w` / `b` | Move the active end by one complete word or punctuation token |
 | `0` / `$` | Extend selection to line start / line end |
 | `)` / `(` | Extend selection to next / previous sentence start |
 | `}` / `{` | Extend selection to paragraph end / start |
@@ -854,6 +854,14 @@ sentence hints (then to Normal mode).
 | `i"` | Select inside the surrounding double quotes |
 | `i(` / `i[` / `i{` | Select inside the nearest enclosing pair |
 | `o` | **Swap anchor and focus** — jump to the opposite end of the selection (like Vim's `o` in Visual mode); subsequent movement keys extend from the new end |
+
+Selection follows the PDF's text order and repairs clearly alternating column
+runs. Copy and text annotations use the same text fragments that are highlighted.
+
+In the reader command palette (`:`), run **Toggle body text only** to skip
+recognized running headers, page numbers, watermarks, and supported footnote or
+caption blocks in Flash and keyboard selections. The indicator shows `BODY` in
+Visual and Cursor modes. Run the command again to include all text.
 
 #### Creating annotations
 
@@ -1364,16 +1372,14 @@ PDF.js renders each visual line as an absolutely-positioned `<span>` in a
 `.textLayer` element (one `.textLayer` per page).  Browser APIs such as
 `Selection.modify('extend', 'line')` are unreliable in this context.
 
-The plugin implements its own line extension (`_extendByLine`) using
-`document.caretPositionFromPoint` and a fallback span-geometry scan.
-Sentence and paragraph extensions (`_extendBySentence`, `_extendByParagraph`)
-scan all `.textLayer span` elements from *all pages* using
-`document.querySelectorAll('.textLayer span')` — **not**
-`document.querySelector('.textLayer')` which returns only the first page.
-
-Selections are tracked with `state.visualCursor = { textNode, offset }` as the
-anchor so that `sel.addRange()` can rebuild the correct range after PDF.js
-occasionally clears the browser selection.
+The PDF.js text layer supplies the default reading order. Cached page geometry
+repairs local runs with repeated evidence of column interleaving. Flash, cursor
+movements and Visual movements share this sequence. Body-only selection also
+uses it after filtering recognized publisher furniture. Visual mode maintains
+its own anchor and active endpoint and projects the logical interval into
+native DOM ranges. When the PDF text layer alternates columns in DOM order,
+Gecko paints multiple ranges and copying and annotation use those same
+fragments in reading order. Annotation rectangles are mapped by owning page.
 
 ### Text post-processing (yank operations)
 

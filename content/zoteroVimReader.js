@@ -105,12 +105,11 @@ Object.assign(ZoteroVim, {
   /** Record dot-repeat only when the requested mutation has a real target. */
   _readerChangeTargetAvailable(action, reader, state, pdfWin) {
     if (/^(highlight|addNote)/.test(action)) {
-      if (!state?._flashSelection && state?.selectionParams?.annotation) return true;
-      if (!state?._flashSelection && Date.now() - (this._lastSelectionTS || 0) < 10000
+      if (!state?._orderedVisual && state?.selectionParams?.annotation) return true;
+      if (!state?._orderedVisual && Date.now() - (this._lastSelectionTS || 0) < 10000
           && this._lastSelectionParams?.annotation) return true;
       try {
-        const selection = pdfWin?.getSelection?.();
-        return !!selection && !selection.isCollapsed && !!selection.toString();
+        return !!this._readerSelectedText(state, pdfWin);
       } catch (_) {
         return false;
       }
@@ -1724,7 +1723,9 @@ Object.assign(ZoteroVim, {
         sel.removeAllRanges();
         sel.addRange(c);
       }
-      if (sel.rangeCount > 0 && sel.isCollapsed && sel.focusNode?.nodeType === 3) {
+      const body = state._readerBodyText ? this._readingOrderKeys(pdfWin.document, state) : null;
+      if (sel.rangeCount > 0 && sel.isCollapsed && sel.focusNode?.nodeType === 3
+          && (!body || body.byNode.has(sel.focusNode))) {
         state.visualCursor = {
           textNode: sel.focusNode,
           offset: sel.focusOffset,
@@ -1732,7 +1733,8 @@ Object.assign(ZoteroVim, {
         return true;
       }
 
-      if (state.visualCursor?.textNode?.isConnected) {
+      if (state.visualCursor?.textNode?.isConnected
+          && (!body || body.byNode.has(state.visualCursor.textNode))) {
         const r = pdfWin.document.createRange();
         r.setStart(state.visualCursor.textNode, state.visualCursor.offset);
         r.collapse(true);
@@ -1741,8 +1743,8 @@ Object.assign(ZoteroVim, {
         return true;
       }
 
-      const span = pdfWin.document.querySelector('.textLayer span');
-      const tn = span?.firstChild;
+      const tn = body ? body.items[0]?.node
+        : pdfWin.document.querySelector('.textLayer span')?.firstChild;
       if (tn && tn.nodeType === 3) {
         const r = pdfWin.document.createRange();
         r.setStart(tn, 0);
@@ -1783,7 +1785,7 @@ Object.assign(ZoteroVim, {
         const doc = pdfWin.document;
         const sel = pdfWin.getSelection();
         if (!sel) return;
-        const nodes = this._cursorOrderedTextNodes(doc);
+        const nodes = this._cursorOrderedTextNodes(doc, state);
         if (!nodes.length) return;
         let idx = this._cursorNodeIndex(nodes, sel.focusNode);
         if (idx < 0) idx = 0;
@@ -1835,9 +1837,11 @@ Object.assign(ZoteroVim, {
       const doc = pdfWin.document;
       const sel = pdfWin.getSelection();
       if (!sel?.focusNode) return false;
-      const target = this._lineMoveTarget(doc, sel.focusNode, sel.focusOffset, direction, state.cursorPreferredX);
+      const keys = this._readingOrderKeys(doc, state);
+      const target = this._lineMoveTarget(doc, sel.focusNode, sel.focusOffset, direction,
+        state.cursorPreferredX, keys);
       if (!target) return false;
-      if (target.staleX) state.cursorPreferredX = null;
+      if (Number.isFinite(target.preferredX)) state.cursorPreferredX = target.preferredX;
       if (target.stopped) {
         this._showStatus(state, direction > 0 ? '→ document end' : '→ document top', 900);
         return false;
@@ -1862,322 +1866,397 @@ Object.assign(ZoteroVim, {
     }
   },
 
-  /**
-   * Detect text columns of the visible page via an x-coverage histogram:
-   * column bodies cover their x-range on almost every line, while gutters
-   * are covered only by occasional centred elements (captions, running
-   * headers) — so a deep histogram valley marks the gutter.  Full-width
-   * spans are excluded first (they would fill every bucket and hide the
-   * valley).  Returns [{ left, right, count }] sorted by left;
-   * single-column pages return one column.  Recurses once per side for
-   * three-column layouts.
-   */
-  _detectColumns(doc) {
-    const container =
-      doc.getElementById('viewerContainer') ||
-      doc.querySelector('.pdfViewer') || doc.body;
-    const viewH = container.clientHeight;
-    // Lookahead window shared with _cursorVisibleLines: adjacent pages feed
-    // the histogram so column detection and line grouping see the same set
-    // of pages.
-    const winPad = Math.max(40, viewH * 0.25);
-
-    const spans = [];
-    let pageW = 0;
-    const pages = doc.querySelectorAll('.page');
-    if (pages.length > 0) {
-      for (const page of pages) {
-        const pr = page.getBoundingClientRect();
-        if (pr.bottom < -winPad || pr.top > viewH + winPad) continue;
-        pageW = Math.max(pageW, pr.width);
-        for (const span of page.querySelectorAll('.textLayer span')) {
-          const tn = span.firstChild;
-          if (!tn || tn.nodeType !== 3 || !tn.data || !tn.data.trim()) continue;
-          const r = span.getBoundingClientRect();
-          if (r.width < 2 || r.height < 2) continue;
-          spans.push(r);
+  /** Read each mounted page independently. Scrolling translates cached page geometry. */
+  _readingOrderKeys(doc, state = null) {
+    const layers = Array.from(doc.querySelectorAll('.textLayer'));
+    const byNode = new Map();
+    const lines = [];
+    const items = [];
+    const mounted = (layers.length ? layers : [doc]).map((layer, index) => {
+      const page = layer.closest?.('.page[data-page-number]');
+      const pageNumber = Number(page?.dataset.pageNumber);
+      const pageIdx = Number.isInteger(pageNumber) && pageNumber > 0 ? pageNumber - 1 : index;
+      const rect = layer.getBoundingClientRect?.() || { left: 0, top: 0, width: 0, height: 0 };
+      return { page, pageIdx, rect, layout: this._readerPageTextLayout(layer, rect) };
+    });
+    let repeated;
+    if (state?._readerBodyText) {
+      // Keep evidence from pages that scrolled out of PDF.js's rendered range.
+      const documents = state._readerBodyDocuments ||= new WeakMap();
+      const pdf = doc.defaultView?.PDFViewerApplication?.pdfDocument;
+      let evidence = documents.get(doc);
+      if (!evidence || evidence.pdf !== pdf) {
+        evidence = { pdf, repeated: new Map() };
+        documents.set(doc, evidence);
+      }
+      repeated = evidence.repeated;
+      for (const entry of mounted) {
+        const { layout, rect, pageIdx } = entry;
+        entry.body = layout.body ||= this._readerBodyPageLines(layout.lines, rect);
+        for (const name of entry.body.running.values()) {
+          if (!repeated.has(name)) repeated.set(name, new Set());
+          repeated.get(name).add(pageIdx);
         }
       }
-    } else {
-      for (const span of doc.querySelectorAll('.textLayer span')) {
-        const tn = span.firstChild;
-        if (!tn || tn.nodeType !== 3 || !tn.data || !tn.data.trim()) continue;
-        const r = span.getBoundingClientRect();
-        if (r.width < 2 || r.height < 2) continue;
-        if (r.bottom < -winPad || r.top > viewH + winPad) continue;
-        spans.push(r);
+    }
+    for (const { page, pageIdx, rect, layout, body } of mounted) {
+      for (const line of layout.lines) {
+        if (body && (body.excluded.has(line.geometry)
+            || repeated.get(body.running.get(line.geometry))?.size >= 2)) continue;
+        const spans = line.spans.map(item => {
+          const r = item.rect;
+          const current = { ...item, page, pageIdx, line, colIdx: line.colIdx, order: items.length,
+            rect: { left: r.left + rect.left, right: r.right + rect.left,
+              top: r.top + rect.top, bottom: r.bottom + rect.top, width: r.width,
+              height: r.height } };
+          items.push(current);
+          byNode.set(item.node, current);
+          return current;
+        });
+        lines.push({ pageIdx, colIdx: line.colIdx, block: line.block, source: line,
+          midY: line.midY + rect.top, top: line.top + rect.top, bottom: line.bottom + rect.top,
+          colLeft: Math.min(...spans.map(it => it.rect.left)),
+          colRight: Math.max(...spans.map(it => it.rect.right)),
+          spans });
       }
     }
-    if (spans.length < 4) return [];
+    return { items, lines, byNode };
+  },
 
-    const filtered = pageW > 0 ? spans.filter(r => r.width <= 0.6 * pageW) : spans;
-    if (filtered.length < 4) return [];
+  /** Classify familiar publisher furniture and well-supported notes on one text layer. */
+  _readerBodyPageLines(lines, { height }) {
+    const excluded = new Set();
+    const running = new Map();
+    if (!(height > 0)) return { excluded, running };
 
-    const splitX = this._histogramSplit(filtered);
-    if (splitX === null) return [this._columnFromSpans(filtered)];
+    const physical = [...new Set(lines.map(line => line.geometry))];
+    const entries = physical.map(line => {
+      let text = '';
+      let previous = null;
+      for (const item of line.spans) {
+        if (previous && (item.wordBreakBefore === previous.domIndex
+            || this._pdfTextHasGap(previous.rect, item.rect))) text += ' ';
+        text += item.node.data;
+        previous = item;
+      }
+      text = text.normalize('NFKC').replace(/\s+/gu, ' ').trim();
+      return { line, text, font: Math.max(...line.spans.map(item => item.rect.height)) };
+    });
+    const fonts = entries.filter(it => !it.line.vertical && it.text.length >= 12
+      && it.line.midY >= height * 0.13 && it.line.midY <= height * 0.88)
+      .map(it => it.font).sort((a, b) => a - b);
+    const unit = fonts[Math.floor(fonts.length / 2)] || 0;
+    const columns = new Map();
+    const caption = /^(?:fig(?:ure)?\.?|table|movie|video|图|表|视频)\s*[A-Z]?\d+[A-Z]?[.:：．]\s*/iu;
 
-    const parts = [
-      filtered.filter(r => (r.left + r.right) / 2 < splitX),
-      filtered.filter(r => (r.left + r.right) / 2 >= splitX),
-    ].filter(g => g.length >= 3);
-    if (!parts.length) return [this._columnFromSpans(filtered)];
+    for (const it of entries) {
+      const { line, text } = it;
+      const atTop = line.midY < height * 0.11;
+      const atBottom = line.midY > height * 0.92;
+      const compact = text.replace(/\s+/gu, '');
+      const pageLabel = /^(?:page\s*)?\d+\s*(?:of|\/)\s*\d+$/iu;
+      const masthead = /^[\p{L}&.-]+\|(?:researcharticle|researchreport|reviewarticle)$/iu;
+      const uppercaseMasthead = /^[A-Z&.-]{5,40}(?:RESEARCHARTICLE|RESEARCHREPORT|REVIEWARTICLE)$/u;
+      if ((line.vertical && /downloadedfrom|^arxiv:/iu.test(compact))
+          || (atTop && (masthead.test(compact) || uppercaseMasthead.test(compact))) || (atBottom && pageLabel.test(text))
+          || (atBottom && /\bet\s+al\..{0,90}\be[a-z]{2,}\d{3,}\s*\(\d{4}\)/iu.test(text))) {
+        excluded.add(line);
+        continue;
+      }
+      if (!line.vertical && (atTop || atBottom) && text.length >= 10 && text.length <= 160) {
+        const region = atTop ? 'top:' : 'bottom:';
+        running.set(line, region + text.toLowerCase());
+      }
+      if (!line.vertical && line.colIdx >= 0) {
+        const column = line.block + ':' + line.colIdx;
+        if (!columns.has(column)) columns.set(column, []);
+        columns.get(column).push(it);
+      }
+    }
 
-    const cols = [];
-    for (const g of parts) {
-      const sub = this._histogramSplit(g);
-      if (sub !== null && g.length >= 12) {
-        const subParts = [
-          g.filter(r => (r.left + r.right) / 2 < sub),
-          g.filter(r => (r.left + r.right) / 2 >= sub),
-        ].filter(sg => sg.length >= 3);
-        if (subParts.length >= 2) {
-          for (const sg of subParts) cols.push(this._columnFromSpans(sg));
+    if (!unit) return { excluded, running };
+    const nearby = (a, b) => b.line.top - a.line.bottom <= unit * 0.8;
+    for (const column of columns.values()) {
+      column.sort((a, b) => a.line.midY - b.line.midY);
+      for (let i = 0; i < column.length; i++) {
+        const current = column[i];
+        if (excluded.has(current.line)) continue;
+        const previous = column[i - 1];
+        if (caption.test(current.text) && current.font <= unit * 0.92 && previous
+            && current.line.top - previous.line.bottom > unit * 2) {
+          excluded.add(current.line);
+          while (i + 1 < column.length) {
+            const next = column[i + 1];
+            if (excluded.has(next.line) || caption.test(next.text) || !nearby(column[i], next)
+                || Math.abs(next.font - current.font) > unit * 0.1) break;
+            excluded.add(next.line);
+            i++;
+          }
+        }
+        if (current.line.midY <= height * 0.68 || current.font > unit * 0.9
+            || !/corresponding author|present address|equal contribution/iu.test(current.text)) {
           continue;
         }
-      }
-      cols.push(this._columnFromSpans(g));
-    }
-    cols.sort((a, b) => a.left - b.left);
-    return cols;
-  },
-
-  _columnFromSpans(spans) {
-    let left = Infinity, right = -Infinity;
-    for (const r of spans) {
-      left = Math.min(left, r.left);
-      right = Math.max(right, r.right);
-    }
-    return { left, right, count: spans.length };
-  },
-
-  /**
-   * Find a column-gutter x via the coverage histogram: return the x of the
-   * deepest local minimum in the middle 70% of the span width, or null when
-   * no minimum is deep enough (single column).
-   */
-  _histogramSplit(spans) {
-    let xMin = Infinity, xMax = -Infinity;
-    for (const r of spans) {
-      xMin = Math.min(xMin, r.left);
-      xMax = Math.max(xMax, r.right);
-    }
-    const width = xMax - xMin;
-    if (width < 60) return null;
-
-    const buckets = Math.max(24, Math.min(120, Math.round(width / 8)));
-    const cov = new Array(buckets).fill(0);
-    for (const r of spans) {
-      const b0 = Math.max(0, Math.floor((r.left - xMin) / width * (buckets - 1)));
-      const b1 = Math.min(buckets - 1, Math.floor((r.right - xMin) / width * (buckets - 1)));
-      for (let b = b0; b <= b1; b++) cov[b]++;
-    }
-
-    const sm = new Array(buckets).fill(0);
-    for (let b = 0; b < buckets; b++) {
-      sm[b] = (b > 0 ? cov[b - 1] : 0) + cov[b] + (b < buckets - 1 ? cov[b + 1] : 0);
-    }
-
-    let maxC = 0;
-    for (const v of sm) maxC = Math.max(maxC, v);
-
-    let valley = -1, valleyVal = Infinity;
-    for (let b = 1; b < buckets - 1; b++) {
-      const frac = (b + 0.5) / buckets;
-      if (frac < 0.15 || frac > 0.85) continue;
-      if (sm[b] <= sm[b - 1] && sm[b] <= sm[b + 1] && sm[b] < valleyVal) {
-        valleyVal = sm[b];
-        valley = b;
-      }
-    }
-    if (valley < 0 || valleyVal > 0.35 * maxC) return null;
-    return xMin + (valley + 0.5) / buckets * width;
-  },
-
-  /**
-   * Column index a rect belongs to: the column with the largest x-overlap,
-   * or the nearest column centre when nothing overlaps.  0 on single-column
-   * pages.
-   */
-  _spanColIndex(rect, columns) {
-    if (!columns || columns.length <= 1) return 0;
-    if (!rect || !Number.isFinite(rect.left) || !Number.isFinite(rect.right)) return 0;
-    let best = 0, bestScore = -Infinity;
-    for (let i = 0; i < columns.length; i++) {
-      const c = columns[i];
-      const ov = Math.min(rect.right, c.right) - Math.max(rect.left, c.left);
-      const score = ov > 0
-        ? ov / Math.max(1, rect.right - rect.left)
-        : -(Math.abs((rect.left + rect.right) / 2 - (c.left + c.right) / 2));
-      if (score > bestScore) { bestScore = score; best = i; }
-    }
-    return best;
-  },
-
-  /** Page index per span via its .textLayer position in document order. */
-  _readingOrderKeys(doc) {
-    const columns = this._detectColumns(doc);
-    const layers = Array.from(doc.querySelectorAll('.textLayer'));
-    const layerIdx = new Map();
-    for (let i = 0; i < layers.length; i++) layerIdx.set(layers[i], i);
-    return { columns, layerIdx };
-  },
-
-  /**
-   * Reading-order comparator: page, then column, then line top, then left.
-   * Column-major within a page (one column is read top-to-bottom before the
-   * next) and page-major across pages (page rects never overlap in y, so
-   * pages must come first).
-   */
-  _compareReadingOrder(a, b) {
-    if (a.pageIdx !== b.pageIdx) return a.pageIdx - b.pageIdx;
-    if (a.colIdx !== b.colIdx) return a.colIdx - b.colIdx;
-    const dy = a.rect.top - b.rect.top;
-    return Math.abs(dy) > 4 ? dy : a.rect.left - b.rect.left;
-  },
-
-  /** Sort span elements into reading order; returns [{ span, rect, pageIdx, colIdx }]. */
-  _orderSpanItems(doc, spans, keys = null) {
-    const k = keys || this._readingOrderKeys(doc);
-    const items = spans.map(span => {
-      const rect = span.getBoundingClientRect();
-      return {
-        span,
-        rect,
-        pageIdx: k.layerIdx.get(span.closest('.textLayer')) ?? 0,
-        colIdx: this._spanColIndex(rect, k.columns),
-      };
-    });
-    items.sort((a, b) => this._compareReadingOrder(a, b));
-    return items;
-  },
-
-  /**
-   * Visible text lines in reading order, split by page, column and y-band
-   * (multi-column layouts get one line entry per column band instead of one
-   * giant band spanning both columns).
-   *
-   * Visibility uses the same page-window test as _detectColumns, so column
-   * detection and line grouping always see the same set of spans.  On
-   * multi-column pages, header/footer decorations (full-width lines and
-   * narrow gutter lines that overlap no column) are excluded from the list
-   * entirely — they are not part of the column flow, and landing a caret on
-   * them stalls j/k.  The y-band tolerance adapts to the median span height
-   * instead of a fixed 4 px.
-   *
-   * Returns { lines, lineH } where lineH is the median visible body-line
-   * height (informational for callers).
-   */
-  _cursorVisibleLines(doc) {
-    const container =
-      doc.getElementById('viewerContainer') ||
-      doc.querySelector('.pdfViewer') || doc.body;
-    const viewH = container.clientHeight;
-    // Lookahead window shared with _detectColumns: adjacent pages must be in
-    // the line list so j/k can continue across page boundaries (the auto-pan
-    // then scrolls the target into view).
-    const winPad = Math.max(40, viewH * 0.25);
-
-    const spans = [];
-    const pages = doc.querySelectorAll('.page');
-    if (pages.length > 0) {
-      for (const page of pages) {
-        const pr = page.getBoundingClientRect();
-        if (pr.bottom < -winPad || pr.top > viewH + winPad) continue;
-        for (const span of page.querySelectorAll('.textLayer span')) {
-          const tn = span.firstChild;
-          if (!tn || tn.nodeType !== 3 || !span.textContent.trim()) continue;
-          spans.push(span);
+        let start = i, end = i;
+        const note = it => it.font <= unit * 0.9 && it.line.midY > height * 0.68
+          && !excluded.has(it.line);
+        while (start > 0 && note(column[start - 1]) && nearby(column[start - 1], column[start])) {
+          start--;
+        }
+        while (end + 1 < column.length && note(column[end + 1]) && nearby(column[end], column[end + 1])) {
+          end++;
+        }
+        if (end > start) {
+          for (const it of column.slice(start, end + 1)) excluded.add(it.line);
+          i = end;
         }
       }
-    } else {
-      for (const span of doc.querySelectorAll('.textLayer span')) {
-        const tn = span.firstChild;
-        if (!tn || tn.nodeType !== 3 || !span.textContent.trim()) continue;
-        const r = span.getBoundingClientRect();
-        if (r.bottom < -winPad || r.top > viewH + winPad) continue;
-        spans.push(span);
+    }
+    return { excluded, running };
+  },
+
+  _toggleReaderBodyText(state, pdfWin) {
+    if (!pdfWin?.PDFViewerApplication?.pdfViewer) return;
+    this._closeReaderFlash?.(state, false);
+    this._clearOrderedReaderVisual(state);
+    state._readerBodyText = !state._readerBodyText;
+    const zh = this._isZhLocale();
+    const message = state._readerBodyText ? (zh ? '只选正文' : 'Body text only')
+      : (zh ? '选择全部文字' : 'All text selectable');
+    this._showStatus(state, message, 1800);
+  },
+
+  _readerPageTextLayout(layer, bounds) {
+    const win = layer.ownerDocument?.defaultView;
+    const Observer = win?.MutationObserver;
+    const rotation = layer.getAttribute?.('data-main-rotation');
+    let layout = this._readerPageTextLayouts.get(layer);
+    const size = [bounds.width, bounds.height, rotation].join(':');
+    if (layout && layout.size === size && !layout.dirty && !layout.observer.takeRecords().length) {
+      return layout;
+    }
+    layout?.observer.disconnect();
+
+    const selector = layer.nodeType === 1 ? 'span' : '.textLayer span';
+    const items = [];
+    let precedingSpace = null;
+    for (const [domIndex, span] of Array.from(layer.querySelectorAll(selector)).entries()) {
+      const node = span.firstChild;
+      if (node?.nodeType !== 3 || !node.data) continue;
+      if (/^[\p{White_Space}\u200B\uFEFF]+$/u.test(node.data)) {
+        precedingSpace = items.at(-1)?.domIndex ?? null;
+        continue;
+      }
+      const wordBreakBefore = precedingSpace;
+      precedingSpace = null;
+      const r = span.getBoundingClientRect();
+      if (!(r.width > 0 && r.height > 0)) continue;
+      items.push({ span, node, domIndex, wordBreakBefore, rect: { left: r.left - bounds.left,
+        right: r.right - bounds.left, top: r.top - bounds.top, bottom: r.bottom - bounds.top,
+        width: r.width, height: r.height } });
+    }
+    layout = { size, lines: this._readerPageTextLines(items, bounds.width) };
+    if (Observer) {
+      const observer = new Observer(() => { layout.dirty = true; });
+      observer.observe(layer, Components.utils.cloneInto({
+        subtree: true, childList: true, characterData: true,
+      }, win));
+      layout.observer = observer;
+      this._readerPageTextLayouts.set(layer, layout);
+    }
+    return layout;
+  },
+
+  _readerPageTextLayouts: new WeakMap(),
+
+  /** Group by baseline first, then detect recurring gaps between chunks on this page. */
+  _readerPageTextLines(items, pageWidth) {
+    if (!items.length) return [];
+    const heights = items.map(it => it.rect.height).sort((a, b) => a - b);
+    const unit = heights[Math.floor(heights.length / 2)] || items[0].rect.height;
+    const tolerance = unit * 0.45;
+    const center = it => (it.rect.top + it.rect.bottom) / 2;
+    const rows = [];
+    const sideText = [];
+    const sorted = [...items].sort((a, b) => center(a) - center(b)
+      || a.rect.left - b.rect.left || a.domIndex - b.domIndex);
+    for (const item of sorted) {
+      const { width, height } = item.rect;
+      // Rotated margin text can overlap dozens of baselines. Keep it available
+      // after the page's horizontal text without joining it to a body line.
+      if (height >= unit * 3 && height >= width * 2) {
+        sideText.push(item);
+        continue;
+      }
+      const row = rows.at(-1);
+      if (row && center(item) - row.midY <= tolerance) row.spans.push(item);
+      else rows.push({ midY: center(item), spans: [item] });
+    }
+    for (const row of rows) {
+      row.spans.sort((a, b) => a.rect.left - b.rect.left || a.domIndex - b.domIndex);
+      row.chunks = [];
+      for (const it of row.spans) {
+        const last = row.chunks.at(-1);
+        if (last && it.rect.left - last.right <= unit * 1.25) {
+          last.right = Math.max(last.right, it.rect.right);
+        } else row.chunks.push({ left: it.rect.left, right: it.rect.right, y: row.midY });
       }
     }
 
-    // One reading-order pass for both the line list and the decoration
-    // filter (avoids re-running the column histogram).
-    const keys = this._readingOrderKeys(doc);
-    const multiCol = keys.columns.length >= 2;
-
-    // Widest visible page — the full-width test uses the same 0.6 ratio as
-    // _detectColumns' histogram filter.
-    let maxPageW = 0;
-    for (const page of pages) {
-      const pr = page.getBoundingClientRect();
-      if (pr.bottom < -winPad || pr.top > viewH + winPad) continue;
-      maxPageW = Math.max(maxPageW, pr.width);
-    }
-
-    /**
-     * Header/footer lines on multi-column pages: full-width spans (running
-     * heads, titles) and narrow gutter decorations with no x-overlap with
-     * any column (page numbers).  Both stall j/k when a caret lands on
-     * them, so they stay out of the line list.
-     */
-    const isDecoration = (it) => {
-      if (maxPageW > 0 && it.rect.width > 0.6 * maxPageW) return true;
-      if (it.rect.width < 0.5 * maxPageW) {
-        let overlap = 0;
-        for (const c of keys.columns) {
-          overlap = Math.max(overlap,
-            Math.min(it.rect.right, c.right) - Math.max(it.rect.left, c.left));
-        }
-        if (overlap <= 2) return true;
-      }
-      return false;
-    };
-
-    const items = this._orderSpanItems(doc, spans, keys).filter(it =>
-      it.rect.width >= 2 && it.rect.height >= 2
-      && !(multiCol && isDecoration(it)));
-
-    // Adaptive y-band tolerance: half the median span height, clamped to
-    // [2, 10] px — adjacent visual lines are ~1 line height apart, while
-    // spans of the same line cluster far closer than that.
-    let lineH = 10;
-    if (items.length) {
-      const hs = items.map(it => it.rect.height).sort((a, b) => a - b);
-      lineH = hs[Math.floor(hs.length / 2)];
-    }
-    const bandTol = Math.max(2, Math.min(10, lineH * 0.5));
-
+    const chunks = rows.flatMap(row => row.chunks);
+    const width = pageWidth || (Math.max(...chunks.map(r => r.right))
+      - Math.min(...chunks.map(r => r.left)));
+    const columns = this._readerPageColumns(chunks, width, unit);
     const lines = [];
-    for (const it of items) {
-      const midY = (it.rect.top + it.rect.bottom) / 2;
-      const last = lines[lines.length - 1];
-      if (!last || last.pageIdx !== it.pageIdx || last.colIdx !== it.colIdx ||
-          Math.abs(last.midY - midY) > bandTol) {
-        lines.push({
-          midY,
-          top: it.rect.top,
-          bottom: it.rect.bottom,
-          spans: [it],
-          colIdx: it.colIdx,
-          pageIdx: it.pageIdx,
-          colLeft: it.rect.left,
-          colRight: it.rect.right,
-        });
-      } else {
-        last.spans.push(it);
-        last.top = Math.min(last.top, it.rect.top);
-        last.bottom = Math.max(last.bottom, it.rect.bottom);
-        last.colLeft = Math.min(last.colLeft, it.rect.left);
-        last.colRight = Math.max(last.colRight, it.rect.right);
+    let block = 0;
+    for (const row of rows) {
+      const byColumn = new Map();
+      const spanning = columns.some(edge => row.chunks.some(chunk =>
+        chunk.left <= edge - unit * 2 && chunk.right >= edge + unit * 2));
+      for (const it of row.spans) {
+        const x = (it.rect.left + it.rect.right) / 2;
+        const colIdx = spanning ? -1 : columns.filter(edge => x >= edge).length;
+        if (!byColumn.has(colIdx)) byColumn.set(colIdx, []);
+        byColumn.get(colIdx).push(it);
       }
+      if (spanning) block++;
+      for (const [colIdx, spans] of byColumn) {
+        lines.push({ colIdx, block, midY: row.midY, spans,
+          top: Math.min(...spans.map(it => it.rect.top)),
+          bottom: Math.max(...spans.map(it => it.rect.bottom)) });
+      }
+      if (spanning) block++;
     }
-    return { lines, lineH };
+    for (const it of sideText) {
+      lines.push({ colIdx: -1, block: ++block, midY: center(it), spans: [it],
+        top: it.rect.top, bottom: it.rect.bottom, vertical: true });
+    }
+
+    // Preserve the source sequence, including publisher-chosen figure and footnote
+    // placement. A geometric line can occur in more than one native fragment.
+    const lineByItem = new Map();
+    for (const line of lines) {
+      for (const item of line.spans) lineByItem.set(item, line);
+    }
+    const native = [];
+    for (const item of items) {
+      const line = lineByItem.get(item);
+      const previous = native.at(-1);
+      if (previous?.geometry === line) previous.spans.push(item);
+      else native.push({ ...line, geometry: line, spans: [item] });
+    }
+    return this._repairReaderColumnInterleaving(native, unit);
   },
 
-  /**
-   * Index of the line containing (focusY, focusX): strict band+column match
-   * first, then band-only, then nearest midY.  Column containment keeps j/k
-   * inside the current column on multi-column pages.
-   */
+  /** Reorder local column runs only when repeated returns prove row-major source order. */
+  _repairReaderColumnInterleaving(lines, unit) {
+    const runs = [];
+    for (const [index, line] of lines.entries()) {
+      const last = runs.at(-1);
+      if (last?.block === line.block && last.col === line.colIdx && line.colIdx >= 0) {
+        last.end = index + 1;
+      } else runs.push({ start: index, end: index + 1, block: line.block, col: line.colIdx });
+    }
+
+    const broad = line => {
+      const spans = line.geometry.spans;
+      return Math.max(...spans.map(it => it.rect.right)) - Math.min(...spans.map(it => it.rect.left))
+        >= unit * 4;
+    };
+    const repairs = [];
+    for (let i = 1; i + 1 < runs.length; i++) {
+      const [left, across, right] = [runs[i - 1], runs[i], runs[i + 1]];
+      if (left.col < 0 || across.col < 0 || left.col !== right.col
+          || left.block !== across.block || left.block !== right.block) continue;
+      const a = lines[left.end - 1], b = lines[right.start];
+      const before = a.midY, after = b.midY;
+      if (after - before < unit * 0.45 || after - before > unit * 4 || !broad(a) || !broad(b)) continue;
+      const crossing = lines.slice(across.start, across.end);
+      if (!crossing.some(broad)) continue;
+      const other = crossing.map(line => line.midY);
+      const tolerance = unit * 3;
+      if (Math.min(...other) < before - tolerance || Math.max(...other) > after + tolerance) {
+        continue;
+      }
+      const previous = repairs.at(-1);
+      if (previous && across.start < previous.end) {
+        previous.end = right.start + 1;
+        previous.returns++;
+      } else {
+        repairs.push({ start: left.end - 1, end: right.start + 1, returns: 1 });
+      }
+    }
+    const ordered = lines.slice();
+    for (const { start, end, returns } of repairs) {
+      if (returns < 2) continue;
+      const local = lines.slice(start, end).sort((a, b) => a.colIdx - b.colIdx);
+      ordered.splice(start, end - start, ...local);
+    }
+    return ordered;
+  },
+
+  /** A gutter must separate real text on several rows, not just short indents or a sparse figure. */
+  _readerPageColumns(chunks, width, unit) {
+    const eligible = chunks.filter(chunk => chunk.right - chunk.left <= width * 0.6);
+    const split = (parts, depth = 0) => {
+      if (parts.length < 6) return [];
+      const changes = new Map();
+      for (const { left, right } of parts) {
+        changes.set(left, (changes.get(left) || 0) + 1);
+        changes.set(right, (changes.get(right) || 0) - 1);
+      }
+      const edges = [...changes].filter(([, delta]) => delta).sort(([a], [b]) => a - b);
+      const lo = edges[0][0], hi = edges.at(-1)[0];
+      if (hi - lo < unit * 9) return [];
+
+      // Sweep the actual text edges. Binning them can reject the same gutter
+      // at a different zoom when one narrow valley straddles a bucket boundary.
+      const bands = [];
+      let count = 0, max = 0;
+      for (let i = 0; i < edges.length - 1; i++) {
+        const [left, delta] = edges[i];
+        count += delta;
+        max = Math.max(max, count);
+        bands.push({ left, right: edges[i + 1][0], count });
+      }
+
+      let best = null;
+      for (const [i, band] of bands.entries()) {
+        const { count } = band;
+        const gap = band.right - band.left;
+        const x = (band.left + band.right) / 2;
+        if (x < lo + (hi - lo) * 0.15 || x > lo + (hi - lo) * 0.85
+            || gap < unit * 0.75 || count > max * 0.25
+            || bands[i - 1]?.count < count || bands[i + 1]?.count < count) continue;
+        const leftRows = new Set(parts.filter(p => p.right <= x).map(p => p.y));
+        const rightRows = new Set(parts.filter(p => p.left >= x).map(p => p.y));
+        if (leftRows.size < 3 || rightRows.size < 3) continue;
+        const upper = Math.max(Math.min(...leftRows), Math.min(...rightRows));
+        const lower = Math.min(Math.max(...leftRows), Math.max(...rightRows));
+        const support = [...leftRows].filter(y => rightRows.has(y)).length;
+        // Columns with different line spacing can still share a gutter. A few
+        // crossing title or caption lines are compatible with two sustained tracks.
+        if (support < 3 && (lower - upper < unit * 2
+            || count > Math.min(leftRows.size, rightRows.size) * 0.15)) continue;
+        if (!best || count < best.count || (count === best.count
+            && (support > best.support || (support === best.support && gap > best.gap)))) {
+          best = { x, count, support, gap };
+        }
+      }
+      if (!best) return [];
+      const { x } = best;
+      if (depth) return [x];
+      return [...split(parts.filter(p => p.right <= x), depth + 1), x,
+        ...split(parts.filter(p => p.left >= x), depth + 1)];
+    };
+    return split(eligible);
+  },
+
+  _cursorVisibleLines(doc, state = null) {
+    const { lines } = this._readingOrderKeys(doc, state);
+    return { lines };
+  },
+
   _currentLineIndex(lines, focusY, focusX) {
     for (let i = 0; i < lines.length; i++) {
       const l = lines[i];
@@ -2198,23 +2277,8 @@ Object.assign(ZoteroVim, {
     return best;
   },
 
-  /**
-   * Compute the next caret target for a line move (j/k) in reading order:
-   * lines are sorted page → column → y, so index ±1 stays inside the
-   * column, wraps to the next column's first line (previous column's last
-   * line) at column ends on the same page — like flowed text — and crosses
-   * page boundaries into the next page's first column.  Header/footer
-   * decorations are excluded from the line list by _cursorVisibleLines, so
-   * a caret can never land on them and stall there.  The move only stops at
-   * the true beginning/end of the line list.
-   *
-   * Returns { node, offset, stopped, staleX }:
-   *   node/offset — target caret position (node is null when stopped)
-   *   stopped     — 'end' / 'top' when the document boundary was hit
-   *   staleX      — true when preferredX belonged to another column and was
-   *                 ignored (callers should reset their preferredX)
-   */
-  _lineMoveTarget(doc, focusNode, focusOffset, direction, preferredX = null) {
+  /** Resolve the adjacent reading-order line, keeping a horizontal reference within its column. */
+  _lineMoveTarget(doc, focusNode, focusOffset, direction, preferredX = null, keys = null) {
     const focusEl = focusNode?.nodeType === 3 ? focusNode.parentElement : focusNode;
     const focusRect = focusEl?.getBoundingClientRect?.();
     if (!focusRect) return null;
@@ -2235,35 +2299,25 @@ Object.assign(ZoteroVim, {
     } catch (_) {}
 
     const focusY = (focusRect.top + focusRect.bottom) / 2;
-    const { lines } = this._cursorVisibleLines(doc);
+    const { lines } = keys || this._cursorVisibleLines(doc);
     if (!lines.length) return null;
 
-    const curLineIdx = this._currentLineIndex(lines, focusY, charX);
+    const exact = lines.findIndex(line => line.spans.some(it => it.node === focusNode));
+    const curLineIdx = exact < 0 ? this._currentLineIndex(lines, focusY, charX) : exact;
     if (curLineIdx < 0) return null;
     const curLine = lines[curLineIdx];
 
-    // Stale preferredX check: an x captured in another column lies outside
-    // the current line's own x-extent — re-anchor on the focus character.
-    let selX = charX;
-    let staleX = false;
-    if (Number.isFinite(preferredX)) {
-      if (preferredX >= curLine.colLeft - 8 && preferredX <= curLine.colRight + 8) {
-        selX = preferredX;
-      } else {
-        staleX = true;
-      }
-    }
-
-    // Reading-order step: index ±1.  At a column end this lands on the next
-    // column's first line of the same page (lines are grouped per page and
-    // column); after the last column of a page it lands on the next page's
-    // first body line — headers are already excluded from the list.
+    let selX = Number.isFinite(preferredX) ? preferredX : charX;
     const targetIdx = curLineIdx + (direction > 0 ? 1 : -1);
     if (targetIdx < 0 || targetIdx >= lines.length) {
-      return { node: null, offset: 0, stopped: direction > 0 ? 'end' : 'top', staleX };
+      return { node: null, offset: 0, stopped: direction > 0 ? 'end' : 'top' };
     }
 
     const targetLine = lines[targetIdx];
+    if (targetLine.pageIdx !== curLine.pageIdx || targetLine.block !== curLine.block
+        || targetLine.colIdx !== curLine.colIdx) {
+      selX += targetLine.colLeft - curLine.colLeft;
+    }
 
     // Choose the span whose centre x is closest to the desired x.
     let bestSpan = null;
@@ -2276,7 +2330,7 @@ Object.assign(ZoteroVim, {
       }
     }
     const node = bestSpan?.span?.firstChild || null;
-    if (!node) return { node: null, offset: 0, stopped: null, staleX };
+    if (!node) return { node: null, offset: 0, stopped: null, preferredX: selX, line: targetLine };
 
     // Resolve the exact offset inside the line, most precise first:
     //   1. caretPositionFromPoint with the x clamped into the column
@@ -2322,7 +2376,7 @@ Object.assign(ZoteroVim, {
       }
     }
 
-    return { node: targetNode, offset: targetOffset, stopped: null, staleX };
+    return { node: targetNode, offset: targetOffset, stopped: null, preferredX: selX, line: targetLine };
   },
 
   _cursorCurrentX(doc, sel, fallback = null) {
@@ -2330,12 +2384,17 @@ Object.assign(ZoteroVim, {
       if (!sel?.focusNode) return fallback;
       const focusNode = sel.focusNode;
       if (focusNode.nodeType === 3 && focusNode.length > 0) {
-        const off = Math.max(0, Math.min(sel.focusOffset || 0, focusNode.length - 1));
+        const offset = Math.max(0, Math.min(sel.focusOffset || 0, focusNode.length));
         const r = doc.createRange();
-        r.setStart(focusNode, off);
-        r.setEnd(focusNode, Math.min(focusNode.length, off + 1));
-        const rects = r.getClientRects();
-        if (rects.length) return (rects[0].left + rects[0].right) / 2;
+        r.setStart(focusNode, offset);
+        r.collapse(true);
+        const caret = r.getBoundingClientRect?.();
+        if (caret?.height > 0) return caret.left;
+        const start = Math.min(offset, focusNode.length - 1);
+        r.setStart(focusNode, start);
+        r.setEnd(focusNode, start + 1);
+        const rect = r.getClientRects()[0];
+        if (rect) return offset === focusNode.length ? rect.right : rect.left;
       }
       const el = focusNode.nodeType === 3 ? focusNode.parentElement : focusNode;
       const rect = el?.getBoundingClientRect?.();
@@ -2381,45 +2440,194 @@ Object.assign(ZoteroVim, {
     }
   },
 
-  _setVisualSelectionFromAnchor(state, pdfWin, targetNode, targetOffset, opts = null) {
-    try {
-      const sel = pdfWin.getSelection();
-      if (!sel || !state.visualCursor?.textNode?.isConnected) return false;
+  _compareReaderPoints(a, b, keys) {
+    if (a.node === b.node) return a.offset - b.offset;
+    const first = keys?.byNode.get(a.node);
+    const second = keys?.byNode.get(b.node);
+    if (first && second) return first.order - second.order;
+    const relation = a.node.compareDocumentPosition?.(b.node);
+    return (relation & 1) ? NaN : (relation & 4) ? -1 : (relation & 2) ? 1 : NaN;
+  },
 
-      const anchorNode = state.visualCursor.textNode;
-      const anchorOffset = state.visualCursor.offset;
+  _orderedReaderVisual(state, pdfWin) {
+    const ordered = state._orderedVisual;
+    if (!ordered || ordered.pdfWin !== pdfWin) return null;
+    if (ordered.doc !== pdfWin.document || !ordered.anchor.node.isConnected
+        || !ordered.focus.node.isConnected || ordered.anchor.offset > ordered.anchor.node.length
+        || ordered.focus.offset > ordered.focus.node.length
+        || ordered.runs.some(({ range }) => range.startContainer.nodeType !== 3
+          || range.endContainer.nodeType !== 3 || !range.startContainer.isConnected
+          || !range.endContainer.isConnected)) {
+      this._clearOrderedReaderVisual(state, pdfWin);
+      return null;
+    }
+    return ordered;
+  },
 
+  _clearOrderedReaderVisual(state, pdfWin = state._orderedVisual?.pdfWin) {
+    if (!state._orderedVisual || state._orderedVisual.pdfWin !== pdfWin) return;
+    state._orderedVisual = null;
+    state.visualCursor = null;
+    state.visualPreferredX = null;
+    try { pdfWin.getSelection()?.removeAllRanges(); } catch (_) {}
+  },
+
+  _readerVisualEndpoints(state, pdfWin) {
+    const ordered = this._orderedReaderVisual(state, pdfWin);
+    if (ordered) return ordered;
+    const sel = pdfWin.getSelection();
+    const saved = state.visualCursor;
+    const anchorNode = saved?.textNode?.isConnected
+      && (!saved.textNode.ownerDocument || saved.textNode.ownerDocument === pdfWin.document)
+      ? saved.textNode : sel?.anchorNode;
+    const anchorOffset = anchorNode === saved?.textNode ? saved.offset : sel?.anchorOffset;
+    if (!anchorNode) return null;
+    const focusNode = sel?.focusNode || anchorNode;
+    const focusOffset = sel?.focusNode ? sel.focusOffset : anchorOffset;
+    const doc = pdfWin.document;
+    const anchor = this._readerTextPoint(doc, anchorNode, anchorOffset);
+    const focus = this._readerTextPoint(doc, focusNode, focusOffset);
+    return anchor && focus ? { anchor, focus, wordAnchor: null } : null;
+  },
+
+  _readerTextPoint(doc, node, offset) {
+    if (node.nodeType === 3) return { node, offset };
+    const layer = node.closest?.('.textLayer');
+    if (!layer) return null;
+    const point = doc.createRange();
+    point.setStart(node, offset);
+    point.collapse(true);
+    let preceding = null;
+    for (const span of layer.querySelectorAll('span')) {
+      const text = span.firstChild;
+      if (text?.nodeType !== 3 || !text.data) continue;
+      if (point.comparePoint(text, 0) >= 0) return { node: text, offset: 0 };
+      preceding = text;
+    }
+    return preceding && { node: preceding, offset: preceding.length };
+  },
+
+  /** Project the logical interval into exact page-local DOM runs, in reading order. */
+  _readerVisualRuns(doc, anchor, focus, keys) {
+    const order = this._compareReaderPoints(anchor, focus, keys);
+    if (!Number.isFinite(order)) return null;
+    const [start, end] = order <= 0 ? [anchor, focus] : [focus, anchor];
+    const first = keys.byNode.get(start.node);
+    const last = keys.byNode.get(end.node);
+    if (!first || !last) {
+      if (start.node !== end.node) return null;
+      const range = doc.createRange();
+      range.setStart(start.node, start.offset);
+      range.setEnd(end.node, end.offset);
+      return { runs: [{ range, page: start.node.parentElement?.closest?.('.page[data-page-number]') }],
+        text: start.node.data?.slice(start.offset, end.offset) || '' };
+    }
+
+    const runs = [];
+    let text = '';
+    let previous = null;
+    let current = null;
+    for (let i = first.order; i <= last.order; i++) {
+      const item = keys.items[i];
+      const { node, line } = item;
+      const from = i === first.order ? start.offset : 0;
+      const to = i === last.order ? end.offset : node.length;
+      if (to <= from) continue;
+      if (previous) {
+        if (previous.line !== line) text += '\n';
+        else if (item.wordBreakBefore === previous.domIndex
+            || this._pdfTextHasGap(previous.rect, item.rect)) text += ' ';
+      }
+      text += node.data.slice(from, to);
+      if (!previous || previous.pageIdx !== item.pageIdx
+          || previous.domIndex + 1 !== item.domIndex) {
+        const range = doc.createRange();
+        range.setStart(node, from);
+        current = { range, page: item.page };
+        runs.push(current);
+      }
+      current.range.setEnd(node, to);
+      previous = item;
+    }
+    return { runs, text };
+  },
+
+  /** Two separate logical ranges can share one native Selection in Gecko. */
+  _paintOrderedReaderVisual(pdfWin, ordered) {
+    const { anchor, focus, runs } = ordered;
+    const sel = pdfWin.getSelection();
+    if (!sel) return false;
+    const range = runs.length === 1 ? runs[0].range : null;
+    const matches = (point, node, offset) => point.node === node && point.offset === offset;
+    const contiguous = range
+      && (matches(anchor, range.startContainer, range.startOffset)
+        && matches(focus, range.endContainer, range.endOffset)
+        || matches(focus, range.startContainer, range.startOffset)
+        && matches(anchor, range.endContainer, range.endOffset));
+    if (anchor.node === focus.node || contiguous) {
       if (typeof sel.setBaseAndExtent === 'function') {
-        sel.setBaseAndExtent(anchorNode, anchorOffset, targetNode, targetOffset);
+        sel.setBaseAndExtent(anchor.node, anchor.offset, focus.node, focus.offset);
       } else {
-        // Fallback keeps anchor fixed using collapse+extend.
-        sel.removeAllRanges();
-        sel.collapse(anchorNode, anchorOffset);
-        sel.extend(targetNode, targetOffset);
+        sel.collapse(anchor.node, anchor.offset);
+        sel.extend(focus.node, focus.offset);
       }
+    } else {
+      sel.removeAllRanges();
+      for (const { range } of runs) sel.addRange(range);
+      if (!runs.length) sel.collapse(focus.node, focus.offset);
+    }
+    return true;
+  },
 
-      if (opts?.updatePreferredX !== false) {
-        state.visualPreferredX = this._cursorCurrentX(pdfWin.document, sel, state.visualPreferredX);
-      }
-      this._updateVisualCursor(state, pdfWin);
-      return true;
+  _applyReaderVisualSelection(state, pdfWin, anchor, focus, options = {}) {
+    const doc = pdfWin.document;
+    if (!anchor?.node?.isConnected || !focus?.node?.isConnected
+        || (anchor.node.ownerDocument && anchor.node.ownerDocument !== doc)
+        || (focus.node.ownerDocument && focus.node.ownerDocument !== doc)) return false;
+    const result = this._readerVisualRuns(doc, anchor, focus,
+      options.keys || this._readingOrderKeys(doc, state));
+    if (!result) return false;
+    const ordered = { ...result, pdfWin, doc, anchor, focus,
+      wordAnchor: options.wordAnchor || null };
+    const previous = state._orderedVisual;
+    if (previous && previous.pdfWin !== pdfWin) this._clearOrderedReaderVisual(state);
+    if (!this._paintOrderedReaderVisual(pdfWin, ordered)) return false;
+    state._orderedVisual = ordered;
+    state.visualCursor = { textNode: anchor.node, offset: anchor.offset };
+    state.selectionParams = null;
+    if (options.updatePreferredX !== false) {
+      state.visualPreferredX = this._cursorCurrentX(doc,
+        { focusNode: focus.node, focusOffset: focus.offset }, state.visualPreferredX);
+    }
+    this._updateVisualCursor(state, pdfWin);
+    return true;
+  },
+
+  _setVisualSelectionFromAnchor(state, pdfWin, targetNode, targetOffset, options = {}) {
+    try {
+      const endpoints = this._readerVisualEndpoints(state, pdfWin);
+      if (!endpoints) return false;
+      return this._applyReaderVisualSelection(state, pdfWin, endpoints.anchor,
+        { node: targetNode, offset: targetOffset }, { wordAnchor: endpoints.wordAnchor, ...options });
     } catch (e) {
       Zotero.debug('[ZoteroVim] _setVisualSelectionFromAnchor error: ' + e);
       return false;
     }
   },
 
-  _cursorOrderedTextNodes(doc) {
-    const spans = [];
-    for (const span of doc.querySelectorAll('.textLayer span')) {
-      const tn = span.firstChild;
-      if (!tn || tn.nodeType !== 3) continue;
-      if (!tn.data) continue;
-      spans.push(span);
-    }
-    const items = this._orderSpanItems(doc, spans).filter(it =>
-      it.rect.width >= 2 && it.rect.height >= 2);
-    return items.map(it => it.span.firstChild).filter(Boolean);
+  _normalizeReaderSelectionText(text) {
+    return text.normalize('NFKC').replace(/\n/g, ' ').replace(/ {2,}/g, ' ').trim();
+  },
+
+  _readerSelectedText(state, pdfWin) {
+    const ordered = this._orderedReaderVisual(state, pdfWin);
+    if (ordered) return ordered.text;
+    const sel = pdfWin?.getSelection?.();
+    return sel && !sel.isCollapsed ? sel.toString() : '';
+  },
+
+  _cursorOrderedTextNodes(doc, state = null) {
+    return this._readingOrderKeys(doc, state).items.map(it => it.node);
   },
 
   _cursorNodeIndex(nodes, node) {
@@ -2472,16 +2680,26 @@ Object.assign(ZoteroVim, {
     const doc = pdfWin.document;
     const sel = pdfWin.getSelection();
     if (!sel) return;
-    const nodes = this._cursorOrderedTextNodes(doc);
-    if (!nodes.length) return;
-
-    let idx = this._cursorNodeIndex(nodes, sel.focusNode);
-    if (idx < 0) idx = 0;
-    const off = Math.max(0, Math.min(sel.focusOffset || 0, nodes[idx].length));
-    const pos = this._cursorComputeWordPosition(nodes, { idx, off }, direction, bigWord, count);
-
-    const targetNode = nodes[Math.max(0, Math.min(pos.idx, nodes.length - 1))];
-    const targetOff = Math.max(0, Math.min(pos.off, targetNode.length));
+    const keys = this._readingOrderKeys(doc, state);
+    const nodes = keys.items.map(it => it.node);
+    const idx = this._cursorNodeIndex(nodes, sel.focusNode);
+    if (idx < 0) return;
+    const off = Math.min(sel.focusOffset || 0, nodes[idx].length);
+    let target;
+    if (bigWord) {
+      const pos = this._cursorComputeWordPosition(nodes, { idx, off }, direction, true, count);
+      target = { node: nodes[pos.idx], offset: pos.off };
+    } else {
+      target = { node: nodes[idx], offset: off };
+      const forward = direction === 'forward';
+      for (let i = 0; i < count; i++) {
+        const word = this._readerNearbyToken(keys, target, forward ? 1 : -1,
+          forward ? 'start' : 'end', forward);
+        if (!word) break;
+        target = word.start;
+      }
+    }
+    const { node: targetNode, offset: targetOff } = target;
     const r = doc.createRange();
     r.setStart(targetNode, targetOff);
     r.collapse(true);
@@ -2495,7 +2713,7 @@ Object.assign(ZoteroVim, {
       if (!this._ensureCursorCaret(state, pdfWin)) return;
       const sel = pdfWin.getSelection();
       if (!sel?.focusNode) return;
-      const target = this._lineBoundaryTarget(pdfWin.document, sel.focusNode, sel.focusOffset, toEnd);
+      const target = this._lineBoundaryTarget(pdfWin.document, sel.focusNode, sel.focusOffset, toEnd, state);
       if (!target?.node) return;
 
       const r = pdfWin.document.createRange();
@@ -2548,9 +2766,9 @@ Object.assign(ZoteroVim, {
     return { node, offset: node.length };
   },
 
-  _cursorLineTextNodes(doc, focusNode) {
+  _cursorLineTextNodes(doc, focusNode, state = null) {
     const focusEl = focusNode?.nodeType === 3 ? focusNode.parentElement : focusNode;
-    const { lines } = this._cursorVisibleLines(doc);
+    const { lines } = this._cursorVisibleLines(doc, state);
     for (const line of lines) {
       if (!line.spans?.some(item => item.span === focusEl || item.span.contains?.(focusEl))) {
         continue;
@@ -2560,32 +2778,7 @@ Object.assign(ZoteroVim, {
         .filter(node => node?.nodeType === 3);
     }
 
-    // The visible-line index intentionally filters headers, footers and
-    // spans just outside its look-ahead window.  A caret can still be there
-    // after a click or native movement, so recover the geometric line rather
-    // than making character-find silently fail.  Column matching prevents a
-    // same-height line in the neighbouring column from being joined.
-    try {
-      const layer = focusEl?.closest?.('.textLayer');
-      const focusRect = focusEl?.getBoundingClientRect?.();
-      if (layer && focusRect) {
-        const keys = this._readingOrderKeys(doc);
-        const pageIdx = keys.layerIdx.get(layer) ?? 0;
-        const colIdx = this._spanColIndex(focusRect, keys.columns);
-        const focusY = (focusRect.top + focusRect.bottom) / 2;
-        const tolerance = Math.max(2, Math.min(10, focusRect.height * 0.5));
-        const spans = Array.from(layer.querySelectorAll('span')).filter(span =>
-          span.firstChild?.nodeType === 3 && span.textContent.trim()
-        );
-        const nodes = this._orderSpanItems(doc, spans, keys)
-          .filter(item => item.pageIdx === pageIdx && item.colIdx === colIdx
-            && Math.abs((item.rect.top + item.rect.bottom) / 2 - focusY) <= tolerance)
-          .map(item => item.span.firstChild);
-        if (nodes.length) return nodes;
-      }
-    } catch (_) {}
-
-    return focusNode?.nodeType === 3 ? [focusNode] : [];
+    return !state?._readerBodyText && focusNode?.nodeType === 3 ? [focusNode] : [];
   },
 
   /** Resolve one f/F/t/T target on the current visual line. */
@@ -2620,7 +2813,7 @@ Object.assign(ZoteroVim, {
       if (!this._ensureCursorCaret(state, pdfWin)) return false;
       const sel = pdfWin.getSelection();
       if (!sel?.focusNode) return false;
-      const nodes = this._cursorLineTextNodes(pdfWin.document, sel.focusNode);
+      const nodes = this._cursorLineTextNodes(pdfWin.document, sel.focusNode, state);
       const target = this._cursorFindTarget(
         nodes,
         sel.focusNode,
@@ -2652,18 +2845,19 @@ Object.assign(ZoteroVim, {
     }
   },
 
-  _lineBoundaryTarget(doc, focusNode, focusOffset, toEnd) {
+  _lineBoundaryTarget(doc, focusNode, focusOffset, toEnd, state = null) {
     const focusEl = focusNode?.nodeType === 3 ? focusNode.parentElement : focusNode;
     const focusRect = focusEl?.getBoundingClientRect?.();
     if (!focusRect) return null;
 
     const focusY = (focusRect.top + focusRect.bottom) / 2;
     const focusX = (focusRect.left + focusRect.right) / 2;
-    const { lines } = this._cursorVisibleLines(doc);
+    const { lines } = this._cursorVisibleLines(doc, state);
     if (!lines.length) return null;
 
     // Line lookup is column-aware: 0/$ stay inside the current column.
-    const curLineIdx = this._currentLineIndex(lines, focusY, focusX);
+    const exact = lines.findIndex(line => line.spans.some(it => it.node === focusNode));
+    const curLineIdx = exact < 0 ? this._currentLineIndex(lines, focusY, focusX) : exact;
     if (curLineIdx < 0) return null;
 
     const spans = lines[curLineIdx].spans;
@@ -2678,26 +2872,11 @@ Object.assign(ZoteroVim, {
   _extendToLineBoundary(state, pdfWin, toEnd) {
     try {
       pdfWin.focus();
-      const doc = pdfWin.document;
-      const sel = pdfWin.getSelection();
-      if (!sel) return;
-
-      if ((sel.rangeCount === 0 || sel.isCollapsed) && state.visualCursor?.textNode?.isConnected) {
-        const r = doc.createRange();
-        r.setStart(state.visualCursor.textNode, state.visualCursor.offset);
-        r.collapse(true);
-        sel.removeAllRanges();
-        sel.addRange(r);
-      }
-      if (sel.rangeCount === 0) return;
-
-      if (!state.visualCursor || !state.visualCursor.textNode?.isConnected) {
-        state.visualCursor = { textNode: sel.anchorNode, offset: sel.anchorOffset };
-      }
-
-      const target = this._lineBoundaryTarget(doc, sel.focusNode, sel.focusOffset, toEnd);
-      if (!target?.node) return;
-      this._setVisualSelectionFromAnchor(state, pdfWin, target.node, target.offset);
+      const endpoints = this._readerVisualEndpoints(state, pdfWin);
+      if (!endpoints) return;
+      const target = this._lineBoundaryTarget(pdfWin.document,
+        endpoints.focus.node, endpoints.focus.offset, toEnd, state);
+      if (target?.node) this._setVisualSelectionFromAnchor(state, pdfWin, target.node, target.offset);
     } catch (e) {
       Zotero.debug('[ZoteroVim] _extendToLineBoundary error: ' + e);
     }
@@ -2834,37 +3013,25 @@ Object.assign(ZoteroVim, {
 
   _selectVisualTextObject(state, pdfWin, object) {
     try {
-      const sel = pdfWin.getSelection();
-      if (!sel?.focusNode) return false;
-      let nodes = this._cursorOrderedTextNodes(pdfWin.document);
+      const endpoints = this._readerVisualEndpoints(state, pdfWin);
+      if (!endpoints) return false;
+      const { node, offset } = endpoints.focus;
+      let nodes = this._cursorOrderedTextNodes(pdfWin.document, state);
       if (object === '"') {
-        nodes = this._cursorLineTextNodes(pdfWin.document, sel.focusNode);
+        nodes = this._cursorLineTextNodes(pdfWin.document, node, state);
       }
       const objectRange = this._readerTextObjectRange(
         nodes,
-        sel.focusNode,
-        sel.focusOffset,
+        node,
+        offset,
         object
       );
       if (!objectRange || objectRange.end <= objectRange.start) return false;
       const start = this._readerSnapshotPoint(objectRange.snapshot, objectRange.start);
       const end = this._readerSnapshotPoint(objectRange.snapshot, objectRange.end);
       if (!start || !end) return false;
-      state.visualCursor = { textNode: start.node, offset: start.offset };
-      if (typeof sel.setBaseAndExtent === 'function') {
-        sel.setBaseAndExtent(start.node, start.offset, end.node, end.offset);
-      } else {
-        sel.removeAllRanges();
-        sel.collapse(start.node, start.offset);
-        sel.extend(end.node, end.offset);
-      }
-      state.visualPreferredX = this._cursorCurrentX(
-        pdfWin.document,
-        sel,
-        state.visualPreferredX
-      );
-      this._updateVisualCursor(state, pdfWin);
-      this._showStatus(state, '▶ ' + sel.toString().length + ' chars', 600);
+      if (!this._applyReaderVisualSelection(state, pdfWin, start, end)) return false;
+      this._showStatus(state, '▶ ' + this._readerSelectedText(state, pdfWin).length + ' chars', 600);
       return true;
     } catch (e) {
       Zotero.debug('[ZoteroVim] _selectVisualTextObject error: ' + e);
@@ -2872,35 +3039,101 @@ Object.assign(ZoteroVim, {
     }
   },
 
-  _extendByWord(state, pdfWin, direction, bigWord) {
+  _readerLineTokens(line) {
+    if (!line.tokens) {
+      const index = this._buildFlashIndex(line.spans);
+      line.tokens = [...new Set(index.tokens.filter(Boolean))]
+        .map(token => ({ start: index.starts[token.start], end: index.ends[token.end - 1] }))
+        .filter(token => token.start && token.end);
+    }
+    return line.tokens;
+  },
+
+  _readerNearbyToken(keys, focus, step, edge, skipActive) {
+    const item = keys.byNode.get(focus.node);
+    if (!item) return null;
+    const lines = keys.lines;
+    const current = lines.findIndex(line => line.source === item.line);
+    const compare = (a, b) => this._compareReaderPoints(a, b, keys);
+    const tokens = this._readerLineTokens(item.line);
+    const active = tokens.findIndex(token => edge === 'end'
+      ? compare(token.start, focus) < 0 && compare(focus, token.end) <= 0
+      : compare(token.start, focus) <= 0 && compare(focus, token.end) < 0);
+    if (active >= 0) {
+      const target = tokens[active + (skipActive ? step : 0)];
+      if (target) return target;
+    } else {
+      const target = step > 0
+        ? tokens.find(token => compare(token.start, focus) >= 0)
+        : tokens.findLast(token => compare(token.end, focus) <= 0);
+      if (target) return target;
+    }
+    for (let i = current + step; i >= 0 && i < lines.length; i += step) {
+      const candidates = this._readerLineTokens(lines[i].source);
+      if (candidates.length) return candidates.at(step > 0 ? 0 : -1);
+    }
+    return null;
+  },
+
+  /** Keep the original anchor word or phrase whole when the active end crosses it. */
+  _readerAnchoredTokenEndpoints(anchor, target, keys) {
+    if (!anchor) return { anchor: target.start, focus: target.end };
+    if (this._compareReaderPoints(target.start, anchor.start, keys) < 0) {
+      return { anchor: anchor.end, focus: target.start };
+    }
+    const focus = this._compareReaderPoints(target.end, anchor.end, keys) < 0
+      ? anchor.end : target.end;
+    return { anchor: anchor.start, focus };
+  },
+
+  _readerAnchorToken(keys, anchor, focus) {
+    const item = keys.byNode.get(anchor.node);
+    if (!item) return null;
+    const order = this._compareReaderPoints(anchor, focus, keys);
+    if (!order) return null;
+    const edge = order < 0 ? 'start' : 'end';
+    return this._readerLineTokens(item.line).find(token =>
+      token[edge].node === anchor.node && token[edge].offset === anchor.offset) || null;
+  },
+
+  _readerTokenEndpoints(endpoints, target, keys) {
+    const { anchor, focus, wordAnchor } = endpoints;
+    if (wordAnchor) return this._readerAnchoredTokenEndpoints(wordAnchor, target, keys);
+    const before = this._compareReaderPoints(target.end, anchor, keys) <= 0;
+    const after = this._compareReaderPoints(target.start, anchor, keys) >= 0;
+    const backward = this._compareReaderPoints(focus, anchor, keys) < 0;
+    return { anchor, focus: before || (!after && backward) ? target.start : target.end };
+  },
+
+  _extendByWord(state, pdfWin, direction, count = 1) {
     try {
       pdfWin.focus();
-      const doc = pdfWin.document;
-      const sel = pdfWin.getSelection();
-      if (!sel) return;
-
-      if ((sel.rangeCount === 0 || sel.isCollapsed) && state.visualCursor?.textNode?.isConnected) {
-        const r = doc.createRange();
-        r.setStart(state.visualCursor.textNode, state.visualCursor.offset);
-        r.collapse(true);
-        sel.removeAllRanges();
-        sel.addRange(r);
+      const keys = this._readingOrderKeys(pdfWin.document, state);
+      let endpoints = this._readerVisualEndpoints(state, pdfWin);
+      if (!endpoints) return;
+      if (!endpoints.wordAnchor) {
+        endpoints = { ...endpoints,
+          wordAnchor: this._readerAnchorToken(keys, endpoints.anchor, endpoints.focus) };
       }
-      if (sel.rangeCount === 0) return;
-
-      if (!state.visualCursor || !state.visualCursor.textNode?.isConnected) {
-        state.visualCursor = { textNode: sel.anchorNode, offset: sel.anchorOffset };
+      let moved = false;
+      const step = direction === 'forward' ? 1 : -1;
+      for (let i = 0; i < count; i++) {
+        const order = this._compareReaderPoints(endpoints.anchor, endpoints.focus, keys);
+        const edge = (order < 0 || (order === 0 && step < 0)) ? 'end' : 'start';
+        const target = this._readerNearbyToken(keys, endpoints.focus, step, edge, order !== 0);
+        if (!target) break;
+        if (order === 0) {
+          const { start, end } = target;
+          endpoints = { anchor: step > 0 ? start : end, focus: step > 0 ? end : start,
+            wordAnchor: target };
+        } else {
+          const result = this._readerTokenEndpoints(endpoints, target, keys);
+          endpoints = { ...result, wordAnchor: endpoints.wordAnchor };
+        }
+        moved = true;
       }
-
-      const nodes = this._cursorOrderedTextNodes(doc);
-      if (!nodes.length) return;
-      let idx = this._cursorNodeIndex(nodes, sel.focusNode);
-      if (idx < 0) idx = 0;
-      const off = Math.max(0, Math.min(sel.focusOffset || 0, nodes[idx].length));
-      const pos = this._cursorComputeWordPosition(nodes, { idx, off }, direction, bigWord, 1, true);
-      const targetNode = nodes[Math.max(0, Math.min(pos.idx, nodes.length - 1))];
-      const targetOffset = Math.max(0, Math.min(pos.off, targetNode.length));
-      this._setVisualSelectionFromAnchor(state, pdfWin, targetNode, targetOffset);
+      if (moved) this._applyReaderVisualSelection(state, pdfWin, endpoints.anchor, endpoints.focus,
+        { keys, wordAnchor: endpoints.wordAnchor });
     } catch (e) {
       Zotero.debug('[ZoteroVim] _extendByWord error: ' + e);
     }
@@ -2957,7 +3190,7 @@ Object.assign(ZoteroVim, {
    */
   _showVisualHints(state, pdfWin, targetMode = 'visual') {
     this._clearVisualHints(state, pdfWin);
-    const starts = this._findSentenceStarts(pdfWin);
+    const starts = this._findSentenceStarts(pdfWin, state);
     if (!starts.length) {
       this._placeCursorAtFirstText(state, pdfWin);
       return;
@@ -3132,21 +3365,14 @@ Object.assign(ZoteroVim, {
    *      sentence-ending punctuation (.!?) optionally followed by closing quotes.
    *   3. Positions within a span after the same punctuation + whitespace.
    */
-  _findSentenceStarts(pdfWin) {
+  _findSentenceStarts(pdfWin, state = null) {
     const doc = pdfWin.document;
     const container =
       doc.getElementById('viewerContainer') ||
       doc.querySelector('.pdfViewer') || doc.body;
     const viewH = container.clientHeight;
 
-    // Collect visible, non-empty text spans in reading order (page, column,
-    // line, left) so the span-to-span rules below never cross columns.
-    const items = this._orderSpanItems(
-      doc,
-      Array.from(doc.querySelectorAll('.textLayer span')).filter(s =>
-        s.textContent.trim() && s.firstChild?.nodeType === 3
-      )
-    );
+    const { items } = this._readingOrderKeys(doc, state);
     const spans = items.filter(it =>
       it.rect.top < viewH - 4 && it.rect.bottom > 4 &&
       it.rect.width > 4 && it.rect.height > 3);
@@ -3224,11 +3450,17 @@ Object.assign(ZoteroVim, {
     for (const el of doc.querySelectorAll('[data-zv-cursor]')) el.remove();
     if (state.mode !== 'visual' && state.mode !== 'cursor') return;
 
-    // Prefer the selection's focus end; fall back to the saved anchor.
-    let focusNode = null, focusOffset = 0;
+    const ordered = this._orderedReaderVisual(state, pdfWin);
+    let focusNode = ordered?.focus.node, focusOffset = ordered?.focus.offset ?? 0;
     try {
       const sel = pdfWin.getSelection();
-      if (sel?.focusNode) { focusNode = sel.focusNode; focusOffset = sel.focusOffset; }
+      if (ordered && sel?.isCollapsed && ordered.text && !state._readerFlash
+          && !state._translationPopup && !state._shortcutHelp) {
+        this._paintOrderedReaderVisual(pdfWin, ordered);
+      } else if (!ordered && sel?.focusNode) {
+        focusNode = sel.focusNode;
+        focusOffset = sel.focusOffset;
+      }
     } catch (_) {}
     if (!focusNode && state.visualCursor) {
       focusNode   = state.visualCursor.textNode;
@@ -3379,7 +3611,7 @@ Object.assign(ZoteroVim, {
       }
     }
 
-    const words = this._findWordStartsInSentence(pdfWin, coarseBadge, next);
+    const words = this._findWordStartsInSentence(pdfWin, coarseBadge, next, state);
     if (!words.length) {
       this._clearVisualHints(state, pdfWin);
       return;
@@ -3408,10 +3640,10 @@ Object.assign(ZoteroVim, {
    * any non-space character that follows whitespace — the sentence start
    * itself always counts as the first word start.
    */
-  _findWordStartsInSentence(pdfWin, coarseBadge, nextStart) {
+  _findWordStartsInSentence(pdfWin, coarseBadge, nextStart, state = null) {
     const doc = pdfWin.document;
-    const keys = this._readingOrderKeys(doc);
-    const nodes = this._cursorOrderedTextNodes(doc);
+    const keys = this._readingOrderKeys(doc, state);
+    const nodes = keys.items.map(it => it.node);
     const startIdx = this._cursorNodeIndex(nodes, coarseBadge.textNode);
     if (startIdx < 0) {
       return [{ textNode: coarseBadge.textNode, offset: coarseBadge.offset }];
@@ -3419,10 +3651,7 @@ Object.assign(ZoteroVim, {
 
     // Column of the sentence start, for stopping open-ended ranges at the
     // column boundary.
-    const coarseColIdx = this._spanColIndex(
-      coarseBadge.textNode.parentElement?.getBoundingClientRect?.() || null,
-      keys.columns
-    );
+    const coarse = keys.byNode.get(coarseBadge.textNode);
 
     // Visible viewport bottom in viewport coordinates — innerHeight is the
     // only reliable measure regardless of which container scrolls.
@@ -3462,8 +3691,9 @@ Object.assign(ZoteroVim, {
       // flows across the column break (previous span did not end with
       // sentence-ending punctuation).
       if (!nextStart && elRect) {
-        const colIdx = this._spanColIndex(elRect, keys.columns);
-        if (colIdx !== coarseColIdx) {
+        const item = keys.byNode.get(node);
+        if (item && coarse && (item.pageIdx !== coarse.pageIdx || item.colIdx !== coarse.colIdx
+            || item.line.block !== coarse.line.block)) {
           if (!lastSpanText || /[.!?]['")\]]*\s*$/.test(lastSpanText)) break;
         }
       }
@@ -3491,9 +3721,7 @@ Object.assign(ZoteroVim, {
 
   _placeCursorAtFirstText(state, pdfWin) {
     try {
-      const span = pdfWin.document.querySelector('.textLayer span');
-      if (!span) return;
-      const textNode = span.firstChild;
+      const [textNode] = this._cursorOrderedTextNodes(pdfWin.document, state);
       if (!textNode || textNode.nodeType !== 3) return;
       const sel   = pdfWin.getSelection();
       const range = pdfWin.document.createRange();
@@ -3518,13 +3746,15 @@ Object.assign(ZoteroVim, {
         || { left: 0, right: pdfWin.innerWidth || 800, top: 0, bottom: pdfWin.innerHeight || 800 };
       const x = (rect.left + rect.right) / 2;
       const y = (rect.top + rect.bottom) / 2;
+      const keys = this._readingOrderKeys(doc, state);
       let node = null;
       let offset = 0;
       try {
         const caret = doc.caretPositionFromPoint?.(x, y);
         const candidate = caret?.offsetNode;
         const owner = candidate?.nodeType === 3 ? candidate.parentElement : candidate;
-        if (candidate?.nodeType === 3 && owner?.closest?.('.textLayer')) {
+        if (candidate?.nodeType === 3 && owner?.closest?.('.textLayer')
+            && (!state._readerBodyText || keys.byNode.has(candidate))) {
           node = candidate;
           offset = caret.offset;
         }
@@ -3533,9 +3763,7 @@ Object.assign(ZoteroVim, {
       if (!node) {
         let best = null;
         let bestDistance = Infinity;
-        for (const candidate of this._cursorOrderedTextNodes(doc)) {
-          const r = candidate.parentElement?.getBoundingClientRect?.();
-          if (!r) continue;
+        for (const { node: candidate, rect: r } of keys.items) {
           const dx = x < r.left ? r.left - x : x > r.right ? x - r.right : 0;
           const dy = y < r.top ? r.top - y : y > r.bottom ? y - r.bottom : 0;
           const distance = dx * dx + dy * dy;
@@ -3582,42 +3810,39 @@ Object.assign(ZoteroVim, {
     try {
       pdfWin.focus();
       const doc = pdfWin.document;
-      const sel = pdfWin.getSelection();
-      if (!sel) return;
-      if ((sel.rangeCount === 0 || sel.isCollapsed) && state.visualCursor?.textNode?.isConnected) {
-        const restore = doc.createRange();
-        restore.setStart(state.visualCursor.textNode, state.visualCursor.offset);
-        restore.collapse(true);
-        sel.removeAllRanges();
-        sel.addRange(restore);
+      let endpoints = this._readerVisualEndpoints(state, pdfWin);
+      if (!endpoints) return;
+      const { node, offset } = endpoints.focus;
+      const keys = this._readingOrderKeys(doc, state);
+      if (!endpoints.wordAnchor) {
+        endpoints = { ...endpoints,
+          wordAnchor: this._readerAnchorToken(keys, endpoints.anchor, endpoints.focus) };
       }
-      if (sel.rangeCount === 0) return;
-      if (!state.visualCursor || !state.visualCursor.textNode?.isConnected) {
-        state.visualCursor = { textNode: sel.anchorNode, offset: sel.anchorOffset };
-      }
-
-      if (!Number.isFinite(state.visualPreferredX)) {
-        state.visualPreferredX = this._cursorCurrentX(doc, sel, null);
-      }
-
-      const target = this._lineMoveTarget(
-        doc,
-        sel.focusNode,
-        sel.focusOffset,
-        direction,
-        state.visualPreferredX
-      );
+      const target = this._lineMoveTarget(doc, node, offset, direction, state.visualPreferredX, keys);
       if (!target) return;
-      if (target.staleX) state.visualPreferredX = null;
       if (target.stopped) {
         this._showStatus(state, direction > 0 ? '→ document end' : '→ document top', 900);
         return;
       }
       if (!target.node) return;
-
-      if (this._setVisualSelectionFromAnchor(state, pdfWin, target.node, target.offset, { updatePreferredX: false })) {
-        const selLen = sel.toString().length;
-        this._showStatus(state, '▶ ' + selLen + ' chars', 400);
+      let result = { anchor: endpoints.anchor, focus: { node: target.node, offset: target.offset } };
+      let distance = Infinity;
+      for (const token of this._readerLineTokens(target.line.source)) {
+        const choice = this._readerTokenEndpoints(endpoints, token, keys);
+        const x = this._cursorCurrentX(doc, { focusNode: choice.focus.node,
+          focusOffset: choice.focus.offset });
+        if (!Number.isFinite(x)) continue;
+        const gap = Math.abs(x - target.preferredX);
+        if (gap < distance) {
+          distance = gap;
+          result = choice;
+        }
+      }
+      state.visualPreferredX = target.preferredX;
+      if (this._applyReaderVisualSelection(state, pdfWin, result.anchor, result.focus,
+          { keys, wordAnchor: endpoints.wordAnchor, updatePreferredX: false })) {
+        const length = this._readerSelectedText(state, pdfWin).length;
+        this._showStatus(state, '▶ ' + length + ' chars', 400);
       }
     } catch (e) {
       Zotero.debug('[ZoteroVim] _extendByLine error: ' + e);
@@ -3628,153 +3853,55 @@ Object.assign(ZoteroVim, {
   _extendByChar(state, pdfWin, direction) {
     try {
       pdfWin.focus();
-      const doc = pdfWin.document;
-      const sel = pdfWin.getSelection();
-      if (!sel) return;
-
-      if ((sel.rangeCount === 0 || sel.isCollapsed) && state.visualCursor?.textNode?.isConnected) {
-        const r = doc.createRange();
-        r.setStart(state.visualCursor.textNode, state.visualCursor.offset);
-        r.collapse(true);
-        sel.removeAllRanges();
-        sel.addRange(r);
-      }
-      if (sel.rangeCount === 0) return;
-      if (!state.visualCursor || !state.visualCursor.textNode?.isConnected) {
-        state.visualCursor = { textNode: sel.anchorNode, offset: sel.anchorOffset };
-      }
-
-      const nodes = this._cursorOrderedTextNodes(doc);
-      if (!nodes.length) return;
-      let idx = this._cursorNodeIndex(nodes, sel.focusNode);
-      if (idx < 0) idx = 0;
-      let pos = { idx, off: Math.max(0, Math.min(sel.focusOffset || 0, nodes[idx].length)) };
-      pos = direction > 0 ? this._cursorAdvancePos(nodes, pos) : this._cursorRetreatPos(nodes, pos);
-
-      const targetNode = nodes[Math.max(0, Math.min(pos.idx, nodes.length - 1))];
-      const targetOffset = Math.max(0, Math.min(pos.off, targetNode.length));
-      this._setVisualSelectionFromAnchor(state, pdfWin, targetNode, targetOffset);
+      const endpoints = this._readerVisualEndpoints(state, pdfWin);
+      if (!endpoints) return;
+      const keys = this._readingOrderKeys(pdfWin.document, state);
+      const nodes = keys.items.map(it => it.node);
+      const idx = this._cursorNodeIndex(nodes, endpoints.focus.node);
+      if (idx < 0) return;
+      const off = Math.min(endpoints.focus.offset, nodes[idx].length);
+      const pos = direction > 0 ? this._cursorAdvancePos(nodes, { idx, off })
+        : this._cursorRetreatPos(nodes, { idx, off });
+      this._applyReaderVisualSelection(state, pdfWin, endpoints.anchor,
+        { node: nodes[pos.idx], offset: pos.off }, { keys, wordAnchor: endpoints.wordAnchor });
     } catch (e) {
       Zotero.debug('[ZoteroVim] _extendByChar error: ' + e);
     }
   },
 
-  /**
-   * Extend selection to the end (direction>0) or start (direction<0) of the
-   * current paragraph.  Paragraph boundaries are detected as vertical gaps
-   * between .textLayer spans that exceed 0.5× the local line height.
-   *
-   * Forward (}): extend to the end of the last span of the current paragraph.
-   * Backward ({): extend to the start of the first span of the current
-   *   paragraph (or the previous one if already at the start).
-   */
+  /** Read a paragraph around a point, stopping at page, column or full-width block boundaries. */
+  _readerParagraphAt(keys, focus) {
+    const items = keys.items.filter(item => item.rect.width > 4 && item.rect.height > 3);
+    const index = items.findIndex(item => item.node === focus.node);
+    if (index < 0) return null;
+    const gap = Math.max(items[index].rect.height, 8) * 0.5;
+    const boundary = (a, b) => a.pageIdx !== b.pageIdx || a.colIdx !== b.colIdx
+      || a.line.block !== b.line.block || b.rect.top - a.rect.bottom > gap;
+    let start = index, end = index;
+    while (start > 0 && !boundary(items[start - 1], items[start])) start--;
+    while (end + 1 < items.length && !boundary(items[end], items[end + 1])) end++;
+    return { items, start, end };
+  },
+
   _extendByParagraph(state, pdfWin, direction) {
     try {
       pdfWin.focus();
-      const doc = pdfWin.document;
-      const sel = pdfWin.getSelection();
-      if (!sel) return;
-
-      // Restore/save anchor
-      if ((sel.rangeCount === 0 || sel.isCollapsed) && state.visualCursor) {
-        try {
-          const r = doc.createRange();
-          r.setStart(state.visualCursor.textNode, state.visualCursor.offset);
-          r.collapse(true);
-          sel.removeAllRanges();
-          sel.addRange(r);
-        } catch (_) { return; }
-      }
-      if (sel.rangeCount === 0) return;
-      if (!state.visualCursor) {
-        state.visualCursor = { textNode: sel.anchorNode, offset: sel.anchorOffset };
-      }
-
-      // Collect and sort visible text spans in reading order (page, column,
-      // line, left) so paragraph gaps never cross columns.
-      const spans = Array.from(doc.querySelectorAll('.textLayer span')).filter(s => {
-        const r = s.getBoundingClientRect();
-        return r.width > 4 && r.height > 3 && s.textContent.trim() && s.firstChild?.nodeType === 3;
-      });
-      const ordered = this._orderSpanItems(doc, spans);
-      const spanList = ordered.map(it => it.span);
-      if (spanList.length === 0) return;
-
-      // Find which span contains the selection focus.
-      const focusNode = sel.focusNode;
-      const focusEl   = focusNode?.nodeType === 3 ? focusNode.parentElement : focusNode;
-      let focusIdx    = spanList.findIndex(s => s === focusEl || s.contains(focusEl));
-      if (focusIdx < 0) focusIdx = direction > 0 ? 0 : spanList.length - 1;
-
-      // Line height for gap threshold.
-      const fr          = spanList[focusIdx].getBoundingClientRect();
-      const lineH       = Math.max(fr.height, 8);
-      const gapThreshold = lineH * 0.5;
-
-      // Build paragraph boundary set: index i means gap between spans[i] and spans[i+1].
-      const boundaries = [];
-      for (let i = 0; i < spanList.length - 1; i++) {
-        const r1 = spanList[i].getBoundingClientRect();
-        const r2 = spanList[i + 1].getBoundingClientRect();
-        if (r2.top - r1.bottom > gapThreshold) boundaries.push(i);
-      }
-
-      let targetNode = null, targetOffset = 0;
-
-      if (direction > 0) {
-        // Forward: find first boundary index >= focusIdx.
-        const bIdx = boundaries.find(b => b >= focusIdx);
-        const lastSpan = bIdx !== undefined ? spanList[bIdx] : spanList[spanList.length - 1];
-        const tn = lastSpan.firstChild;
-        if (tn && tn.nodeType === 3) { targetNode = tn; targetOffset = tn.data.length; }
-      } else {
-        // Backward: the current paragraph starts at the span right after the last
-        // boundary whose index is < focusIdx (or spans[0] if none).
-        const bBefore = boundaries.filter(b => b < focusIdx);
-        const paraStart = bBefore.length > 0 ? bBefore[bBefore.length - 1] + 1 : 0;
-
-        // If focus is already at the paragraph start, move to the previous paragraph's start.
-        let startIdx = paraStart;
-        if (focusIdx <= paraStart && bBefore.length > 0) {
-          const bBefore2 = bBefore.slice(0, -1);
-          startIdx = bBefore2.length > 0 ? bBefore2[bBefore2.length - 1] + 1 : 0;
-        }
-
-        const tn = spanList[startIdx].firstChild;
-        if (tn && tn.nodeType === 3) {
-          const off = tn.data.search(/\S/);
-          targetNode = tn; targetOffset = Math.max(0, off);
+      const endpoints = this._readerVisualEndpoints(state, pdfWin);
+      if (!endpoints) return;
+      const keys = this._readingOrderKeys(pdfWin.document, state);
+      let paragraph = this._readerParagraphAt(keys, endpoints.focus);
+      if (!paragraph) return;
+      if (direction < 0 && paragraph.start > 0) {
+        const node = paragraph.items[paragraph.start].node;
+        if (node === endpoints.focus.node && endpoints.focus.offset <= Math.max(0, node.data.search(/\S/))) {
+          paragraph = this._readerParagraphAt(keys, paragraph.items[paragraph.start - 1]);
         }
       }
-
-      if (!targetNode) return;
-
-      // Build range from saved anchor to new target.
-      const anchorNode   = state.visualCursor.textNode;
-      const anchorOffset = state.visualCursor.offset;
-      try {
-        const range = doc.createRange();
-        let anchorFirst = true;
-        if (anchorNode !== targetNode) {
-          anchorFirst = !!(anchorNode.compareDocumentPosition(targetNode) & 4);
-        } else {
-          anchorFirst = anchorOffset <= targetOffset;
-        }
-        if (anchorFirst) {
-          range.setStart(anchorNode, anchorOffset);
-          range.setEnd(targetNode, targetOffset);
-        } else {
-          range.setStart(targetNode, targetOffset);
-          range.setEnd(anchorNode, anchorOffset);
-        }
-        sel.removeAllRanges();
-        sel.addRange(range);
-        const selLen = sel.toString().length;
-        this._showStatus(state, '▶ ' + selLen + ' chars', 600);
-        this._updateVisualCursor(state, pdfWin);
-        Zotero.debug('[ZoteroVim] _extendByParagraph dir=' + direction + ' len=' + selLen);
-      } catch (e) {
-        Zotero.debug('[ZoteroVim] _extendByParagraph range error: ' + e);
+      const node = paragraph.items[direction > 0 ? paragraph.end : paragraph.start].node;
+      const offset = direction > 0 ? node.length : Math.max(0, node.data.search(/\S/));
+      if (this._setVisualSelectionFromAnchor(state, pdfWin, node, offset, { keys })) {
+        const length = this._readerSelectedText(state, pdfWin).length;
+        this._showStatus(state, '▶ ' + length + ' chars', 600);
       }
     } catch (e) {
       Zotero.debug('[ZoteroVim] _extendByParagraph error: ' + e);
@@ -3796,36 +3923,13 @@ Object.assign(ZoteroVim, {
     try {
       pdfWin.focus();
       const doc = pdfWin.document;
-      const sel = pdfWin.getSelection();
-      if (!sel) return;
-
-      // Restore anchor if selection is collapsed / gone.
-      if ((sel.rangeCount === 0 || sel.isCollapsed) && state.visualCursor) {
-        const vc = state.visualCursor;
-        if (!vc.textNode.isConnected) {
-          Zotero.debug('[ZoteroVim] _extendBySentence: visualCursor node detached');
-          return;
-        }
-        try {
-          const r = doc.createRange();
-          r.setStart(vc.textNode, vc.offset);
-          r.collapse(true);
-          sel.removeAllRanges();
-          sel.addRange(r);
-        } catch (e) {
-          Zotero.debug('[ZoteroVim] _extendBySentence: restore failed: ' + e);
-          return;
-        }
-      }
-      if (sel.rangeCount === 0) return;
-      if (!state.visualCursor) {
-        state.visualCursor = { textNode: sel.anchorNode, offset: sel.anchorOffset };
-      }
+      const endpoints = this._readerVisualEndpoints(state, pdfWin);
+      if (!endpoints) return;
 
       // Build ordered list of non-empty text nodes from ALL .textLayer spans
       // (one .textLayer per PDF page — querySelectorAll returns them all),
       // in reading order: page, column, line, left.
-      const items = this._orderSpanItems(doc, Array.from(doc.querySelectorAll('.textLayer span')));
+      const { items } = this._readingOrderKeys(doc, state);
       const textNodes = [];
       for (const it of items) {
         const tn = it.span.firstChild;
@@ -3836,8 +3940,8 @@ Object.assign(ZoteroVim, {
         return;
       }
 
-      const focusNode   = sel.focusNode;
-      const focusOffset = sel.focusOffset;
+      const focusNode   = endpoints.focus.node;
+      const focusOffset = endpoints.focus.offset;
 
       // Find focusNode in our sorted list.
       let focusIdx = textNodes.indexOf(focusNode.nodeType === 3 ? focusNode : null);
@@ -3923,33 +4027,9 @@ Object.assign(ZoteroVim, {
 
       if (!targetNode) return;
 
-      // Build range from saved anchor to new target.
-      const anchorNode   = state.visualCursor.textNode;
-      const anchorOffset = state.visualCursor.offset;
-      try {
-        const range = doc.createRange();
-        let anchorFirst = true;
-        if (anchorNode !== targetNode) {
-          anchorFirst = !!(anchorNode.compareDocumentPosition(targetNode) & 4);
-        } else {
-          anchorFirst = anchorOffset <= targetOffset;
-        }
-        if (anchorFirst) {
-          range.setStart(anchorNode, anchorOffset);
-          range.setEnd(targetNode, targetOffset);
-        } else {
-          range.setStart(targetNode, targetOffset);
-          range.setEnd(anchorNode, anchorOffset);
-        }
-        sel.removeAllRanges();
-        sel.addRange(range);
-        const selLen = sel.toString().length;
-        this._showStatus(state, '▶ ' + selLen + ' chars', 600);
-        this._updateVisualCursor(state, pdfWin);
-        Zotero.debug('[ZoteroVim] _extendBySentence dir=' + direction +
-                     ' focusIdx=' + focusIdx + ' len=' + selLen);
-      } catch (e) {
-        Zotero.debug('[ZoteroVim] _extendBySentence range error: ' + e);
+      if (this._setVisualSelectionFromAnchor(state, pdfWin, targetNode, targetOffset)) {
+        const length = this._readerSelectedText(state, pdfWin).length;
+        this._showStatus(state, '▶ ' + length + ' chars', 600);
       }
     } catch (e) {
       Zotero.debug('[ZoteroVim] _extendBySentence error: ' + e);
@@ -4058,46 +4138,13 @@ Object.assign(ZoteroVim, {
   _swapVisualEnds(state, pdfWin) {
     try {
       pdfWin.focus();
-      const sel = pdfWin.getSelection();
-      if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return;
-      if (!state.visualCursor) return;
-
-      const range          = sel.getRangeAt(0);
-      const oldAnchorNode  = state.visualCursor.textNode;
-      const oldAnchorOff   = state.visualCursor.offset;
-
-      // Which end of the DOM range is our logical anchor?
-      const anchorIsStart  =
-        oldAnchorNode === range.startContainer && oldAnchorOff === range.startOffset;
-
-      // Old focus = the other end of the range.
-      const oldFocusNode = anchorIsStart ? range.endContainer   : range.startContainer;
-      const oldFocusOff  = anchorIsStart ? range.endOffset       : range.startOffset;
-
-      // Update our saved anchor to the old focus.
-      state.visualCursor = { textNode: oldFocusNode, offset: oldFocusOff };
-
-      // Move the browser selection so that:
-      //   new anchor = oldFocus, new focus = oldAnchor
-      // setBaseAndExtent(anchorNode, anchorOffset, focusNode, focusOffset) is
-      // supported in Gecko and allows "backward" selections where focus < anchor.
-      try {
-        sel.setBaseAndExtent(oldFocusNode, oldFocusOff, oldAnchorNode, oldAnchorOff);
-        Zotero.debug('[ZoteroVim] _swapVisualEnds: setBaseAndExtent OK' +
-                     ' newAnchorOff=' + oldFocusOff + ' newFocusOff=' + oldAnchorOff);
-      } catch (e1) {
-        Zotero.debug('[ZoteroVim] _swapVisualEnds: setBaseAndExtent failed: ' + e1);
-        // Fallback: collapse to old focus then extend to old anchor.
-        try {
-          sel.collapse(oldFocusNode, oldFocusOff);
-          sel.extend(oldAnchorNode, oldAnchorOff);
-          Zotero.debug('[ZoteroVim] _swapVisualEnds: collapse+extend fallback OK');
-        } catch (e2) {
-          Zotero.debug('[ZoteroVim] _swapVisualEnds: fallback also failed: ' + e2);
-        }
+      const endpoints = this._readerVisualEndpoints(state, pdfWin);
+      if (endpoints) {
+        const { focus, anchor } = endpoints;
+        const keys = this._readingOrderKeys(pdfWin.document, state);
+        this._applyReaderVisualSelection(state, pdfWin, focus, anchor,
+          { keys, wordAnchor: this._readerAnchorToken(keys, focus, anchor) });
       }
-      state.visualPreferredX = this._cursorCurrentX(pdfWin.document, sel, state.visualPreferredX);
-      this._updateVisualCursor(state, pdfWin);
     } catch (e) {
       Zotero.debug('[ZoteroVim] _swapVisualEnds error: ' + e);
     }
@@ -4112,51 +4159,34 @@ Object.assign(ZoteroVim, {
    * sub-range for each one's selected portion, and collect those rects.
    * Text-node rects are always tight bounds around actual glyphs.
    */
-  _getRangeTextRects(range, doc) {
+  _getRangeTextRects(range, doc, onRect = null) {
     const rects = [];
-    const startNode = range.startContainer;
-    const endNode   = range.endContainer;
-
-    // Fast path: single text node.
-    if (startNode === endNode && startNode.nodeType === 3) {
-      for (const r of range.getClientRects()) {
-        if (r.width > 1 && r.height > 1) rects.push(r);
+    const start = range.startContainer;
+    const end = range.endContainer;
+    const append = (part, node) => {
+      for (const rect of part.getClientRects()) {
+        if (!(rect.width > 0 && rect.height > 0)) continue;
+        rects.push(rect);
+        onRect?.(rect, node);
       }
+    };
+    if (start === end && start.nodeType === 3) {
+      append(range, start);
       return rects;
     }
 
-    // Walk all text nodes under the common ancestor, collecting rects for
-    // the selected portion of each one.
-    const root   = range.commonAncestorContainer;
-    const walker = doc.createTreeWalker(
-      root.nodeType === 3 ? root.parentNode : root,
-      0x4,  // SHOW_TEXT
-      null
-    );
-
-    let started = false;
-    let node;
-    while ((node = walker.nextNode())) {
-      if (!started) {
-        if (node !== startNode) continue;
-        started = true;
+    const walker = doc.createTreeWalker(range.commonAncestorContainer, 0x4);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      if (!range.intersectsNode(node)) continue;
+      const from = node === start ? range.startOffset : 0;
+      const to = node === end ? range.endOffset : node.length;
+      if (to > from) {
+        const part = doc.createRange();
+        part.setStart(node, from);
+        part.setEnd(node, to);
+        append(part, node);
       }
-
-      const startOff = (node === startNode) ? range.startOffset : 0;
-      const endOff   = (node === endNode)   ? range.endOffset   : node.length;
-
-      if (startOff < endOff) {
-        try {
-          const sub = doc.createRange();
-          sub.setStart(node, startOff);
-          sub.setEnd(node, endOff);
-          for (const r of sub.getClientRects()) {
-            if (r.width > 1 && r.height > 1) rects.push(r);
-          }
-        } catch (_) {}
-      }
-
-      if (node === endNode) break;
+      if (node === end) break;
     }
     return rects;
   },
@@ -4214,7 +4244,7 @@ Object.assign(ZoteroVim, {
     this._showStatus(state, '▶ ' + colorName, 800);
     Zotero.debug('[ZoteroVim] _highlight: color=' + color + ' (' + colorName + ')');
 
-    const params = state._flashSelection ? null : (state.selectionParams ||
+    const params = state._orderedVisual ? null : (state.selectionParams ||
       (Date.now() - this._lastSelectionTS < 10000 ? this._lastSelectionParams : null));
     Zotero.debug('[ZoteroVim] _highlight: hasParams=' + !!(params?.annotation) +
                  ' selText="' + (pdfWin.getSelection?.()?.toString?.() || '').slice(0, 40) + '"');
@@ -4232,7 +4262,7 @@ Object.assign(ZoteroVim, {
   _addNote(state, reader, pdfWin) {
     const noteColor = this.getDefaultHighlightColor();
     this._showStatus(state, '▶ note', 800);
-    const params = state._flashSelection ? null : (state.selectionParams ||
+    const params = state._orderedVisual ? null : (state.selectionParams ||
       (Date.now() - this._lastSelectionTS < 10000 ? this._lastSelectionParams : null));
     if (params?.annotation) {
       state.selectionParams     = null;
@@ -4315,61 +4345,48 @@ Object.assign(ZoteroVim, {
   async _createAnnotationFromSelection(reader, state, pdfWin, type, color, opts = null) {
     Zotero.debug('[ZoteroVim] _createAnnotation: start type=' + type + ' color=' + color);
     const sel = pdfWin.getSelection?.();
-    if (!sel || sel.isCollapsed || sel.rangeCount === 0) {
-      Zotero.debug('[ZoteroVim] _createAnnotation: no selection (isCollapsed=' + sel?.isCollapsed + ')');
+    const ordered = this._orderedReaderVisual(state, pdfWin);
+    const doc = pdfWin.document;
+    const text = this._normalizeReaderSelectionText(this._readerSelectedText(state, pdfWin));
+    if (!text) {
       this._showStatus(state, '✗ no selection');
       return;
     }
     try {
-      const range = sel.getRangeAt(0);
-      // Use text-node-level rects to avoid the spurious full-page rects that
-      // range.getClientRects() emits for cross-page selections.
-      const clientRects = this._getRangeTextRects(range, pdfWin.document);
-      Zotero.debug('[ZoteroVim] _createAnnotation: clientRects=' + clientRects.length);
-      if (clientRects.length === 0) {
-        this._showStatus(state, '✗ no rects');
-        return;
-      }
-
-      const text = sel.toString().normalize('NFKC').replace(/\n/g, ' ').replace(/ {2,}/g, ' ').trim();
-      Zotero.debug('[ZoteroVim] _createAnnotation: text="' + text.slice(0, 60) + '"');
-
       const pdfViewer = pdfWin.PDFViewerApplication?.pdfViewer;
       if (!pdfViewer) { this._showStatus(state, '✗ no pdfViewer'); return; }
-
       const attachment = Zotero.Items.get(reader.itemID);
       if (!attachment) { this._showStatus(state, '✗ no attachment'); return; }
 
-      // ── Group client rects by page ─────────────────────────────────────────
-      // Match each screen rect to the .page element whose bounding rect
-      // contains the rect's centre-y.
-      const allPageEls = Array.from(
-        pdfWin.document.querySelectorAll('.page[data-page-number]')
-      );
-      const pageBounds = allPageEls.map(el => ({
-        el,
-        pageIndex: parseInt(el.dataset.pageNumber) - 1,
-        bounds: el.getBoundingClientRect(),
-      }));
-      const pageGroupMap = new Map();
-      for (const rect of clientRects) {
-        const cy = (rect.top + rect.bottom) / 2;
-        for (const { el, pageIndex, bounds } of pageBounds) {
-          if (cy >= bounds.top && cy <= bounds.bottom) {
-            if (!pageGroupMap.has(pageIndex)) pageGroupMap.set(pageIndex, { el, rects: [] });
-            pageGroupMap.get(pageIndex).rects.push(rect);
-            break;
+      const runs = ordered?.runs || Array.from({ length: sel.rangeCount },
+        (_, i) => ({ range: sel.getRangeAt(i) }));
+      const groups = new Map();
+      let complete = true;
+      for (const { range, page } of runs) {
+        const rects = this._getRangeTextRects(range, doc, (rect, node) => {
+          const el = page || node.parentElement?.closest('.page[data-page-number]');
+          const pageIndex = Number(el?.dataset.pageNumber) - 1;
+          if (!Number.isInteger(pageIndex) || pageIndex < 0) {
+            complete = false;
+            return;
           }
-        }
+          if (!groups.has(pageIndex)) groups.set(pageIndex, { pageIndex, el, rects: [] });
+          groups.get(pageIndex).rects.push(rect);
+        });
+        if (!rects.length && range.toString().trim()) complete = false;
       }
-      // Sort in document order; Zotero supports at most 2 pages per annotation.
-      const pageGroups = [...pageGroupMap.entries()]
-        .sort(([a], [b]) => a - b)
-        .slice(0, 2)
-        .map(([pageIndex, { el, rects }]) => ({ pageIndex, el, rects }));
-
-      if (pageGroups.length === 0) { this._showStatus(state, '✗ no page el'); return; }
-      Zotero.debug('[ZoteroVim] _createAnnotation: spanning ' + pageGroups.length + ' page(s)');
+      const pageGroups = [...groups.values()].sort((a, b) => a.pageIndex - b.pageIndex);
+      if (!complete || !pageGroups.length) {
+        this._showStatus(state, this._isZhLocale()
+          ? '✗ 无法定位完整选区，仍可复制' : '✗ Cannot locate the whole selection. You can still copy it.', 2200);
+        return;
+      }
+      if (pageGroups.length > 2 || (pageGroups.length === 2
+          && pageGroups[1].pageIndex !== pageGroups[0].pageIndex + 1)) {
+        this._showStatus(state, this._isZhLocale()
+          ? '✗ 批注限相邻两页，仍可复制选区' : '✗ Annotations fit two adjacent pages. You can still copy.', 2200);
+        return;
+      }
 
       // ── Convert screen rects → PDF coords for one page group ──────────────
       const toPdfRects = async ({ pageIndex, el: pageEl, rects: pageRects }) => {
@@ -4383,7 +4400,7 @@ Object.assign(ZoteroVim, {
           if (!pdfDoc) return [];
           try {
             const pdfPage = await pdfDoc.getPage(pageIndex + 1);
-            const vp      = pdfPage.getViewport({ scale: 1 });
+            const vp = pdfPage.getViewport(Components.utils.cloneInto({ scale: 1 }, pdfWin));
             pdfPageH      = vp.height;
             const canvas    = pageEl.querySelector('canvas');
             const renderedW = canvas
@@ -4396,18 +4413,21 @@ Object.assign(ZoteroVim, {
           }
         }
         if (!isFinite(scale) || scale <= 0 || !isFinite(pdfPageH) || pdfPageH <= 0) return [];
-        const pageRect = pageEl.getBoundingClientRect();
-        const vp       = pageView?.viewport;
+        const canvas = pageEl.querySelector('.canvasWrapper canvas');
+        const pageRect = canvas?.getBoundingClientRect() || pageEl.getBoundingClientRect();
+        const originX = pageRect.left + (canvas ? 0 : (pageEl.clientLeft || 0));
+        const originY = pageRect.top + (canvas ? 0 : (pageEl.clientTop || 0));
+        const vp = pageView?.viewport;
         return pageRects.map(r => {
           let x1, y1, x2, y2;
           if (vp?.convertToPdfPoint) {
-            [x1, y2] = vp.convertToPdfPoint(r.left  - pageRect.left, r.top    - pageRect.top);
-            [x2, y1] = vp.convertToPdfPoint(r.right - pageRect.left, r.bottom - pageRect.top);
+            [x1, y2] = vp.convertToPdfPoint(r.left - originX, r.top - originY);
+            [x2, y1] = vp.convertToPdfPoint(r.right - originX, r.bottom - originY);
           } else {
-            x1 = (r.left  - pageRect.left) / scale;
-            y1 = pdfPageH - (r.bottom - pageRect.top) / scale;
-            x2 = (r.right - pageRect.left) / scale;
-            y2 = pdfPageH - (r.top    - pageRect.top) / scale;
+            x1 = (r.left - originX) / scale;
+            y1 = pdfPageH - (r.bottom - originY) / scale;
+            x2 = (r.right - originX) / scale;
+            y2 = pdfPageH - (r.top - originY) / scale;
           }
           return [
             Math.round(Math.min(x1, x2) * 1000) / 1000,
@@ -4423,7 +4443,7 @@ Object.assign(ZoteroVim, {
       // Two-page:     { pageIndex, rects, nextPageRects }  (Zotero's own format)
       const firstGroup    = pageGroups[0];
       const firstPdfRects = await toPdfRects(firstGroup);
-      if (firstPdfRects.length === 0) {
+      if (firstPdfRects.length !== firstGroup.rects.length) {
         this._showStatus(state, '✗ bad rects');
         return;
       }
@@ -4432,7 +4452,11 @@ Object.assign(ZoteroVim, {
 
       if (pageGroups.length === 2) {
         const nextPdfRects = await toPdfRects(pageGroups[1]);
-        if (nextPdfRects.length > 0) position.nextPageRects = nextPdfRects;
+        if (nextPdfRects.length !== pageGroups[1].rects.length) {
+          this._showStatus(state, '✗ bad rects');
+          return;
+        }
+        position.nextPageRects = nextPdfRects;
       }
 
       // sortIndex: Zotero's exact format is PPPPP|OOOOOO|TTTTT
@@ -4460,6 +4484,7 @@ Object.assign(ZoteroVim, {
         } catch (_) { return String(firstGroup.pageIndex + 1); }
       })();
 
+      if (ordered && this._orderedReaderVisual(state, pdfWin) !== ordered) return;
       const annotItem = new Zotero.Item('annotation');
       annotItem.libraryID            = attachment.libraryID;
       annotItem.parentID             = attachment.id;
@@ -4496,6 +4521,8 @@ Object.assign(ZoteroVim, {
                    ' pages=' + pageGroups.map(g => g.pageIndex + 1).join('+'));
 
       state.lastAnnotationKey = annotItem.key;
+      if (ordered && this._orderedReaderVisual(state, pdfWin) !== ordered) return;
+      this._clearOrderedReaderVisual(state, pdfWin);
       this._showStatus(state, '✓ annotated', 1200);
       try { pdfWin.getSelection()?.removeAllRanges(); } catch (_) {}
       if (opts?.focusComment) {
@@ -4503,6 +4530,7 @@ Object.assign(ZoteroVim, {
         return;
       }
       setTimeout(() => {
+        if (state._orderedVisual || (state.activePdfWin && state.activePdfWin !== pdfWin)) return;
         this._setMode(state, 'normal');
         try { pdfWin.focus(); } catch (_) {}
         try {
@@ -4568,8 +4596,8 @@ Object.assign(ZoteroVim, {
     let popup = null;
     try {
       const selection = pdfWin.getSelection?.();
-      const text = selection && !selection.isCollapsed
-        ? selection.toString().normalize('NFKC').replace(/\s+/g, ' ').trim() : '';
+      const text = this._readerSelectedText(state, pdfWin)
+        .normalize('NFKC').replace(/\s+/g, ' ').trim();
       if (!text) {
         this._showStatus(state, zh ? '请先选中要翻译的文本' : 'Select text to translate first');
         return;
@@ -4729,6 +4757,7 @@ Object.assign(ZoteroVim, {
         focusNode: selection.focusNode, focusOffset: selection.focusOffset,
       },
       selectionParams: state.selectionParams,
+      ordered: this._orderedReaderVisual(state, pdfWin),
     };
     closeButton.addEventListener('click', () => this._closeTranslationPopup(state));
     copyButton.addEventListener('click', () => this._copyTranslationResult(state));
@@ -4766,7 +4795,9 @@ Object.assign(ZoteroVim, {
     if (!restoreSelection) return;
     try {
       const saved = popup.selection;
-      if (saved.anchorNode?.isConnected && saved.focusNode?.isConnected) {
+      if (popup.ordered && this._orderedReaderVisual(state, popup.pdfWin) === popup.ordered) {
+        this._paintOrderedReaderVisual(popup.pdfWin, popup.ordered);
+      } else if (!popup.ordered && saved.anchorNode?.isConnected && saved.focusNode?.isConnected) {
         popup.pdfWin.getSelection().setBaseAndExtent(
           saved.anchorNode, saved.anchorOffset, saved.focusNode, saved.focusOffset);
         state.selectionParams = popup.selectionParams;
@@ -4820,24 +4851,21 @@ Object.assign(ZoteroVim, {
     }
   },
 
+  _copyOrderedReaderSelection(event, state, pdfWin) {
+    if (!event.clipboardData || state._readerFlash || state._translationPopup
+        || event.target?.closest?.('input, textarea, [contenteditable="true"]')) return;
+    const ordered = this._orderedReaderVisual(state, pdfWin);
+    if (!ordered) return;
+    const text = this._normalizeReaderSelectionText(ordered.text);
+    if (!text) return;
+    event.clipboardData.setData('text/plain', text);
+    event.preventDefault();
+  },
+
   _copySelection(state, pdfWin) {
     try {
-      const sel = pdfWin.getSelection?.();
-      if (sel && !sel.isCollapsed) {
-        let text = sel.toString();
-
-        // 1. Decompose Unicode ligatures and compatibility characters.
-        //    NFKC turns ﬁ→fi, ﬂ→fl, ﬀ→ff, ﬃ→ffi, ﬄ→ffl, etc.
-        text = text.normalize('NFKC');
-
-        // 2. PDF.js stores each visual line as a separate span, so
-        //    sel.toString() inserts \n at every line wrap even within a
-        //    flowing paragraph.  Replace those with a single space.
-        text = text.replace(/\n/g, ' ');
-
-        // 3. Collapse any runs of multiple spaces left by the above.
-        text = text.replace(/ {2,}/g, ' ').trim();
-
+      const text = this._normalizeReaderSelectionText(this._readerSelectedText(state, pdfWin));
+      if (text) {
         const clipboardHelper = Components.classes['@mozilla.org/widget/clipboardhelper;1']
           .getService(Components.interfaces.nsIClipboardHelper);
         clipboardHelper.copyString(text);
@@ -4897,9 +4925,9 @@ Object.assign(ZoteroVim, {
 
   _searchSelection(state, reader, pdfWin) {
     try {
-      const sel = pdfWin.getSelection?.();
-      if (!sel || sel.isCollapsed) return;
-      this._searchReaderText(state, reader, pdfWin, sel.toString());
+      const text = this._readerSelectedText(state, pdfWin);
+      if (!text) return;
+      this._searchReaderText(state, reader, pdfWin, text);
     } catch (e) {
       Zotero.debug('[ZoteroVim] _searchSelection error: ' + e);
     }
@@ -4914,7 +4942,7 @@ Object.assign(ZoteroVim, {
         if (!this._placeCursorNearViewportCenter(state, pdfWin)) return;
         sel = pdfWin.getSelection?.();
       }
-      const nodes = this._cursorOrderedTextNodes(pdfWin.document);
+      const nodes = this._cursorOrderedTextNodes(pdfWin.document, state);
       const word = this._readerWordRange(nodes, sel?.focusNode, sel?.focusOffset);
       if (!word?.text) {
         this._showStatus(state, '✗ no word under cursor', 1200);
@@ -6540,56 +6568,23 @@ Object.assign(ZoteroVim, {
     try {
       pdfWin.focus();
       const doc = pdfWin.document;
-      const sel = pdfWin.getSelection();
-
-      // Find an element to anchor the paragraph search.
-      const rawFocus = sel?.focusNode || state.visualCursor?.textNode;
-      if (!rawFocus) { this._showStatus(state, '✗ no selection', 2000); return; }
-      const focusEl = rawFocus.nodeType === 3 ? rawFocus.parentElement : rawFocus;
-
-      // Collect and sort visible .textLayer spans in reading order (same as
-      // _extendByParagraph), so paragraph gaps never cross columns.
-      const spans = Array.from(doc.querySelectorAll('.textLayer span')).filter(s => {
-        const r = s.getBoundingClientRect();
-        return r.width > 4 && r.height > 3 && s.textContent.trim() && s.firstChild?.nodeType === 3;
-      });
-      const spanList = this._orderSpanItems(doc, spans).map(it => it.span);
-      if (spanList.length === 0) { this._showStatus(state, '✗ no text', 2000); return; }
-
-      let focusIdx = spanList.findIndex(s => s === focusEl || s.contains(focusEl));
-      if (focusIdx < 0) focusIdx = 0;
-
-      const lineH       = Math.max(spanList[focusIdx].getBoundingClientRect().height, 8);
-      const gapThreshold = lineH * 0.5;
-
-      // Walk backward to find paragraph start.
-      let paraStart = 0;
-      for (let i = focusIdx; i > 0; i--) {
-        const r1 = spanList[i - 1].getBoundingClientRect();
-        const r2 = spanList[i].getBoundingClientRect();
-        if (r2.top - r1.bottom > gapThreshold) { paraStart = i; break; }
-      }
-
-      // Walk forward to find paragraph end.
-      let paraEnd = spanList.length - 1;
-      for (let i = focusIdx + 1; i < spanList.length; i++) {
-        const r1 = spanList[i - 1].getBoundingClientRect();
-        const r2 = spanList[i].getBoundingClientRect();
-        if (r2.top - r1.bottom > gapThreshold) { paraEnd = i - 1; break; }
-      }
-
-      // Concatenate span text and normalise.
-      const parts = [];
-      for (let i = paraStart; i <= paraEnd; i++) parts.push(spanList[i].textContent);
-      let text = parts.join('\n').normalize('NFKC').replace(/\n/g, ' ')
-                      .replace(/ {2,}/g, ' ').trim();
+      const endpoints = this._readerVisualEndpoints(state, pdfWin);
+      if (!endpoints) { this._showStatus(state, '✗ no selection', 2000); return; }
+      const keys = this._readingOrderKeys(doc, state);
+      const paragraph = this._readerParagraphAt(keys, endpoints.focus);
+      if (!paragraph) { this._showStatus(state, '✗ no text', 2000); return; }
+      const { items, start, end } = paragraph;
+      const first = items[start].node, last = items[end].node;
+      const selected = this._readerVisualRuns(doc, { node: first, offset: 0 },
+        { node: last, offset: last.length }, keys);
+      const text = this._normalizeReaderSelectionText(selected?.text || '');
 
       if (!text) { this._showStatus(state, '✗ no text', 2000); return; }
 
       Components.classes['@mozilla.org/widget/clipboardhelper;1']
         .getService(Components.interfaces.nsIClipboardHelper).copyString(text);
       this._showStatus(state, '✓ copied paragraph (' + text.length + ' chars)', 1500);
-      Zotero.debug('[ZoteroVim] yankParagraph spans=' + (paraEnd - paraStart + 1) +
+      Zotero.debug('[ZoteroVim] yankParagraph spans=' + (end - start + 1) +
                    ' len=' + text.length);
     } catch (e) {
       Zotero.debug('[ZoteroVim] _yankParagraph error: ' + e);

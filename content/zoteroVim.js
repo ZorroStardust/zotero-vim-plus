@@ -614,8 +614,8 @@ var ZoteroVim = {
       state = [...this._readerState.values()][0];
     }
 
-    // A native popup from before the Flash query must not take over its input.
-    if (state?._readerFlash) return;
+    // Programmatic ranges do not inherit native text-selection popup geometry.
+    if (state?._readerFlash || state?._orderedVisual) return;
 
     // Always cache at the plugin level — this covers cases where the
     // per-reader state lookup returns null.
@@ -798,6 +798,7 @@ var ZoteroVim = {
     state.cleanup = () => {
       this._closeShortcutHelp?.(state, false);
       this._closeReaderFlash?.(state, false);
+      this._clearOrderedReaderVisual?.(state);
       this._cancelSpacekeys(state);
       // Cancel any insert session that is still resolving an annotation item.
       state._insertSessionID = (state._insertSessionID || 0) + 1;
@@ -932,6 +933,7 @@ var ZoteroVim = {
 
     for (const [viewWin, handlers] of state._pdfViewHandlers.entries()) {
       if (wantedWins.includes(viewWin)) continue;
+      this._clearOrderedReaderVisual?.(state, viewWin);
       if (state._translationPopup?.pdfWin === viewWin) {
         this._closeTranslationPopup(state, false);
       }
@@ -945,7 +947,11 @@ var ZoteroVim = {
       try { viewWin.removeEventListener('keyup', handlers.keyUp, true); } catch (_) {}
       try { viewWin.removeEventListener('blur', handlers.blur, true); } catch (_) {}
       try { viewWin.removeEventListener('resize', handlers.resize, { passive: true }); } catch (_) {}
-      try { viewWin.document.removeEventListener('selectionchange', handlers.selection); } catch (_) {}
+      try {
+        viewWin.document.removeEventListener('selectionchange', handlers.selection);
+        viewWin.document.removeEventListener('pointerdown', handlers.pointerdown, true);
+        viewWin.document.removeEventListener('copy', handlers.copy, true);
+      } catch (_) {}
       try { handlers.scrollEl?.removeEventListener('scroll', handlers.scroll, { passive: true }); } catch (_) {}
       state._pdfViewHandlers.delete(viewWin);
     }
@@ -964,6 +970,11 @@ var ZoteroVim = {
             this._updateIndicator(state);
           }
         },
+        pointerdown: event => {
+          if (event.button === 0 && !state._readerFlash && !state._translationPopup
+              && event.target?.closest?.('.page')) this._clearOrderedReaderVisual(state, viewWin);
+        },
+        copy: event => this._copyOrderedReaderSelection(event, state, viewWin),
         selection: () => {
           try {
             const sel = viewWin.getSelection?.();
@@ -999,7 +1010,11 @@ var ZoteroVim = {
       try { viewWin.addEventListener('keydown', handlers.keyDown, true); } catch (_) {}
       try { viewWin.addEventListener('keyup', handlers.keyUp, true); } catch (_) {}
       try { viewWin.addEventListener('blur', handlers.blur, true); } catch (_) {}
-      try { viewWin.document.addEventListener('selectionchange', handlers.selection); } catch (_) {}
+      try {
+        viewWin.document.addEventListener('selectionchange', handlers.selection);
+        viewWin.document.addEventListener('pointerdown', handlers.pointerdown, true);
+        viewWin.document.addEventListener('copy', handlers.copy, true);
+      } catch (_) {}
       try { viewWin.addEventListener('resize', handlers.resize, { passive: true }); } catch (_) {}
       try {
         handlers.scrollEl = viewWin.document.getElementById('viewerContainer')
@@ -1196,7 +1211,11 @@ var ZoteroVim = {
       try { viewWin.removeEventListener('keyup', handlers.keyUp, true); } catch (_) {}
       try { viewWin.removeEventListener('blur', handlers.blur, true); } catch (_) {}
       try { viewWin.removeEventListener('resize', handlers.resize, { passive: true }); } catch (_) {}
-      try { viewWin.document.removeEventListener('selectionchange', handlers.selection); } catch (_) {}
+      try {
+        viewWin.document.removeEventListener('selectionchange', handlers.selection);
+        viewWin.document.removeEventListener('pointerdown', handlers.pointerdown, true);
+        viewWin.document.removeEventListener('copy', handlers.copy, true);
+      } catch (_) {}
       try { handlers.scrollEl?.removeEventListener('scroll', handlers.scroll, { passive: true }); } catch (_) {}
     }
     state._pdfViewHandlers.clear();
@@ -1513,7 +1532,7 @@ var ZoteroVim = {
   _setMode(state, mode) {
     this._hideSpacekeys(state);
     if (mode !== state.mode) this._closeReaderFlash?.(state, false);
-    if (mode !== 'visual' && mode !== 'cursor') state._flashSelection = null;
+    if (mode !== 'visual') this._clearOrderedReaderVisual?.(state);
     if (state._outlinePicker && mode !== state.mode) {
       this._closeReaderOutlinePicker(state, false);
     }
@@ -1572,8 +1591,10 @@ var ZoteroVim = {
     }
     state.indicatorEl.style.display = 'block';
     const prefix = (state.countBuffer && mode === 'normal') ? state.countBuffer : '';
+    const body = state._readerBodyText && (mode === 'visual' || mode === 'cursor')
+      ? (this._isZhLocale() ? ' · 正文' : ' BODY') : '';
     state.indicatorEl.textContent =
-      '-- ' + mode.toUpperCase() + ' --' + (prefix || buffer ? '  ' + prefix + buffer : '')
+      '-- ' + mode.toUpperCase() + body + ' --' + (prefix || buffer ? '  ' + prefix + buffer : '')
       + (progress ? '  ·  ' + progress : '');
     state.indicatorEl.style.fontWeight = 'bold';
     state.indicatorEl.style.background =
@@ -1779,6 +1800,9 @@ var ZoteroVim = {
     }
     if (state._spacekeys && state._spacekeys.sourceWin !== pdfWin) {
       this._cancelSpacekeys(state);
+    }
+    if (state._orderedVisual && state._orderedVisual.pdfWin !== pdfWin) {
+      this._clearOrderedReaderVisual(state);
     }
     state.activePdfWin = pdfWin || state.activePdfWin;
 
@@ -2469,6 +2493,10 @@ var ZoteroVim = {
             Zotero.debug('[ZoteroVim] findPrevious: ' + e); }
           break;
 
+        case 'toggleReaderBodyText':
+          this._toggleReaderBodyText(state, pdfWin);
+          break;
+
         case 'enterVisual':
           if (this.isModeEnabled('visual')) this._enterVisualMode(state, pdfWin);
           break;
@@ -2506,8 +2534,8 @@ var ZoteroVim = {
         case 'extendUp':                this._extendByLine(state, pdfWin, -1);  break;
         case 'extendRight':             this._extendByChar(state, pdfWin, +1);               break;
         case 'extendLeft':              this._extendByChar(state, pdfWin, -1);               break;
-        case 'extendWordForward':        this._extendByWord(state, pdfWin, 'forward', false);   break;
-        case 'extendWordBackward':       this._extendByWord(state, pdfWin, 'backward', false);  break;
+        case 'extendWordForward':        this._extendByWord(state, pdfWin, 'forward', count || 1);   break;
+        case 'extendWordBackward':       this._extendByWord(state, pdfWin, 'backward', count || 1);  break;
         case 'extendLineStart':          this._extendToLineBoundary(state, pdfWin, false);      break;
         case 'extendLineEnd':            this._extendToLineBoundary(state, pdfWin, true);       break;
         case 'extendSentenceForward':    this._extendBySentence(state, pdfWin, +1);             break;

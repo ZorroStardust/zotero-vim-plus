@@ -574,12 +574,21 @@ primero.
 
 #### Navegación y edición de anotaciones
 
-Usa `[` y `]` para moverte entre anotaciones. La anotación seleccionada se resalta en el visor de PDF y la barra lateral se desplaza a su tarjeta.
+Pulsa `[` para ir al elemento anterior o `]` para ir al siguiente, seguido de la letra de la categoría.
+
+| Anterior / siguiente | Destino |
+|---|---|
+| `[a` / `]a` | Anotación |
+| `[f` / `]f` | Pie de figura |
+| `[m` / `]m` | Marca de Vim guardada con `m<tecla>` |
+| `[s` / `]s` | Encabezado del índice del PDF |
+| `[t` / `]t` | Título de tabla |
+
+Pulsa `<space>fg` para buscar los pies de figura y los títulos de tabla.
+La anotación seleccionada se resalta en el visor de PDF y la barra lateral se desplaza a su tarjeta.
 
 | Tecla | Acción |
 |-----|--------|
-| `[` | Saltar a anotación anterior |
-| `]` | Saltar a anotación siguiente |
 | `Enter` | Abrir el campo de comentario de la anotación seleccionada para editar |
 | `i` | Entrar en modo Insertar **y** enfocar el campo de comentario de la anotación |
 | `y` | Copiar el **texto resaltado** de la anotación al portapapeles |
@@ -682,7 +691,7 @@ Todas las operaciones de copia aplican normalización NFKC (resuelve ligaduras c
 
 En modo Insertar, todas las teclas son pasadas a Zotero sin cambios. Esto es útil cuando necesitas escribir en elementos de UI de Zotero sin que los atajos de vim intercepten tus pulsaciones.
 
-Cuando `i` se presiona en modo Normal mientras una anotación está seleccionada (via `[`/`]`), el plugin automáticamente entra en modo Insertar **y** enfoca el campo de comentario de la anotación para que puedas empezar a escribir inmediatamente. Presiona `Escape` para guardar y volver al modo Normal.
+Cuando `i` se presiona en modo Normal mientras una anotación está seleccionada (via `[a`/`]a`), el plugin automáticamente entra en modo Insertar **y** enfoca el campo de comentario de la anotación para que puedas empezar a escribir inmediatamente. Presiona `Escape` para guardar y volver al modo Normal.
 
 | Tecla | Acción |
 |-----|--------|
@@ -702,7 +711,7 @@ Cuando `i` se presiona en modo Normal mientras una anotación está seleccionada
 
 ### Navegar y editar anotaciones existentes
 
-1. Presionar `]` / `[` para mover a la siguiente / anterior anotación. La anotación se resalta en el visor de PDF y la barra lateral se desplaza a su tarjeta.
+1. Presionar `]a` / `[a` para mover a la siguiente / anterior anotación. La anotación se resalta en el visor de PDF y la barra lateral se desplaza a su tarjeta.
 2. Presionar `y` para copiar el texto resaltado, `yy` para copiar el comentario.
 3. Presionar `i` (o `Enter`) para abrir el campo de comentario y escribir una nota. Presionar `Escape` para volver al modo Normal.
 4. Presionar `dd` para eliminar la anotación.

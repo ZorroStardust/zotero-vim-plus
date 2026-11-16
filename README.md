@@ -452,8 +452,8 @@ Notes:
 - A mark stores the viewport-centre position: whatever was in the middle of
   the screen when you pressed `m<x>` will be in the middle of the screen when
   you jump back — even mid-page.
-- If an annotation is selected (via `[`/`]`), the mark also binds to it so
-  follow-up commands (`[`/`]`, `zy`, `y`, …) work after a jump. `[`/`]`
+- If an annotation is selected (via `[a`/`]a`), the mark also binds to it so
+  follow-up commands (`[a`/`]a`, `zy`, `y`, …) work after a jump. `[a`/`]a`
   annotation navigation is unaffected.
 - With **Persist marks** enabled (Preferences → Marks) the whole mark set is
   saved as a `zv-marks-<attachmentKey>:` line in the **parent item's Extra
@@ -727,13 +727,24 @@ search.
 
 #### Annotation navigation and editing
 
-Use `[` and `]` to move between annotations. The selected annotation is
-highlighted in the PDF and scrolled to in the sidebar.
+Press `[` for previous or `]` for next, then choose a target. The available
+keys appear in the shortcut hints.
+
+| Previous / next | Target |
+|---|---|
+| `[a` / `]a` | Annotation |
+| `[f` / `]f` | Figure caption |
+| `[m` / `]m` | Saved Vim bookmark (`m<key>`) |
+| `[s` / `]s` | PDF outline heading |
+| `[t` / `]t` | Table caption |
+
+Use `<space>fg` or **Search PDF figure and table captions** in the `:` command
+palette to search by caption label, text or page. The first search indexes the
+local PDF. A figure or table jump goes to its caption or explicit outline entry.
+Selected annotations are highlighted in the PDF and scrolled to in the sidebar.
 
 | Key | Action |
 |-----|--------|
-| `[` | Jump to previous annotation |
-| `]` | Jump to next annotation |
 | `Enter` | Open the selected annotation's comment field for editing |
 | `i` | Enter Insert mode **and** focus the annotation comment field |
 | `y` | Copy the annotation's **highlighted text** to the clipboard |
@@ -934,7 +945,7 @@ In Insert mode every key is passed through to Zotero unchanged.  This is
 useful when you need to type into Zotero's own UI elements without the vim
 bindings intercepting your keystrokes.
 
-When `i` is pressed in Normal mode while an annotation is selected (via `[`/`]`),
+When `i` is pressed in Normal mode while an annotation is selected (via `[a`/`]a`),
 the plugin enters Insert mode and opens **its own comment overlay** over the
 PDF — a floating input box rendered inside the PDF view (the only place that
 receives the OS keyboard focus, so typing and IME composition work natively).
@@ -976,7 +987,7 @@ editors keeps its Zotero behavior).
 
 ### Navigating and editing existing annotations
 
-1. Press `]` / `[` to move to the next / previous annotation.  The annotation
+1. Press `]a` / `[a` to move to the next / previous annotation.  The annotation
    is highlighted in the PDF viewer and the sidebar scrolls to its card.
 2. Press `y` to copy the highlighted text, `yy` to copy the comment.
 3. Press `i` (or `Enter`) to open the comment overlay and type a note.

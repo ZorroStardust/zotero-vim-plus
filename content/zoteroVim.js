@@ -63,8 +63,16 @@ var ZoteroVim = {
     'normal:n':       'findNext',
     'normal:N':       'findPrevious',
     'normal:.':       'repeatLastChange',
-    'normal:[':       'prevAnnotation',
-    'normal:]':       'nextAnnotation',
+    'normal:[a':      'prevAnnotation',
+    'normal:]a':      'nextAnnotation',
+    'normal:[f':      'prevFigure',
+    'normal:]f':      'nextFigure',
+    'normal:[m':      'prevBookmark',
+    'normal:]m':      'nextBookmark',
+    'normal:[s':      'prevHeading',
+    'normal:]s':      'nextHeading',
+    'normal:[t':      'prevTable',
+    'normal:]t':      'nextTable',
     'normal:enter':   'editAnnotation',
     'normal:return':  'editAnnotation',
     'normal:dd':      'deleteAnnotation',
@@ -106,6 +114,7 @@ var ZoteroVim = {
     'normal: ff':  'mainFuzzyAll',
     'normal: fb':  'mainFuzzyCollection',
     'normal: fh':  'readerOutlinePick',
+    'normal: fg':  'readerCaptionPick',
     'normal: bj':  'mainTabPick',
     'normal: n':   'mainNotesLayout',
     'normal: yy':  'mainYankCitekey',
@@ -963,14 +972,21 @@ var ZoteroVim = {
       const handlers = {
         keyDown: (e) => this._onKeyDown(e, reader, state, viewWin),
         keyUp: (e) => this._onKeyUp(e, state, viewWin),
-        blur: () => {
+        blur: event => {
           this._stopSmoothHoldScroll(state, viewWin);
+          if (event?.target === viewWin && state.activePdfWin === viewWin) {
+            state._readerJumpRequest = null;
+            if (this._isReaderHintPrefix(state.mode + ':', state.keyBuffer)) {
+              this._cancelSpacekeys(state);
+            }
+          }
           if (state.cursorFindPending) {
             state.cursorFindPending = null;
             this._updateIndicator(state);
           }
         },
         pointerdown: event => {
+          if (event.button === 0) state._readerJumpRequest = null;
           if (event.button === 0 && !state._readerFlash && !state._translationPopup
               && event.target?.closest?.('.page')) this._clearOrderedReaderVisual(state, viewWin);
         },
@@ -1230,6 +1246,7 @@ var ZoteroVim = {
     mainFuzzyAll: ['All library items', '全库条目'],
     mainFuzzyCollection: ['Current collection', '当前分类'],
     readerOutlinePick: ['PDF headings', 'PDF 目录标题'],
+    readerCaptionPick: ['PDF captions', 'PDF 图表题注'],
     mainTabPick: ['Choose a tab', '选择标签页'],
     mainNotesLayout: ['Notes layout', '笔记布局'],
     mainYankCitekey: ['Copy citation key', '复制引用键'],
@@ -1312,7 +1329,8 @@ var ZoteroVim = {
   /** Losing the originating input context cancels its chord as well as its UI. */
   _cancelSpacekeys(state) {
     const ui = state?._spacekeys;
-    if (!ui && !state?.keyBuffer?.startsWith(' ')) return;
+    if (!ui && !this._isReaderHintPrefix(state?.mode + ':', state?.keyBuffer)
+        && !state?.keyBuffer?.startsWith(' ')) return;
     this._hideSpacekeys(state);
     if (ui?.source === 'note') this._clearMainContextNoteKeyState(state);
     else {
@@ -1346,7 +1364,8 @@ var ZoteroVim = {
 
   /** Update from either the generic key buffer or the note editor's leader buffer. */
   _updateSpacekeys(state, modePrefix, buffer = state.keyBuffer, source = 'keys') {
-    if (!buffer?.startsWith(' ') || !['normal:', 'main:'].includes(modePrefix)
+    const leader = buffer?.startsWith(' ') && ['normal:', 'main:'].includes(modePrefix);
+    if ((!leader && !this._isReaderHintPrefix(modePrefix, buffer))
         || !this.getPref('spacekeys.enabled', true)) {
       this._hideSpacekeys(state);
       return;
@@ -1425,7 +1444,9 @@ var ZoteroVim = {
       while (ui.el.firstChild) ui.el.removeChild(ui.el.firstChild);
       const header = h('div');
       header.style.cssText = 'font:bold 12px/1.5 monospace;color:#89b4fa;margin-bottom:6px;';
-      header.textContent = 'Spacekeys  ' + ui.buffer.replace(/ /g, '␣');
+      const bracket = this._isReaderHintPrefix('normal:', ui.buffer);
+      header.textContent = (bracket ? (this._isZhLocale() ? '跳转  ' : 'Jump  ') : 'Spacekeys  ')
+        + ui.buffer.replace(/ /g, '␣');
       ui.el.appendChild(header);
       const grid = h('div');
       grid.style.cssText = 'display:grid;grid-template-columns:max-content minmax(0,1fr);'
@@ -1798,7 +1819,9 @@ var ZoteroVim = {
       }
       this._closeReaderFlash(state, false);
     }
-    if (state._spacekeys && state._spacekeys.sourceWin !== pdfWin) {
+    if ((state._spacekeys && state._spacekeys.sourceWin !== pdfWin)
+        || (state.activePdfWin && state.activePdfWin !== pdfWin
+          && this._isReaderHintPrefix(state.mode + ':', state.keyBuffer))) {
       this._cancelSpacekeys(state);
     }
     if (state._orderedVisual && state._orderedVisual.pdfWin !== pdfWin) {
@@ -1936,7 +1959,8 @@ var ZoteroVim = {
     const keyStr = this._keyString(event);
     if (!keyStr) return;
 
-    if (keyStr === 'escape' && state.keyBuffer?.startsWith(' ')) {
+    if (keyStr === 'escape' && (state.keyBuffer?.startsWith(' ')
+        || this._isReaderHintPrefix(state.mode + ':', state.keyBuffer))) {
       this._cancelSpacekeys(state);
       event.preventDefault();
       event.stopImmediatePropagation();
@@ -2069,12 +2093,12 @@ var ZoteroVim = {
       state.countBuffer = '';
       clearTimeout(state.keyTimeout);
       state.keyTimeout = null;
-      this._hideSpacekeys(state);
       // Retry hold scrolling after dropping an unmatched prefix. The first
       // j/k must start the same animation as a bare key, without a one-shot
       // scroll followed by a wait for the operating system's key repeat.
       const fallbackHold = this._smoothHoldSpecForEvent(event, state);
       if (fallbackHold) {
+        this._hideSpacekeys(state);
         event.preventDefault();
         event.stopImmediatePropagation();
         this._startSmoothHoldScroll(state, pdfWin, fallbackHold);
@@ -2083,7 +2107,11 @@ var ZoteroVim = {
       }
       const sp = Object.keys(bindings).filter(k => this._bindingMatchesPrefix(k, modePrefix, keyStr));
       const se = bindings[modePrefix + keyStr];
-      if (sp.length === 0 && !se) return;
+      if (sp.length === 0 && !se) {
+        this._hideSpacekeys(state);
+        return;
+      }
+      // Let the next prefix update the existing hint in place.
       event.preventDefault();
       event.stopImmediatePropagation();
       this._processBuffer(keyStr, se, sp, modePrefix, bindings, state);
@@ -2160,6 +2188,10 @@ var ZoteroVim = {
     this._updateIndicator(state);
   },
 
+  _isReaderHintPrefix(modePrefix, buffer) {
+    return modePrefix === 'normal:' && (buffer === '[' || buffer === ']');
+  },
+
   _processBuffer(buffer, exact, possible, modePrefix, bindings, state) {
     clearTimeout(state.keyTimeout);
     state.keyTimeout = null;
@@ -2198,7 +2230,7 @@ var ZoteroVim = {
         state.countBuffer = '';
         this._updateIndicator(state);
         this._hideSpacekeys(state);
-      }, leader ? this.getSpacekeysTimeout() : 1200);
+      }, leader || this._isReaderHintPrefix(modePrefix, buffer) ? this.getSpacekeysTimeout() : 1200);
       return;
     }
     state.keyBuffer = '';
@@ -2228,7 +2260,8 @@ var ZoteroVim = {
     if (!keyStr) return false;
     if (this._shortcutHelpForWindow?.(state.reader?._window
         || state.reader?._iframe?.ownerDocument?.defaultView)) return true;
-    if (keyStr === 'escape' && state.keyBuffer?.startsWith(' ')) return true;
+    if (keyStr === 'escape' && (state.keyBuffer?.startsWith(' ')
+        || this._isReaderHintPrefix(state.mode + ':', state.keyBuffer))) return true;
     if (state._outlinePicker && (!pdfWin || state._outlinePicker.pdfWin === pdfWin)) return true;
     if (state._readerFlash && (!pdfWin || state._readerFlash.pdfWin === pdfWin)) return true;
     if (state.outlineExplorerOpen && this._readerOutlineExplorerFocused(state, pdfWin)) return true;
@@ -2287,6 +2320,7 @@ var ZoteroVim = {
 
   _executeAction(action, reader, state, pdfWin, count = 0) {
     try {
+      state._readerJumpRequest = null;
       Zotero.debug('[ZoteroVim] Action: ' + action + ' (mode:' + state.mode + ', count:' + count + ')');
 
       if (action === 'showShortcutHelp') {
@@ -2445,8 +2479,22 @@ var ZoteroVim = {
         case 'searchWordBackward':
           this._searchWordUnderCursor(state, reader, pdfWin, true);
           break;
-        case 'prevAnnotation':  this._navigateAnnotation(state, reader, -1); break;
-        case 'nextAnnotation':  this._navigateAnnotation(state, reader, +1); break;
+        case 'prevAnnotation':  this._navigateAnnotation(state, reader, -1, pdfWin); break;
+        case 'nextAnnotation':  this._navigateAnnotation(state, reader, +1, pdfWin); break;
+        case 'prevBookmark':
+        case 'nextBookmark':
+          this._traverseReaderTargets(state, reader, pdfWin, 'bookmark',
+            action === 'nextBookmark' ? 1 : -1);
+          break;
+        case 'prevHeading':
+        case 'nextHeading':
+        case 'prevFigure':
+        case 'nextFigure':
+        case 'prevTable':
+        case 'nextTable':
+          this._traverseReaderTargets(state, reader, pdfWin,
+            action.slice(4).toLowerCase(), action.startsWith('next') ? 1 : -1);
+          break;
         case 'editAnnotation':
           if (this.isModeEnabled('insert')) {
             this._setMode(state, 'insert');
@@ -2651,6 +2699,11 @@ var ZoteroVim = {
 
     if (action === 'readerOutlinePick') {
       this._openReaderOutlinePicker(state, reader, pdfWin);
+      return true;
+    }
+
+    if (action === 'readerCaptionPick') {
+      this._openReaderOutlinePicker(state, reader, pdfWin, false, true);
       return true;
     }
 

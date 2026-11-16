@@ -341,7 +341,7 @@ Object.assign(ZoteroVim, {
    * pane. Hiding the existing tree preserves its nodes, selection and scroll.
    * Async results belong to this popup instance and are ignored after closing.
    */
-  async _openReaderOutlinePicker(state, reader, pdfWin, fromOutline = false) {
+  async _openReaderOutlinePicker(state, reader, pdfWin, fromOutline = false, captions = false) {
     if (state._outlinePicker) {
       state._outlinePicker.input.focus();
       return;
@@ -349,7 +349,7 @@ Object.assign(ZoteroVim, {
     const app = pdfWin?.PDFViewerApplication;
     if (!app?.pdfDocument) {
       this._showStatus(state, app ? 'PDF is still loading'
-        : 'Title search is only available in PDF readers', 1500);
+        : 'Search is only available in PDF readers', 1500);
       return;
     }
     const doc = pdfWin.document;
@@ -367,7 +367,8 @@ Object.assign(ZoteroVim, {
       'box-shadow:0 16px 48px rgba(0,0,0,0.6);font:13px/1.4 sans-serif;';
     const input = h('input');
     input.type = 'text';
-    input.placeholder = zh ? '搜索 PDF 目录标题…' : 'Search PDF headings…';
+    input.placeholder = captions ? (zh ? '搜索 PDF 图表题注…' : 'Search PDF captions…')
+      : (zh ? '搜索 PDF 目录标题…' : 'Search PDF headings…');
     input.setAttribute('aria-label', input.placeholder);
     input.style.cssText =
       'box-sizing:border-box;width:100%;padding:12px;background:#313244;' +
@@ -383,7 +384,8 @@ Object.assign(ZoteroVim, {
     for (const node of [input, list, status]) modal.appendChild(node);
     overlay.appendChild(modal);
     const popup = {
-      overlay, input, list, status, pdfWin, reader, state, zh,
+      overlay, input, list, status, pdfWin, reader, state, zh, captions,
+      pdfDoc: app.pdfDocument,
       readingPosition: this._readerOutlineReadingPosition(pdfWin), selectionTouched: false,
       outlineOverlay: fromOutline ? state._outlineExplorerOverlay : null,
       outlineScrollTop: state._outlineExplorerList?.scrollTop || 0,
@@ -409,28 +411,45 @@ Object.assign(ZoteroVim, {
     this._renderReaderOutlinePicker(popup);
     input.focus();
     try {
-      const tree = popup.outlineOverlay && state.outlineExplorerTree
-        ? state.outlineExplorerTree : await this._fetchReaderOutlineTree(reader, pdfWin);
-      if (state._outlinePicker !== popup) return;
-      const paths = new Map();
-      popup.items = this._flattenReaderOutlineTree(tree).map(entry => {
-        const parents = paths.get(entry.parentID) || [];
-        const path = parents.concat(entry.title);
-        paths.set(entry.id, path);
-        return { entry, breadcrumb: parents.join(' › '),
-          titleFields: [this._pickerSearchField(entry.title)],
-          pathFields: parents.length ? [this._pickerSearchField(path.join(' '))] : [],
-        };
-      });
-      const initial = await this._readerOutlineCurrentIndex(
-        popup.items.map(item => item.entry), pdfWin, popup.readingPosition);
-      if (state._outlinePicker !== popup) return;
-      if (!popup.selectionTouched && !popup.input.value.trim()) popup.selected = initial;
+      if (captions) {
+        const entries = await this._readerCaptionTargets(state, reader, pdfWin);
+        if (state._outlinePicker !== popup) return;
+        popup.items = entries.map(entry => {
+          const alias = (entry.kind === 'figure' ? 'Figure Fig 图 ' : 'Table 表 ') + entry.label;
+          return { entry, breadcrumb: '', titleFields: [entry.title, alias]
+            .map(value => this._pickerSearchField(value)), pathFields: [
+            this._pickerSearchField('p. ' + (entry.pageIndex + 1) + ' 第 ' + (entry.pageIndex + 1) + ' 页'),
+          ] };
+        });
+      } else {
+        const tree = popup.outlineOverlay && state.outlineExplorerTree
+          ? state.outlineExplorerTree : await this._fetchReaderOutlineTree(reader, pdfWin);
+        if (state._outlinePicker !== popup) return;
+        const paths = new Map();
+        popup.items = this._flattenReaderOutlineTree(tree).map(entry => {
+          const parents = paths.get(entry.parentID) || [];
+          const path = parents.concat(entry.title);
+          paths.set(entry.id, path);
+          return { entry, breadcrumb: parents.join(' › '),
+            titleFields: [this._pickerSearchField(entry.title)],
+            pathFields: parents.length ? [this._pickerSearchField(path.join(' '))] : [],
+          };
+        });
+        const initial = await this._readerOutlineCurrentIndex(
+          popup.items.map(item => item.entry), pdfWin, popup.readingPosition);
+        if (state._outlinePicker !== popup) return;
+        if (!popup.selectionTouched && !popup.input.value.trim()) popup.selected = initial;
+      }
     } catch (e) {
       Zotero.debug('[ZoteroVim] _openReaderOutlinePicker error: ' + e);
-      popup.error = zh ? '目录加载失败' : 'Error loading outline';
+      popup.error = captions ? (zh ? '题注加载失败' : 'Error loading captions')
+        : (zh ? '目录加载失败' : 'Error loading outline');
     }
     if (state._outlinePicker !== popup) return;
+    if (pdfWin.PDFViewerApplication?.pdfDocument !== popup.pdfDoc) {
+      this._closeReaderOutlinePicker(state, false);
+      return;
+    }
     popup.loading = false;
     this._filterReaderOutlinePicker(popup);
   },
@@ -464,9 +483,12 @@ Object.assign(ZoteroVim, {
     if (popup.loading || popup.error || !popup.filtered.length) {
       const message = h('div');
       message.style.cssText = 'padding:14px;color:#a6adc8;';
-      message.textContent = popup.loading ? (popup.zh ? '正在加载目录…' : 'Loading outline…')
-        : popup.error || (popup.items.length ? (popup.zh ? '无匹配标题' : 'No matching headings')
-          : (popup.zh ? '此 PDF 没有目录' : 'No outline available for this PDF'));
+      const messages = popup.captions
+        ? (popup.zh ? ['正在索引题注…', '无匹配题注', '未找到图表题注']
+          : ['Indexing captions…', 'No matching captions', 'No figure or table captions found'])
+        : (popup.zh ? ['正在加载目录…', '无匹配标题', '此 PDF 没有目录']
+          : ['Loading outline…', 'No matching headings', 'No outline available for this PDF']);
+      message.textContent = popup.loading ? messages[0] : popup.error || messages[popup.items.length ? 1 : 2];
       list.appendChild(message);
       return;
     }
@@ -540,15 +562,19 @@ Object.assign(ZoteroVim, {
     if (!item || popup.activating) return;
     const ir = popup.reader?._internalReader;
     if (![ir?._primaryView, ir?._secondaryView]
-      .some(view => view?._iframeWindow === popup.pdfWin)) {
+      .some(view => view?._iframeWindow === popup.pdfWin)
+        || popup.pdfWin.PDFViewerApplication?.pdfDocument !== popup.pdfDoc) {
       this._closeReaderOutlinePicker(state, false);
       return;
     }
     popup.activating = true;
-    const ok = await this._goToReaderOutlineEntry(popup.reader, popup.pdfWin, item.entry);
+    const ok = popup.captions
+      ? await this._goToReaderCaption(popup.reader, popup.pdfWin, item.entry)
+      : await this._goToReaderOutlineEntry(popup.reader, popup.pdfWin, item.entry);
     if (state._outlinePicker !== popup) return;
     if (![ir?._primaryView, ir?._secondaryView]
-      .some(view => view?._iframeWindow === popup.pdfWin)) {
+      .some(view => view?._iframeWindow === popup.pdfWin)
+        || popup.pdfWin.PDFViewerApplication?.pdfDocument !== popup.pdfDoc) {
       this._closeReaderOutlinePicker(state, false);
       return;
     }
@@ -559,6 +585,7 @@ Object.assign(ZoteroVim, {
     }
     this._closeReaderOutlinePicker(state, false);
     this._closeReaderOutlineExplorer(state);
+    state.lastAnnotationKey = null;
     this._setMode(state, 'normal');
     state.activePdfWin = popup.pdfWin;
     popup.pdfWin.focus();
@@ -581,6 +608,343 @@ Object.assign(ZoteroVim, {
     } else if (restoreFocus) {
       popup.pdfWin.focus();
     }
+  },
+
+  // ── Reader jump targets ────────────────────────────────────────────────────
+  // Caption sources and bracket categories follow Zotero Neo v0.3.0.
+
+  /** Keep heading and caption data attached to the PDF document that produced it. */
+  _readerTargetCache(state, pdfWin) {
+    const docs = state._readerTargetDocs || (state._readerTargetDocs = new WeakMap());
+    const doc = pdfWin.PDFViewerApplication.pdfDocument;
+    if (!docs.has(doc)) docs.set(doc, {});
+    return docs.get(doc);
+  },
+
+  _readerHeadingTargets(state, reader, pdfWin) {
+    const cache = this._readerTargetCache(state, pdfWin);
+    if (!cache.headings) {
+      const pdfDoc = pdfWin.PDFViewerApplication.pdfDocument;
+      cache.headings = this._fetchReaderOutlineTree(reader, pdfWin).then(tree =>
+        Promise.all(this._flattenReaderOutlineTree(tree).map(async outline => ({
+          ...await this._readerOutlineHeadingPosition(outline, pdfDoc),
+          title: outline.title, outline,
+        })))).then(entries => entries.filter(entry =>
+        Number.isInteger(entry.pageIndex) && entry.pageIndex >= 0
+          && entry.pageIndex < pdfDoc.numPages));
+      cache.headings.catch(() => { delete cache.headings; });
+    }
+    return cache.headings;
+  },
+
+  /** Numbered labels can be recognized in the native outline, SDT or PDF text. */
+  _readerCaptionLabel(text) {
+    const title = text.normalize('NFKC').trim();
+    const match = /^(fig(?:ure)?\.?|图|table|表)\s*((?:[A-Z]\.?)?\d+(?:[.-]\d+)*|[零〇一二三四五六七八九十百千万两]+)(\s*\([a-z]\)|[a-z])?(?=$|[\s.:、,()–—-]|[\u3400-\u9fff])/iu.exec(title);
+    if (match) return {
+      kind: /^(table|表)$/iu.test(match[1]) ? 'table' : 'figure',
+      label: match[2] + (match[3]?.trim() || ''), end: match[0].length,
+    };
+    const roman = /^(?:table|表)\s*([IVXLCDM]+)(?=$|[\s.:、,()–—-])/u.exec(
+      title.replace(/^table/iu, 'table'));
+    if (roman && /^M{0,3}(?:CM|CD|D?C{0,3})(?:XC|XL|L?X{0,3})(?:IX|IV|V?I{0,3})$/u.test(roman[1])) {
+      return { kind: 'table', label: roman[1], end: roman[0].length };
+    }
+    return null;
+  },
+
+  /** Zotero's optional structured document API exposes typed local caption blocks. */
+  async _readerStructuredCaptions(itemID, isCurrent) {
+    if (!itemID || typeof Zotero.SDT?.getReader !== 'function') return [];
+    const source = await Zotero.SDT.getReader(itemID);
+    if (!isCurrent() || !source || typeof source.getBlocks !== 'function') return [];
+    const count = await source.getTopLevelBlockCount?.();
+    if (!isCurrent() || !Number.isInteger(count) || count < 1) return [];
+    const blocks = await source.getBlocks(0, count - 1);
+    if (!isCurrent() || !Array.isArray(blocks)) return [];
+    const textOf = part => typeof part?.text === 'string' ? part.text
+      : Array.isArray(part?.content) ? part.content.map(textOf).join(
+        part.content.every(child => typeof child?.text === 'string') ? '' : ' ') : '';
+    const captions = [];
+    for (const block of blocks) {
+      if (block?.type !== 'caption' || block.reference) continue;
+      const title = textOf(block).replace(/\s+/gu, ' ').trim();
+      const label = this._readerCaptionLabel(title);
+      const anchors = block.anchor?.pageRects;
+      if (!label || !Array.isArray(anchors)) continue;
+      const anchor = anchors.filter(rect => Array.isArray(rect) && rect.length === 5
+        && rect.every(Number.isFinite) && Number.isInteger(rect[0]) && rect[0] >= 0
+        && rect[3] > rect[1] && rect[4] > rect[2])
+        .sort((a, b) => a[0] - b[0] || b[4] - a[4] || a[1] - b[1])[0];
+      if (anchor) captions.push({ ...label, title, pageIndex: anchor[0],
+        left: anchor[1], top: anchor[4] });
+    }
+    return captions;
+  },
+
+  /** Rebuild caption leads from PDF.js text runs, in page coordinates at any zoom. */
+  _readerPdfPageCaptions(items, pageIndex) {
+    const chunks = [];
+    for (const item of items) {
+      const [a, b, , , x, y] = item.transform || [];
+      if (!item.str?.trim() || item.dir === 'ttb' || !(a > 0)
+          || Math.abs(b) > a * 0.1 || !Number.isFinite(x) || !Number.isFinite(y)
+          || !(item.width > 0)) continue;
+      chunks.push({ text: item.str, x, y, right: x + item.width,
+        height: item.height || a });
+    }
+    chunks.sort((a, b) => b.y - a.y);
+    const lines = [];
+    for (let i = 0; i < chunks.length;) {
+      const first = chunks[i];
+      let end = i + 1;
+      while (end < chunks.length && first.y - chunks[end].y <= first.height * 0.28) end++;
+      const row = chunks.slice(i, end).sort((a, b) => a.x - b.x);
+      let line = null;
+      for (const part of row) {
+        const gap = part.x - (line?.right ?? part.x);
+        if (!line || gap > Math.min(13, Math.max(6, part.height * 1.1))) {
+          line = { ...part };
+          lines.push(line);
+        } else {
+          line.text += (gap > part.height * 0.14 && !/\s$/u.test(line.text)
+            && !/^\s/u.test(part.text) ? ' ' : '') + part.text;
+          line.right = Math.max(line.right, part.right);
+          line.height = Math.max(line.height, part.height);
+        }
+      }
+      i = end;
+    }
+    for (const line of lines) {
+      line.text = line.text.normalize('NFKC').replace(/\s+/gu, ' ').trim();
+      line.label = this._readerCaptionLabel(line.text);
+    }
+    return lines.flatMap((line, index) => {
+      const label = line.label;
+      if (!label) return [];
+      const suffix = line.text.slice(label.end);
+      // An unpunctuated label followed by a sentence predicate can be a reference.
+      if (/^\s+(?:(?:also|clearly)\s+)?(?:shows?|illustrates?|presents?|summari[sz]es?|compares?|depicts?|reports?|lists?|demonstrates?|displays?|contains?|is|are)\b/iu.test(suffix)
+          || /^(?:所示|显示|展示|给出|说明|中[的可])/u.test(suffix.trimStart())) return [];
+      // IEEE tables often put a short centered number above a wider title.
+      const centered = /^[\s.:：、–—-]*$/u.test(suffix);
+      const mid = line => (line.x + line.right) / 2;
+      const size = line.height;
+      let previous = line;
+      let title = line.text;
+      let left = line.x;
+      let parts = 1;
+      for (let j = index + 1; j < lines.length && parts < 8; j++) {
+        const next = lines[j];
+        const drop = previous.y - next.y;
+        if (drop > size * 1.55) break;
+        if (drop < size * 0.7 || Math.abs(next.height - size) > size * 0.09) continue;
+        const aligned = Math.abs(next.x - line.x) <= size * 1.25;
+        if (!aligned && !(centered && Math.abs(mid(next) - mid(line)) <= size * 1.25)) continue;
+        if (next.label || !next.text
+            || (!centered && /[.!?。！？]$/u.test(previous.text))) break;
+        const joinWord = /-$/u.test(title) && /^\p{Ll}/u.test(next.text);
+        title += (joinWord ? '' : ' ') + next.text;
+        left = Math.min(left, next.x);
+        previous = next;
+        parts++;
+        if (/[.!?。！？]$/u.test(next.text)) break;
+      }
+      return [{ ...label, title, pageIndex, left, top: line.y + size }];
+    });
+  },
+
+  /** Build once on demand. Older Zotero versions use the same PDF.js layer as search. */
+  _readerCaptionTargets(state, reader, pdfWin) {
+    const pdfDoc = pdfWin.PDFViewerApplication.pdfDocument;
+    const cache = this._readerTargetCache(state, pdfWin);
+    if (cache.captions) return cache.captions;
+    const isCurrent = () => [reader._internalReader?._primaryView, reader._internalReader?._secondaryView]
+      .some(view => view?._iframeWindow?.PDFViewerApplication?.pdfDocument === pdfDoc);
+    cache.captions = (async () => {
+      const entries = [];
+      const add = target => {
+        if (entries.some(entry => entry.pageIndex === target.pageIndex && entry.kind === target.kind
+            && entry.label.toLowerCase() === target.label.toLowerCase())) return;
+        entries.push(target);
+      };
+      try {
+        const native = await this._readerStructuredCaptions(reader.itemID, isCurrent);
+        native.filter(entry => entry.pageIndex < pdfDoc.numPages).forEach(add);
+      } catch (e) {
+        Zotero.debug('[ZoteroVim] SDT captions: ' + e);
+      }
+      if (!isCurrent()) return [];
+      const nativeKinds = new Set(entries.map(entry => entry.kind));
+      const headings = await this._readerHeadingTargets(state, reader, pdfWin).catch(() => []);
+      if (nativeKinds.size < 2 && typeof pdfDoc.getPage === 'function') {
+        let pagesRead = 0;
+        let lastError = null;
+        for (let index = 0; index < pdfDoc.numPages && isCurrent(); index++) {
+          try {
+            const page = await pdfDoc.getPage(index + 1);
+            if (!isCurrent()) break;
+            const data = await page.getTextContent();
+            this._readerPdfPageCaptions(data.items, index).forEach(entry => {
+              if (!nativeKinds.has(entry.kind)) add(entry);
+            });
+            pagesRead++;
+          } catch (e) { lastError = e; }
+        }
+        if (lastError && !pagesRead && !entries.length && !headings.length) throw lastError;
+      }
+      for (const heading of headings) {
+        const label = this._readerCaptionLabel(heading.title);
+        if (label) add({ ...heading, ...label });
+      }
+      return isCurrent() ? entries.sort(this._compareReaderTargetPositions) : [];
+    })();
+    cache.captions.then(() => {
+      if (!isCurrent()) delete cache.captions;
+    }, () => { delete cache.captions; });
+    return cache.captions;
+  },
+
+  _compareReaderTargetPositions(a, b) {
+    return a.pageIndex - b.pageIndex || (b.top ?? Infinity) - (a.top ?? Infinity)
+      || (a.left ?? 0) - (b.left ?? 0);
+  },
+
+  /** Jump to the caption's PDF coordinates without changing the zoom or sibling pane. */
+  async _goToReaderCaption(reader, pdfWin, entry) {
+    if (entry.outline) return this._goToReaderOutlineEntry(reader, pdfWin, entry.outline);
+    const viewer = pdfWin.PDFViewerApplication?.pdfViewer;
+    if (typeof viewer?.scrollPageIntoView !== 'function') return false;
+    viewer.scrollPageIntoView(Components.utils.cloneInto({
+      pageNumber: entry.pageIndex + 1,
+      destArray: [null, { name: 'XYZ' }, entry.left, entry.top, null],
+    }, pdfWin));
+    return true;
+  },
+
+  /** Step relative to the active pane, wrapping at either end like Neo. */
+  async _traverseReaderTargets(state, reader, pdfWin, kind, direction) {
+    const bookmark = kind === 'bookmark';
+    const pdfDoc = pdfWin?.PDFViewerApplication?.pdfDocument;
+    const viewer = pdfWin?.PDFViewerApplication?.pdfViewer;
+    const zh = this._isZhLocale();
+    const names = {
+      bookmark: ['bookmarks', '书签'], heading: ['PDF headings', 'PDF 目录标题'],
+      figure: ['figure captions', '图题注'], table: ['table captions', '表题注'],
+    };
+    const name = names[kind][zh ? 1 : 0];
+    if (!pdfDoc && (!bookmark || viewer)) {
+      this._showStatus(state, viewer ? (zh ? 'PDF 正在加载' : 'PDF is still loading')
+        : (zh ? '此跳转仅支持 PDF' : 'This jump is only available in PDFs'), 1500);
+      return;
+    }
+    const request = {};
+    state._readerJumpRequest = request;
+    const ir = reader._internalReader;
+    const current = () => state._readerJumpRequest === request && !pdfWin?.closed
+      && (!state.activePdfWin || state.activePdfWin === pdfWin)
+      && pdfWin?.PDFViewerApplication?.pdfDocument === pdfDoc
+      && [ir?._primaryView, ir?._secondaryView].some(view => view?._iframeWindow === pdfWin);
+    try {
+      const cache = pdfDoc && this._readerTargetCache(state, pdfWin);
+      if ((kind === 'figure' || kind === 'table') && !cache.captions) {
+        this._showStatus(state, zh ? '▶ 正在索引题注…' : '▶ Indexing captions…', 1400);
+      }
+      const entries = bookmark ? await this._readerBookmarkTargets(state, reader, pdfWin)
+        : kind === 'heading' ? (await this._readerHeadingTargets(state, reader, pdfWin))
+          .filter(entry => !this._readerCaptionLabel(entry.title))
+        : (await this._readerCaptionTargets(state, reader, pdfWin))
+          .filter(entry => entry.kind === kind);
+      if (!current()) return;
+      if (!entries.length) {
+        this._showStatus(state, zh ? '未找到' + name : 'No ' + name + ' found', 1500);
+        return;
+      }
+
+      const container = this._getScrollContainer(pdfWin);
+      const marks = state._readerLastJumps || (state._readerLastJumps = new WeakMap());
+      const previous = marks.get(pdfWin);
+      const index = previous?.kind === kind && previous.pdfDoc === pdfDoc
+          && previous.page === viewer?.currentPageNumber && previous.scale === viewer?.currentScale
+          && Math.abs(previous.scrollTop - (container?.scrollTop || 0)) <= 2
+          && Math.abs(previous.scrollLeft - (container?.scrollLeft || 0)) <= 2
+        ? entries.findIndex(entry => bookmark ? entry.key === previous.entry.key
+          && entry.position === previous.entry.position : entry === previous.entry) : -1;
+      let target;
+      if (index >= 0) {
+        target = entries[(index + direction + entries.length) % entries.length];
+      } else {
+        let relative;
+        let tolerance;
+        if (bookmark) {
+          const position = this._markPosition(pdfWin);
+          const page = position.pageIndex ?? 0;
+          const pageHeight = viewer?.getPageView?.(page)?.viewport?.height
+            || container?.scrollHeight || 600;
+          const value = this._readerBookmarkOrder(position, pdfDoc?.numPages || 1);
+          relative = entry => entry.position - value;
+          tolerance = 2 / pageHeight;
+        } else {
+          const reading = this._readerOutlineReadingPosition(pdfWin);
+          relative = entry => {
+            if (entry.pageIndex !== reading.pageIndex) {
+              return entry.pageIndex > reading.pageIndex ? Infinity : -Infinity;
+            }
+            if (reading.top === null) return direction * Infinity;
+            if (entry.top === null) return -Infinity;
+            const toY = point => reading.viewport?.convertToViewportPoint?.(
+              point.left ?? reading.left ?? 0, point.top)?.[1] ?? -point.top;
+            return toY(entry) - toY(reading);
+          };
+          tolerance = 1;
+        }
+        const ordered = bookmark ? entries : entries.slice().sort(this._compareReaderTargetPositions);
+        if (direction < 0) ordered.reverse();
+        target = ordered.find(entry => direction * relative(entry) > tolerance) || ordered[0];
+      }
+
+      this._stopSmoothHoldScroll(state, pdfWin);
+      if (bookmark) {
+        if (state.marks[target.key] !== target.mark) return;
+        if (!await this._jumpMark(state, reader, pdfWin, target.key, target.location)) return;
+      } else {
+        const ok = kind === 'heading'
+          ? await this._goToReaderOutlineEntry(reader, pdfWin, target.outline)
+          : await this._goToReaderCaption(reader, pdfWin, target);
+        if (!current()) return;
+        if (!ok) {
+          this._showStatus(state, zh ? '跳转失败' : 'Jump failed', 1500);
+          return;
+        }
+        state.lastAnnotationKey = null;
+        this._recordReaderHistoryPoint(reader, state, pdfWin);
+        this._showStatus(state, '→ ' + target.title.slice(0, 85), 1500);
+      }
+      if (current()) marks.set(pdfWin, { pdfDoc, kind, entry: target,
+        page: viewer?.currentPageNumber, scale: viewer?.currentScale,
+        scrollTop: container?.scrollTop || 0, scrollLeft: container?.scrollLeft || 0 });
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] reader jump: ' + e);
+      if (current()) this._showStatus(state, zh ? '无法加载' + name : 'Could not load ' + name, 1500);
+    }
+  },
+
+  _readerBookmarkOrder(mark, pages) {
+    return mark.pageIndex === null ? mark.ratio * pages : mark.pageIndex + mark.ratio;
+  },
+
+  /** Existing Vim marks serve as bookmarks, including the legacy annotation-only format. */
+  async _readerBookmarkTargets(state, reader, pdfWin) {
+    const marks = Object.entries(state.marks || {});
+    const pages = pdfWin?.PDFViewerApplication?.pdfDocument?.numPages || 1;
+    const legacy = marks.some(([, mark]) => mark.key && mark.pageIndex === null)
+      ? Zotero.Items.get(reader.itemID)?.getAnnotations() || [] : [];
+    const targets = await Promise.all(marks.map(async ([key, mark]) => {
+      const annotation = mark.pageIndex === null && legacy.find(item => item.key === mark.key);
+      const location = annotation ? await this._annotationPageRatio(pdfWin, annotation) : mark;
+      return { key, mark, location, position: this._readerBookmarkOrder(location, pages) };
+    }));
+    return targets.sort((a, b) => a.position - b.position || a.key.localeCompare(b.key));
   },
 
   _onReaderOutlineExplorerKeyDown(event, reader, state, pdfWin) {
@@ -5203,7 +5567,7 @@ Object.assign(ZoteroVim, {
 
   // ── Annotation navigation ─────────────────────────────────────────────────
 
-  _navigateAnnotation(state, reader, direction) {
+  _navigateAnnotation(state, reader, direction, pdfWin) {
     try {
       const internalReader = reader._internalReader;
       if (!internalReader) {
@@ -5248,7 +5612,8 @@ Object.assign(ZoteroVim, {
       // ── Sequential navigation: track last visited annotation ─────────────
       // If we know which annotation was last visited, just step ±1 in the list.
       let targetIdx = -1;
-      if (state.lastAnnotationKey) {
+      if (state.lastAnnotationKey && (!state._readerAnnotationJumpWin
+          || !pdfWin || state._readerAnnotationJumpWin === pdfWin)) {
         const lastIdx = annotations.findIndex(a => a.key === state.lastAnnotationKey);
         if (lastIdx >= 0) {
           targetIdx = (lastIdx + direction + annotations.length) % annotations.length;
@@ -5257,11 +5622,8 @@ Object.assign(ZoteroVim, {
 
       // First press (or unknown last annotation): find nearest from current page.
       if (targetIdx < 0) {
-        let currentPage = 0;
-        try {
-          currentPage = (internalReader._primaryView?._iframeWindow
-            ?.PDFViewerApplication?.pdfViewer?.currentPageNumber - 1) || 0;
-        } catch (_) {}
+        const active = pdfWin || internalReader._primaryView?._iframeWindow;
+        const currentPage = (active?.PDFViewerApplication?.pdfViewer?.currentPageNumber - 1) || 0;
 
         if (direction > 0) {
           targetIdx = annotations.findIndex(a => getSortPage(a) >= currentPage);
@@ -5278,6 +5640,7 @@ Object.assign(ZoteroVim, {
       if (!target) return;
 
       state.lastAnnotationKey = target.key;
+      state._readerAnnotationJumpWin = pdfWin;
 
       // ── Page/position resolution ─────────────────────────────────────────
       let posPage = getSortPage(target);
@@ -5292,7 +5655,7 @@ Object.assign(ZoteroVim, {
         '→ ann ' + (targetIdx + 1) + '/' + annotations.length +
         '  p.' + (posPage + 1), 2000);
 
-      this._navigateToAnnotationKey(state, reader, target);
+      this._navigateToAnnotationKey(state, reader, target, pdfWin);
     } catch (e) {
       Zotero.debug('[ZoteroVim] _navigateAnnotation error: ' + e);
       this._showStatus(state, '✗ nav: ' + String(e).slice(0, 30), 4000);
@@ -5301,14 +5664,14 @@ Object.assign(ZoteroVim, {
 
   /**
    * Navigate to an annotation by key: smooth-scroll the PDF and select it.
-   * Shared by annotation navigation ([ / ]) and persisted mark jumps.
+   * Keep Zotero's annotation selection and navigation in the originating pane.
    *
    * _internalReader lives in a different JS compartment (reader.html iframe);
    * arrays/objects passed as arguments must be cloned into that compartment
    * with Cu.cloneInto() — otherwise the security wrapper blocks property
    * access and the calls silently fail or throw "Permission denied".
    */
-  _navigateToAnnotationKey(state, reader, target) {
+  _navigateToAnnotationKey(state, reader, target, pdfWin = null) {
     try {
       const internalReader = reader._internalReader;
       if (!internalReader) return false;
@@ -5322,6 +5685,11 @@ Object.assign(ZoteroVim, {
 
       const readerWin = reader._iframeWindow;
       const Cu = Components.utils;
+      const pane = [internalReader._primaryView, internalReader._secondaryView]
+        .find(view => view && view._iframeWindow === pdfWin);
+      if (pane && internalReader._lastView !== pane) {
+        internalReader.focusView?.(pane === internalReader._primaryView);
+      }
 
       // setSelectedAnnotations: scrolls sidebar + shows selection box in PDF +
       // internally calls _lastView.navigate({annotationID}) for smooth scroll.
@@ -5350,7 +5718,8 @@ Object.assign(ZoteroVim, {
           Zotero.debug('[ZoteroVim] navigate annotationID error: ' + e);
           // Last resort: jump to page (may be jarring).
           try {
-            const pdfApp = internalReader._primaryView?._iframeWindow?.PDFViewerApplication;
+            const active = pdfWin || internalReader._primaryView?._iframeWindow;
+            const pdfApp = active?.PDFViewerApplication;
             if (pdfApp?.pdfViewer) pdfApp.pdfViewer.currentPageNumber = posPage + 1;
           } catch (_) {}
         }
@@ -5438,15 +5807,14 @@ Object.assign(ZoteroVim, {
    * jump reproduces the exact view that was marked; the annotation key (when
    * present) only feeds state.lastAnnotationKey for follow-up commands.
    */
-  async _jumpMark(state, reader, pdfWin, char) {
+  async _jumpMark(state, reader, pdfWin, char, location = null) {
     try {
       const mark = state.marks[char];
       if (!mark) {
         this._showStatus(state, '✗ mark ' + char + ' not set', 2000);
-        return;
+        return false;
       }
-      let pageIndex = mark.pageIndex;
-      let ratio = mark.ratio;
+      let { pageIndex, ratio } = location || mark;
       let annotationOK = true;
       if (mark.key) {
         const attachment = Zotero.Items.get(reader.itemID);
@@ -5459,12 +5827,12 @@ Object.assign(ZoteroVim, {
         }
         // Legacy marks migrated from the old annotation-tag scheme carry no
         // stored position — derive it from the annotation as a fallback.
-        if (pageIndex === null && target) {
+        if (pageIndex === null && target && !location) {
           const pos = await this._annotationPageRatio(pdfWin, target);
           pageIndex = pos.pageIndex;
           ratio = pos.ratio;
         }
-      }
+      } else state.lastAnnotationKey = null;
       if (pageIndex !== null && this._viewHasPageNav(reader)) {
         this._instantPageFlip(pdfWin, pageIndex);
         this._scrollToPageRatio(pdfWin, pageIndex, ratio, 0);
@@ -5478,9 +5846,11 @@ Object.assign(ZoteroVim, {
       this._showStatus(state,
         '→ mark ' + char + (annotationOK ? '' : ' · annotation gone'), 1200);
       this._recordReaderHistoryPoint(reader, state, pdfWin);
+      return true;
     } catch (e) {
       Zotero.debug('[ZoteroVim] _jumpMark error: ' + e);
       this._showStatus(state, '✗ mark: ' + String(e).slice(0, 35), 3000);
+      return false;
     }
   },
 
@@ -6278,7 +6648,7 @@ Object.assign(ZoteroVim, {
 
     const key = this._selectedAnnotationKey(state, reader);
     if (!key) {
-      this._showStatus(state, '✗ navigate first with [ / ]', 2000);
+      this._showStatus(state, '✗ navigate first with [a / ]a', 2000);
       return;
     }
     state.lastAnnotationKey = key;
@@ -6407,13 +6777,13 @@ Object.assign(ZoteroVim, {
   },
 
   /**
-   * Delete the annotation currently selected with [ / ].
+   * Delete the annotation currently selected with [a / ]a.
    * Clears the reader selection first, then calls eraseTx() on the item.
    */
   async _deleteAnnotation(state, reader) {
     const key = state.lastAnnotationKey;
     if (!key) {
-      this._showStatus(state, '✗ navigate first with [ / ]', 2000);
+      this._showStatus(state, '✗ navigate first with [a / ]a', 2000);
       return;
     }
     try {
@@ -6450,11 +6820,11 @@ Object.assign(ZoteroVim, {
 
   /**
    * Change the colour of the currently-selected annotation (zy/zr/zg/zb/zp in
-   * normal mode after [ / ] navigation).
+   * normal mode after [a / ]a navigation).
    */
   async _recolorAnnotation(state, reader, color) {
     const key = state.lastAnnotationKey;
-    if (!key) { this._showStatus(state, '✗ navigate first with [ / ]', 2000); return; }
+    if (!key) { this._showStatus(state, '✗ navigate first with [a / ]a', 2000); return; }
     try {
       const attachment = Zotero.Items.get(reader.itemID);
       if (!attachment) { this._showStatus(state, '✗ no attachment', 2000); return; }
@@ -6497,13 +6867,13 @@ Object.assign(ZoteroVim, {
 
   /**
    * Yank the highlighted text of the currently-selected annotation (y in normal
-   * mode after [ / ] navigation).  Applies the same post-processing as
+   * mode after [a / ]a navigation).  Applies the same post-processing as
    * _copySelection: NFKC ligature normalization + newline → space.
    */
   _yankAnnotation(state, reader) {
     const key = state.lastAnnotationKey;
     if (!key) {
-      this._showStatus(state, '✗ navigate first with [ / ]', 2000);
+      this._showStatus(state, '✗ navigate first with [a / ]a', 2000);
       return;
     }
     try {
@@ -6536,7 +6906,7 @@ Object.assign(ZoteroVim, {
    */
   _yankAnnotationComment(state, reader) {
     const key = state.lastAnnotationKey;
-    if (!key) { this._showStatus(state, '✗ navigate first with [ / ]', 2000); return; }
+    if (!key) { this._showStatus(state, '✗ navigate first with [a / ]a', 2000); return; }
     try {
       const attachment = Zotero.Items.get(reader.itemID);
       if (!attachment) { this._showStatus(state, '✗ no attachment', 2000); return; }

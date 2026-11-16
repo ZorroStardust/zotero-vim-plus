@@ -118,7 +118,7 @@ function pane(getOutline = async () => outline()) {
   const forwarded = [];
   let history = 0;
   const app = {
-    pdfDocument: { getOutline, getDestination: async () => [6, { name: 'Fit' }] },
+    pdfDocument: { numPages: 20, getOutline, getDestination: async () => [6, { name: 'Fit' }] },
     pdfViewer: { currentPageNumber: 1, pagesCount: 20 },
     pdfLinkService: {
       getDestinationHash(dest) {
@@ -132,7 +132,8 @@ function pane(getOutline = async () => outline()) {
     focus() { this.focusCount++; context.Services.focus.focusedWindow = win; },
     addEventListener() {}, removeEventListener() {} };
   doc.defaultView = win;
-  const view = { _iframeWindow: win, _onKeyDown: event => forwarded.push(event.key),
+  const view = { _iframeWindow: win, navigateToNextPage() {},
+    _onKeyDown: event => forwarded.push(event.key),
     _textAnnotationFocused: () => false, _pushHistoryPoint: () => { history++; } };
   return { win, doc, app, calls, forwarded, view, get history() { return history; } };
 }
@@ -916,7 +917,144 @@ async function main() {
     assert.equal(late.secondary.win.focusCount, focusCount);
   });
 
-  console.log('Reader outline picker checks passed (' + passed + ' cases).');
+  await check('bracket prefixes expose effective categories and Escape cancels the chord', async () => {
+    const f = fixture();
+    assert.equal(key(f, ']').prevented, true);
+    assert.equal(f.state.keyBuffer, ']');
+    assert.deepEqual(Array.from(f.state._spacekeys.rows, row => row.key), ['a', 'f', 'm', 's', 't']);
+    assert.equal(z._readerConsumesKey(f.state, 's', f.primary.win), true);
+    assert.equal(key(f, 'Escape').prevented, true);
+    assert.equal(f.state.keyBuffer, '');
+    assert.equal(f.state._spacekeys, null);
+    assert.deepEqual(f.primary.calls, []);
+  });
+
+  const run = (str, x, y, width = 42) =>
+    ({ str, width, height: 10, transform: [10, 0, 0, 10, x, y] });
+
+  await check('caption picker searches label aliases and jumps to unrendered pages in its split', async () => {
+    const f = fixture();
+    const { pdfDocument, pdfViewer } = f.secondary.app;
+    pdfDocument.numPages = 4;
+    let reads = 0;
+    pdfDocument.getPage = async page => {
+      reads++;
+      return { getTextContent: async () => ({ items: page === 3 ? [
+        run('Figure', 30, 720, 31), run('2. Setup', 64, 720),
+        run('Figure 2 shows the equipment', 280, 720, 160),
+        run('See Table 1 for the baseline.', 30, 680, 130),
+        run('TABLE IV', 280, 680),
+        run('Outcome metrics', 273, 665, 56),
+      ] : [] }) };
+    };
+    pdfViewer.scrollPageIntoView = dest => f.secondary.calls.push(dest);
+    key(f, ' ', {}, f.secondary); key(f, 'f', {}, f.secondary); key(f, 'g', {}, f.secondary);
+    await settle();
+    const popup = f.state._outlinePicker;
+    assert.equal(popup.items.length, 2);
+    input(popup, '图 2');
+    assert.equal(popup.filtered.length, 1);
+    assert.equal(popup.filtered[0].entry.title, 'Figure 2. Setup');
+    input(popup, 'p. 3');
+    assert.equal(popup.filtered.length, 2);
+    input(popup, 'outcome metrics');
+    assert.equal(popup.filtered[0].entry.title, 'TABLE IV Outcome metrics');
+    key(f, 'Enter', {}, f.secondary);
+    await settle();
+    assert.deepEqual(f.secondary.calls[0], {
+      pageNumber: 3, destArray: [null, { name: 'XYZ' }, 273, 690, null],
+    });
+    assert.equal(clones.at(-1).target, f.secondary.win);
+    assert.equal(f.secondary.history, 1);
+    assert.equal(f.primary.calls.length, 0);
+    assert.equal(reads, 4);
+    await z._readerCaptionTargets(f.state, f.reader, f.secondary.win);
+    assert.equal(reads, 4);
+  });
+
+  await check('typed captions use SDT and supplement the missing category with PDF text', async () => {
+    const f = fixture(async () => [
+      { title: 'Fig. A1. Duplicate outline', dest: [0, { name: 'XYZ' }, 60, 600, null] },
+    ]);
+    const pdf = f.primary.app.pdfDocument;
+    pdf.numPages = 1;
+    pdf.getPage = async () => ({ getTextContent: async () => ({ items: [
+      run('Table S1. Trials', 54, 480), run('Fig. A1', 60, 590),
+    ] }) });
+    f.reader.itemID = 13;
+    context.Zotero.SDT = { getReader: async id => {
+      assert.equal(id, 13);
+      return { getTopLevelBlockCount: () => 3, getBlocks: (start, end) => {
+        assert.deepEqual([start, end], [0, 2]);
+        return [
+          { type: 'caption', content: [{ text: 'Fig. A1. Native' }, { text: ' caption' }],
+            anchor: { pageRects: [[0, 60, 579, 210, 602]] } },
+          { type: 'paragraph', text: 'Table S2. Reference',
+            anchor: { pageRects: [[0, 25, 500, 90, 600]] } },
+          { type: 'caption', text: 'Table S3', anchor: { pageRects: [[0, 65, 510, 10, 620]] } },
+        ];
+      } };
+    } };
+    try {
+      const entries = await z._readerCaptionTargets(f.state, f.reader, f.primary.win);
+      assert.deepEqual(Array.from(entries, entry => [entry.title, entry.left, entry.top]), [
+        ['Fig. A1. Native caption', 60, 602], ['Table S1. Trials', 54, 490],
+      ]);
+    } finally {
+      delete context.Zotero.SDT;
+    }
+  });
+
+  await check('figure jumps wrap, skip same target and do not complete after a pane switch', async () => {
+    const f = fixture();
+    const { pdfDocument, pdfViewer } = f.primary.app;
+    pdfDocument.numPages = 3;
+    pdfDocument.getPage = async number => ({ getTextContent: async () => ({ items: number === 1
+      ? [run('Fig. 1. Setup', 40, 700), run('Fig. 2. Results', 40, 480)] : [] }) });
+    pdfViewer._location = { pageNumber: 1, top: 760, left: 0 };
+    pdfViewer.scrollPageIntoView = ({ destArray }) => f.primary.calls.push(destArray[3]);
+    for (const prefix of [']', ']', ']', '[']) {
+      key(f, prefix); key(f, 'f');
+      await settle();
+    }
+    assert.deepEqual(f.primary.calls, [710, 490, 710, 490]);
+    const g = fixture();
+    const pending = deferred();
+    g.primary.app.pdfDocument.getPage = () => pending.promise;
+    key(g, ']'); key(g, 't');
+    await settle();
+    g.state.activePdfWin = g.secondary.win;
+    pending.resolve({ getTextContent: async () => ({ items: [run('Table 1. Trials', 40, 100)] }) });
+    await settle();
+    assert.deepEqual(g.primary.calls, []);
+  });
+
+  await check('heading, bookmark and annotation jumps route to the requested pane', async () => {
+    const f = fixture();
+    f.secondary.app.pdfViewer.currentPageNumber = 4;
+    f.secondary.app.pdfViewer.container = {};
+    const ir = f.reader._internalReader;
+    ir.focusView = primary => { ir._lastView = primary ? f.primary.view : f.secondary.view; };
+    const selected = [];
+    ir.setSelectedAnnotations = keys => selected.push([keys[0], ir._lastView]);
+    context.Zotero.Items = { get: () => ({ getAnnotations: () => [
+      { key: 'ONE', annotationSortIndex: '00000', annotationType: 'highlight' },
+      { key: 'FOUR', annotationSortIndex: '00003', annotationType: 'underline' },
+    ] }) };
+    f.state.marks = { z: { pageIndex: 2, ratio: 0.5 }, a: { pageIndex: 7, ratio: 0.5 } };
+    for (const suffix of ['a', 's', 'm']) {
+      key(f, ']', {}, f.secondary); key(f, suffix, {}, f.secondary);
+      await settle();
+    }
+    assert.deepEqual(selected, [['FOUR', f.secondary.view]]);
+    assert.deepEqual(f.secondary.calls, ['page=5']);
+    assert.equal(f.secondary.app.pdfViewer.currentPageNumber, 8);
+    assert.match(notices.at(-1), /mark a/);
+    assert.equal(f.secondary.history, 2);
+    assert.deepEqual(f.primary.calls, []);
+  });
+
+  console.log('Reader outline and caption checks passed (' + passed + ' cases).');
 }
 
 main().catch(error => { console.error(error); process.exitCode = 1; });

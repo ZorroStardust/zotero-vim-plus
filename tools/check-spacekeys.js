@@ -168,6 +168,32 @@ check('reader shows fh and preserves distinct s/S actions and count prefixes', (
   assert.equal(f.counts.pop(), 3);
 });
 
+check('reader hint prefixes switch in place once the popup is visible', () => {
+  const f = fixture();
+  f.pdfKey('[');
+  f.advance(199);
+  assert.equal(f.state._spacekeys.el, null);
+  f.advance(1);
+  const popup = f.state._spacekeys.el;
+  assert.equal(popup.firstChild.textContent, '跳转  [');
+  f.pdfKey(']');
+  assert.equal(f.state._spacekeys.el, popup);
+  assert.equal(popup.firstChild.textContent, '跳转  ]');
+  assert.equal(f.state.keyBuffer, ']');
+  f.pdfKey('[');
+  assert.equal(f.state._spacekeys.el, popup);
+  assert.equal(popup.firstChild.textContent, '跳转  [');
+  f.pdfKey(' ');
+  assert.equal(f.state._spacekeys.el, popup);
+  assert.equal(popup.firstChild.textContent, 'Spacekeys  ␣');
+  f.pdfKey(']'); f.pdfKey('f');
+  assert.deepEqual(f.actions, ['nextFigure']);
+  assert.equal(f.state._spacekeys, null);
+  assert.equal(f.timers.size, 0);
+  f.pdfKey('[');
+  assert.equal(f.state._spacekeys.el, null);
+});
+
 check('fast typing never flashes later; Escape and invalid prefixes clean up', () => {
   const f = fixture();
   f.pdfKey(' '); f.pdfKey('f'); f.pdfKey('f'); f.advance(1000);

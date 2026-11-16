@@ -314,8 +314,9 @@ Object.assign(ZoteroVim, {
       if (viewer?.pagesCount) {
         if (this.isModeEnabled('cursor')) actions.push('flashCursor');
         if (this.isModeEnabled('visual')) actions.push('flashVisual');
-        actions.push('toggleReaderBodyText', 'readerOutlinePick',
-          'toggleReaderSidebarOutline', 'toggleMarksExplorer');
+        actions.push('toggleReaderBodyText', 'readerOutlinePick', 'readerCaptionPick',
+          'toggleReaderSidebarOutline', 'toggleMarksExplorer',
+          'prevHeading', 'nextHeading', 'prevFigure', 'nextFigure', 'prevTable', 'nextTable');
         if ([0, 1, 2].includes(viewer.spreadMode)) {
           actions.push('toggleReaderSpread', 'toggleReaderSpreadParity',
             'setReaderSinglePage', 'setReaderOddSpread', 'setReaderEvenSpread');
@@ -328,6 +329,10 @@ Object.assign(ZoteroVim, {
               || typeof owner.reader._internalReader?.[method] === 'function') actions.push(action);
         }
       }
+      if (typeof owner.reader?._internalReader?.setSelectedAnnotations === 'function') {
+        actions.push('prevAnnotation', 'nextAnnotation');
+      }
+      actions.push('prevBookmark', 'nextBookmark');
     }
     if (scope === 'main' || (scope === 'normal' && ui.mainState)) {
       actions.push('mainFuzzyAll');

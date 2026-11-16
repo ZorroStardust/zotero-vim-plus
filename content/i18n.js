@@ -182,8 +182,8 @@ function ZV_I18N_READ_LANG() {
 // Follow the Zotero UI language unless the user has chosen explicitly.
 function ZV_I18N_DEFAULT_LANG() {
   try {
-    if (typeof Zotero !== "undefined" && Zotero.locale && /^zh/i.test(Zotero.locale)) {
-      return "zh-CN";
+    if (typeof Zotero !== "undefined" && Zotero.locale) {
+      return /^zh/i.test(Zotero.locale) ? "zh-CN" : "en";
     }
   } catch (_) {}
   try {

@@ -165,6 +165,24 @@ async function main() {
     }
   });
 
+  await check('English overrides the reader locale without changing translated content', async () => {
+    const getPref = z.getPref;
+    z.getPref = (key, fallback) => key === 'language' ? 'en' : getPref.call(z, key, fallback);
+    try {
+      const p = pane();
+      context.Zotero.PDFTranslate = { api: { async translate() {
+        return { status: 'success', result: '中文译文' };
+      } } };
+      await z._translateSelection(p.state, p.reader, p.pdfWin);
+      const popup = p.state._translationPopup;
+      assert.equal(popup.sourceLabel.textContent, 'Original');
+      assert.equal(popup.resultLabel.textContent, 'Translation');
+      assert.equal(popup.copyButton.textContent, 'Copy translation');
+      assert.equal(popup.result.textContent, '中文译文');
+      key(p.state, 'Escape');
+    } finally { z.getPref = getPref; }
+  });
+
   await check('closing and reopening ignores a stale request without overwriting the new result', async () => {
     const first = deferred();
     const second = deferred();

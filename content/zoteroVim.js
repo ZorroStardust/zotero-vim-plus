@@ -26,6 +26,12 @@ var ZoteroVim = {
   // with the original zotero-vim add-on.
   PREF_PREFIX: 'extensions.zotero-vim@zotero-vim',
 
+  ITEM_SEARCH_MODES: [
+    ['titleCreatorYear', 'Title, Creator, Year', '标题、创建者、年份'],
+    ['fields', 'All Fields & Tags', '所有字段和标签'],
+    ['everything', 'Everything', '所有内容'],
+  ],
+
   COLORS: {
     yellow: '#ffd400',
     red:    '#ff6666',
@@ -325,6 +331,13 @@ var ZoteroVim = {
     else                                ps.setStringPref(fullKey, String(value));
   },
 
+  /** Use the plugin language when set, even if Zotero uses a different language. */
+  _isZhLocale() {
+    const language = this.getPref('language', '');
+    if (language === 'en' || language === 'zh-CN') return language === 'zh-CN';
+    return /^zh/i.test(Zotero.locale || '');
+  },
+
   getBindings() {
     const bindings = Object.assign({}, this.DEFAULT_BINDINGS);
     try {
@@ -400,6 +413,46 @@ var ZoteroVim = {
   isModeEnabled(mode) {
     if (mode === 'normal') return true;
     return this.getPref('mode.' + mode + '.enabled', true);
+  },
+
+  // ── Picker search ─────────────────────────────────────────────────────────
+
+  _normalizePickerSearchText(value) {
+    return String(value || '').normalize('NFKC').toLowerCase().trim().replace(/\s+/g, ' ');
+  },
+
+  _pickerSearchField(value) {
+    const text = this._normalizePickerSearchText(value);
+    return { text, words: text.split(/[^\p{L}\p{M}\p{N}]+/u).filter(Boolean) };
+  },
+
+  /** Rank by the weakest term first so a scattered match cannot outrank complete words. */
+  _rankPickerMatch(fields, query, terms) {
+    const weight = terms.length * 4 + 1;
+    if (fields.some(field => field.text === query)) return 5 * weight;
+    let weakest = 4;
+    let total = 0;
+    for (const term of terms) {
+      let best = 0;
+      for (const { text, words } of fields) {
+        if (text === term || words.includes(term)) { best = 4; break; }
+        if (words.some(word => word.startsWith(term))) best = Math.max(best, 3);
+        else if (text.includes(term)) best = Math.max(best, 2);
+        else if (!best) {
+          let offset = 0;
+          for (const char of term) {
+            const index = text.indexOf(char, offset);
+            if (index < 0) { offset = 0; break; }
+            offset = index + char.length;
+          }
+          if (offset) best = 1;
+        }
+      }
+      if (!best) return 0;
+      weakest = Math.min(weakest, best);
+      total += best;
+    }
+    return weakest * weight + total;
   },
 
   // ── Reader event listeners ────────────────────────────────────────────────
@@ -1201,7 +1254,7 @@ var ZoteroVim = {
 
   /** Group matching bindings by the next key, keeping case and modifiers intact. */
   _spacekeysRows(modePrefix, buffer) {
-    const zh = /^zh/i.test(this.getPref('language', '') || Zotero.locale || '');
+    const zh = this._isZhLocale();
     const prefix = modePrefix + buffer;
     const groups = new Map();
     const named = 'arrow(?:left|right|up|down)|page(?:up|down)|backspace|delete|escape|enter|'
@@ -1380,7 +1433,7 @@ var ZoteroVim = {
       ui.el.appendChild(grid);
       const footer = h('div');
       footer.style.cssText = 'color:#a6adc8;font-size:11px;margin-top:6px;';
-      footer.textContent = /^zh/i.test(this.getPref('language', '') || Zotero.locale || '')
+      footer.textContent = this._isZhLocale()
         ? 'Esc 取消 · 继续输入组合键' : 'Esc cancel · Keep typing a chord';
       ui.el.appendChild(footer);
     } catch (e) {

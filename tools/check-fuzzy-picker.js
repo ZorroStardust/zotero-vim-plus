@@ -7,12 +7,17 @@ const vm = require('node:vm');
 
 const timers = new Map();
 const copies = [];
+const prefs = new Map();
 let nextTimer = 0;
 const context = vm.createContext({
   setTimeout(fn) { timers.set(++nextTimer, fn); return nextTimer; },
   clearTimeout(id) { timers.delete(id); },
   Zotero: { debug() {}, Libraries: { userLibraryID: 1 }, Items: {} },
-  Services: { focus: {} },
+  Services: { focus: {}, prefs: {
+    getPrefType: key => prefs.has(key) ? 32 : 0,
+    getStringPref: key => prefs.get(key),
+    setStringPref: (key, value) => prefs.set(key, value),
+  } },
   Components: {
     classes: {
       '@mozilla.org/widget/clipboardhelper;1': {
@@ -317,6 +322,28 @@ async function main() {
     query('2026 wooldridge econometrics');
     assert.deepEqual(rows(), [exact.id]);
     key(f, 'Escape');
+  });
+
+  await check('reopening the picker uses the saved language over Zotero locale', async () => {
+    context.Zotero.locale = 'zh-CN';
+    try {
+      for (const [language, mode, type, empty] of [
+        ['', '标题、创建者、年份', '文献', '无结果'],
+        ['en', 'Title, Creator, Year', 'References', 'No results'],
+        ['zh-CN', '标题、创建者、年份', '文献', '无结果'],
+      ]) {
+        plugin.setPref('language', language);
+        const f = await fixture('all', 0);
+        const buttons = f.state._pickerItemSearch.buttons;
+        assert.equal(buttons.mode[0].textContent, mode);
+        assert.equal(buttons.type[0].textContent, type);
+        assert.equal(f.state._pickerResults.children[0].textContent, empty);
+        key(f, 'Escape');
+      }
+    } finally {
+      prefs.clear();
+      delete context.Zotero.locale;
+    }
   });
 
   await check('type controls preserve query, collection scope and annotation navigation', async () => {

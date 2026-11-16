@@ -143,12 +143,12 @@ Object.assign(ZoteroVim, {
     return true;
   },
 
-  _cycleLibrarySearchMode(win, direction, { host, items }) {
+  _cycleLibrarySearchMode(win, direction, { host }) {
     try {
-      const modes = ['titleCreatorYear', 'fields', 'everything'];
+      const modes = this.ITEM_SEARCH_MODES;
       const current = Zotero.Prefs.get('search.quicksearch-mode');
-      const index = Math.max(0, modes.indexOf(current));
-      const mode = modes[(index + direction + modes.length) % modes.length];
+      const index = Math.max(0, modes.findIndex(([mode]) => mode === current));
+      const [mode, english, chinese] = modes[(index + direction + modes.length) % modes.length];
       if (typeof host?.updateMode === 'function') {
         Zotero.Prefs.set('search.quicksearch-mode', mode);
         host.updateMode();
@@ -163,8 +163,7 @@ Object.assign(ZoteroVim, {
       Promise.resolve(win.ZoteroPane.search()).catch(error => {
         Zotero.debug('[ZoteroVim] library search mode error: ' + error);
       });
-      const label = host?._searchModes?.[mode] || this._librarySearchInput(items)?.placeholder
-        || mode;
+      const label = this._isZhLocale() ? chinese : english;
       this._mainShowStatus(win, label + ' · Ctrl+h/l', 1600);
     } catch (error) {
       Zotero.debug('[ZoteroVim] _cycleLibrarySearchMode error: ' + error);
@@ -240,13 +239,14 @@ Object.assign(ZoteroVim, {
   },
 
   /** Compatibility picker includes collapsed descendants, library names and saved searches. */
-  async _buildCollectionPickerItems() {
+  async _buildCollectionPickerItems(zh = this._isZhLocale()) {
     const libraries = Zotero.Libraries.getAll();
     const result = [];
-    const zh = String(Zotero.locale || '').startsWith('zh');
+    const personalLibrary = zh ? '我的文库' : 'My Library';
     for (const library of libraries) {
       const libraryID = library.libraryID;
-      const name = library.name || Zotero.getString('pane.collections.library');
+      const name = libraryID === Zotero.Libraries.userLibraryID
+        ? personalLibrary : library.name || personalLibrary;
       const add = (id, title, path, kind) => {
         result.push({ id, title, path, kind,
           searchStr: [title, path].join(' ').toLowerCase() });

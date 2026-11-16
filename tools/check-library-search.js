@@ -208,6 +208,21 @@ async function test(name, run) {
     f.key('h', { ctrlKey: true });
     assert.equal(f.host.radioValue, 'fields');
   });
+  await test('English overrides Chinese in plugin search labels and the collection picker', async f => {
+    f.z.getPref = (key, fallback) => key === 'language' ? 'en' : fallback;
+    f.itemSearch.inputField.focus();
+    f.key('l', { ctrlKey: true });
+    assert.equal(f.statuses.at(-1), 'Everything · Ctrl+h/l');
+    assert.equal(f.itemSearch.inputField.placeholder, '所有内容');
+
+    f.context.Zotero.Libraries.userLibraryID = 1;
+    f.context.Zotero.Libraries.getAll = () => [{ libraryID: 1, name: '我的文库' }];
+    const rows = await f.z._buildCollectionPickerItems();
+    assert.equal(rows[0].title, 'My Library');
+    assert.equal(rows[0].kind, 'Library');
+    assert.equal(rows.find(row => row.id === 'C2').path, 'My Library / Parent');
+    assert.equal(rows.find(row => row.id === 'S3').kind, 'Saved search');
+  });
   await test('item Enter applies quoted query and returns focus to items', async f => {
     f.itemTree.focus(); f.key('/'); f.type('"robot"'); f.key('Enter'); await settle();
     assert.equal(f.searches.at(-1).query, '"robot"');

@@ -1,11 +1,6 @@
 /* global Zotero, Components, Services */
 /* eslint-disable no-unused-vars */
 
-const ITEM_PICKER_MODES = [
-  ['', 'Title, Creator, Year', '标题、创建者、年份'],
-  ['fields', 'All Fields & Tags', '所有字段和标签'],
-  ['everything', 'Everything', '所有内容'],
-];
 const ITEM_PICKER_TYPES = [
   ['regular', 'References', '文献'],
   ['any', 'Any item', '任意条目'],
@@ -1334,8 +1329,7 @@ Object.assign(ZoteroVim, {
     const count = winState._contextNoteCountBuffer || '';
     const operatorCount = winState._contextNoteOperatorCountBuffer || '';
     if (!buffer && !count) return null;
-    const lang = this.getPref('language', '') || Zotero.locale || '';
-    const zh = /^zh/i.test(lang);
+    const zh = this._isZhLocale();
     const visual = mode === 'visual' || mode === 'visual-line';
     const operator = !visual && /^[dyc]/.test(buffer) ? buffer[0] : '';
     const motion = operator ? buffer.slice(1) : buffer;
@@ -4377,9 +4371,11 @@ Object.assign(ZoteroVim, {
     const input = h('input');
     input.type = 'text';
     const isItemPicker = scope === 'all' || scope === 'collection';
-    const zh = String(Zotero.locale || '').startsWith('zh');
-    input.placeholder = scope === 'tabs' ? 'Pick tab by hint or search tab title...'
-      : scope === 'collections' ? 'Search collections...' : 'Search items...';
+    const zh = this._isZhLocale();
+    input.placeholder = scope === 'tabs'
+      ? (zh ? '按提示选择标签页或搜索标题…' : 'Pick tab by hint or search tab title...')
+      : scope === 'collections' ? (zh ? '搜索分类…' : 'Search collections...')
+      : (zh ? '搜索条目…' : 'Search items...');
     input.style.cssText =
       'width:100%;box-sizing:border-box;background:#313244;color:#cdd6f4;' +
       'border:none;outline:none;border-radius:4px;padding:6px 10px;font:13px/1 monospace;';
@@ -4388,15 +4384,17 @@ Object.assign(ZoteroVim, {
     results.style.cssText = 'overflow-y:auto;flex:1;max-height:55vh;';
     const loadingMsg = h('div');
     loadingMsg.style.cssText = 'padding:12px;color:#6c7086';
-    loadingMsg.textContent = 'Loading…';
+    loadingMsg.textContent = zh ? '正在加载…' : 'Loading…';
     results.appendChild(loadingMsg);
 
     const hintBar = h('div');
     hintBar.style.cssText =
       'padding:4px 12px;font-size:11px;color:#6c7086;border-top:1px solid #313244;flex-shrink:0;';
     hintBar.textContent = scope === 'tabs'
-      ? 'Type hint letter (empty query) or search title  ·  Ctrl+j/k navigate  ·  Enter select  ·  Esc close'
-      : scope === 'collections' ? 'Ctrl+j/k navigate  ·  Enter select collection  ·  Esc close'
+      ? (zh ? '按提示选择标签页或搜索标题 · Ctrl+j/k 导航 · Enter 选择 · Esc 关闭'
+        : 'Type hint letter (empty query) or search title · Ctrl+j/k navigate · Enter select · Esc close')
+      : scope === 'collections' ? (zh ? 'Ctrl+j/k 导航 · Enter 选择分类 · Esc 关闭'
+        : 'Ctrl+j/k navigate · Enter select collection · Esc close')
       : zh ? 'Ctrl+j/k 导航 · Enter 选择 · Ctrl+o 打开 · Ctrl+y 复制引文 · ' +
         'Ctrl+Shift+y 复制引用键 · Esc 关闭'
       : 'Ctrl+j/k navigate · Enter select · Ctrl+o open · Ctrl+y yank citation · ' +
@@ -4448,7 +4446,7 @@ Object.assign(ZoteroVim, {
       if (scope === 'tabs') {
         pickerItems = this._buildTabPickerItems(win);
       } else if (scope === 'collections') {
-        pickerItems = await this._buildCollectionPickerItems();
+        pickerItems = await this._buildCollectionPickerItems(zh);
       } else if (itemSearch) {
         itemSearch.data = await this._loadItemPickerItems(win, scope);
       }
@@ -4460,7 +4458,7 @@ Object.assign(ZoteroVim, {
       while (results.firstChild) results.removeChild(results.firstChild);
       const errEl = doc.createElementNS('http://www.w3.org/1999/xhtml', 'div');
       errEl.style.cssText = 'padding:12px;color:#f38ba8';
-      errEl.textContent = 'Error loading items: ' + String(e).slice(0, 80);
+      errEl.textContent = (zh ? '加载失败：' : 'Error loading items: ') + String(e).slice(0, 80);
       results.appendChild(errEl);
       return;
     }
@@ -4498,7 +4496,7 @@ Object.assign(ZoteroVim, {
     const search = winState._pickerItemSearch;
     const h = tag => container.ownerDocument.createElementNS('http://www.w3.org/1999/xhtml', tag);
     const groups = [
-      ['mode', ITEM_PICKER_MODES, search.zh ? '搜索范围' : 'Search in', 'Ctrl+h/l'],
+      ['mode', this.ITEM_SEARCH_MODES, search.zh ? '搜索范围' : 'Search in', 'Ctrl+h/l'],
       ['type', ITEM_PICKER_TYPES, search.zh ? '条目类型' : 'Item type', 'Ctrl+Shift+h/l'],
     ];
     search.buttons = {};
@@ -4579,10 +4577,6 @@ Object.assign(ZoteroVim, {
     return { libraryID, records, recent };
   },
 
-  _itemPickerSearchText(value) {
-    return String(value || '').normalize('NFKC').toLowerCase().trim().replace(/\s+/g, ' ');
-  },
-
   /** Build and cache the fields only when a record is needed for matching or display. */
   _itemPickerRow(record, search) {
     if (record.row) return record.row;
@@ -4598,43 +4592,13 @@ Object.assign(ZoteroVim, {
     ) : '';
     const fields = [rawTitle, year, citekey, ...creators.flatMap(creator => [
       creator.name, creator.lastName, [creator.firstName, creator.lastName].filter(Boolean).join(' '),
-    ])].map(value => this._itemPickerSearchText(value)).filter(Boolean)
-      .map(text => ({ text, words: text.split(/[^\p{L}\p{M}\p{N}]+/u).filter(Boolean) }));
+    ])].map(value => this._pickerSearchField(value)).filter(field => field.text);
     const typeChoice = ITEM_PICKER_TYPES.find(choice => choice[0] === type);
     const kind = type === 'regular' ? '' : typeChoice?.[search.zh ? 2 : 1] || type;
     const parent = rootID === item.id ? '' : search.data.records.get(rootID)?.item.getDisplayTitle?.();
     record.row = { id: item.id, source: item, type, title: rawTitle || (search.zh ? '无标题' : 'Untitled'),
       citekey, author, year, kind, parent, fields };
     return record.row;
-  },
-
-  /** Rank by the weakest term first so a scattered match cannot outrank complete words. */
-  _itemPickerRank(fields, query, terms) {
-    const weight = terms.length * 4 + 1;
-    if (fields.some(field => field.text === query)) return 5 * weight;
-    let weakest = 4;
-    let total = 0;
-    for (const term of terms) {
-      let best = 0;
-      for (const { text, words } of fields) {
-        if (text === term || words.includes(term)) { best = 4; break; }
-        if (words.some(word => word.startsWith(term))) best = Math.max(best, 3);
-        else if (text.includes(term)) best = Math.max(best, 2);
-        else if (!best) {
-          let offset = 0;
-          for (const char of term) {
-            const index = text.indexOf(char, offset);
-            if (index < 0) { offset = 0; break; }
-            offset = index + char.length;
-          }
-          if (offset) best = 1;
-        }
-      }
-      if (!best) return 0;
-      weakest = Math.min(weakest, best);
-      total += best;
-    }
-    return weakest * weight + total;
   },
 
   /** Apply the active item type and search mode. Stale native searches cannot replace rows. */
@@ -4644,9 +4608,9 @@ Object.assign(ZoteroVim, {
     if (!data) return;
     clearTimeout(search.timer);
     const request = ++search.request;
-    const mode = ITEM_PICKER_MODES[search.mode][0];
+    const mode = this.ITEM_SEARCH_MODES[search.mode][0];
     const type = ITEM_PICKER_TYPES[search.type][0];
-    const query = this._itemPickerSearchText(input).replace(/(^| )@(?=\S)/g, '$1');
+    const query = this._normalizePickerSearchText(input).replace(/(^| )@(?=\S)/g, '$1');
     const terms = query.split(' ');
     const candidates = data.recent.filter(({ item, rootID, type: itemType }) =>
       type === 'any' || (type === 'top' ? item.id === rootID : itemType === type));
@@ -4656,13 +4620,13 @@ Object.assign(ZoteroVim, {
     };
     const rank = (records, native = false) => records.map(record => {
       const row = this._itemPickerRow(record, search);
-      return { row, rank: this._itemPickerRank(row.fields, query, terms) };
+      return { row, rank: this._rankPickerMatch(row.fields, query, terms) };
     }).filter(match => native || match.rank > 0).sort((a, b) => b.rank - a.rank)
       .slice(0, 100).map(match => match.row);
 
     if (!query) {
       show(candidates.slice(0, 100).map(record => this._itemPickerRow(record, search)));
-    } else if (!mode) {
+    } else if (mode === 'titleCreatorYear') {
       show(rank(candidates));
     } else {
       show([], search.zh ? '搜索中…' : 'Searching…');
@@ -4814,7 +4778,8 @@ Object.assign(ZoteroVim, {
     if (items.length === 0) {
       const noEl = h('div');
       noEl.style.cssText = 'padding:12px;color:#6c7086';
-      noEl.textContent = message || (winState._pickerItemSearch?.zh ? '无结果' : 'No results');
+      const zh = winState._pickerItemSearch?.zh ?? this._isZhLocale();
+      noEl.textContent = message || (zh ? '无结果' : 'No results');
       container.appendChild(noEl);
       return;
     }

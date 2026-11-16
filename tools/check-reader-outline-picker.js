@@ -516,6 +516,33 @@ async function main() {
     z._closeReaderOutlinePicker(f.state);
   });
 
+  await check('heading search ranks exact titles above fuzzy and parent-path matches', async () => {
+    const headings = [
+      'Practical Analysis of Networked Electrical Lines', 'Subpanel maintenance',
+      'Panelized walls', 'Choosing a Panel', 'Panel', 'Panel', 'Panel systems',
+    ].map((title, pageIndex) => ({ title, dest: [pageIndex, { name: 'Fit' }], items: [] }));
+    headings.at(-1).items.push({ title: 'Installation', dest: [7, { name: 'Fit' }], items: [] });
+    const f = fixture(async () => headings);
+    f.primary.app.pdfViewer.currentPageNumber = 2;
+    await z._openReaderOutlinePicker(f.state, f.reader, f.primary.win);
+    const popup = f.state._outlinePicker;
+    const pages = () => Array.from(popup.filtered, row => row.entry.pageIndex);
+    assert.deepEqual(pages(), [0, 1, 2, 3, 4, 5, 6, 7]);
+    assert.equal(popup.selected, 1);
+
+    input(popup, '  PANEL  ');
+    assert.deepEqual(pages(), [4, 5, 3, 6, 2, 1, 0, 7]);
+    assert.equal(popup.selected, 0);
+    input(popup, 'panel systems installation');
+    assert.deepEqual(pages(), [7]);
+    input(popup, '');
+    assert.deepEqual(pages(), [0, 1, 2, 3, 4, 5, 6, 7]);
+    input(popup, 'panel');
+    assert.equal(key(f, 'Enter').prevented, true);
+    await settle();
+    assert.deepEqual(f.primary.calls, ['page=5']);
+  });
+
   await check('tree slash consumes the key; Escape restores exact tree nodes, expansion and scroll', async () => {
     const f = fixture();
     await z._openReaderOutlineExplorer(f.state, f.reader, f.primary.win);

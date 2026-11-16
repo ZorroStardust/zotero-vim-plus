@@ -418,7 +418,10 @@ Object.assign(ZoteroVim, {
         const parents = paths.get(entry.parentID) || [];
         const path = parents.concat(entry.title);
         paths.set(entry.id, path);
-        return { entry, breadcrumb: parents.join(' › '), searchStr: path.join(' ').toLowerCase() };
+        return { entry, breadcrumb: parents.join(' › '),
+          titleFields: [this._pickerSearchField(entry.title)],
+          pathFields: parents.length ? [this._pickerSearchField(path.join(' '))] : [],
+        };
       });
       const initial = await this._readerOutlineCurrentIndex(
         popup.items.map(item => item.entry), pdfWin, popup.readingPosition);
@@ -434,16 +437,21 @@ Object.assign(ZoteroVim, {
   },
 
   _filterReaderOutlinePicker(popup) {
-    const query = popup.input.value.toLowerCase().trim();
-    popup.filtered = popup.items.filter(item => {
-      let index = 0;
-      for (const char of query) {
-        const found = item.searchStr.indexOf(char, index);
-        if (found < 0) return false;
-        index = found + char.length;
-      }
-      return true;
-    });
+    const query = this._normalizePickerSearchText(popup.input.value);
+    if (!query) {
+      popup.filtered = popup.items.slice();
+    } else {
+      const terms = query.split(' ');
+      // Rank direct title matches before matches that need the parent path.
+      const matches = popup.items.map(item => {
+        const titleRank = this._rankPickerMatch(item.titleFields, query, terms);
+        const pathRank = titleRank ? 0 : this._rankPickerMatch(item.pathFields, query, terms);
+        return { item, titleRank, pathRank };
+      });
+      popup.filtered = matches.filter(match => match.titleRank || match.pathRank)
+        .sort((a, b) => b.titleRank - a.titleRank || b.pathRank - a.pathRank)
+        .map(match => match.item);
+    }
     popup.selected = Math.min(popup.selected, Math.max(0, popup.filtered.length - 1));
     this._renderReaderOutlinePicker(popup);
   },
@@ -5809,11 +5817,6 @@ Object.assign(ZoteroVim, {
   _focusAnnotationComment(state, reader, opts = null) {
     if (state.mode !== 'insert') this._setMode(state, 'insert');
     return this._enterAnnotationInsertMode(state, reader, opts);
-  },
-
-  _isZhLocale() {
-    try { return /^zh/i.test(String(Zotero.locale || '')); } catch (_) {}
-    return false;
   },
 
   /**

@@ -392,7 +392,7 @@ Object.assign(ZoteroVim, {
     const previous = this._shortcutHelpForWindow(win);
     if (previous) { previous.input.focus(); return; }
     const doc = win.document;
-    const zh = /^zh/i.test(this.getPref('language', '') || Zotero.locale || '');
+    const zh = this._isZhLocale();
     sourceWin = sourceWin || Services.focus?.focusedWindow || win;
     const sourceDoc = sourceWin.document;
     const note = sourceDoc === owner._contextNoteEditorDoc;

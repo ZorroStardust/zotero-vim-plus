@@ -105,8 +105,8 @@ Object.assign(ZoteroVim, {
   /** Record dot-repeat only when the requested mutation has a real target. */
   _readerChangeTargetAvailable(action, reader, state, pdfWin) {
     if (/^(highlight|addNote)/.test(action)) {
-      if (state?.selectionParams?.annotation) return true;
-      if (Date.now() - (this._lastSelectionTS || 0) < 10000
+      if (!state?._flashSelection && state?.selectionParams?.annotation) return true;
+      if (!state?._flashSelection && Date.now() - (this._lastSelectionTS || 0) < 10000
           && this._lastSelectionParams?.annotation) return true;
       try {
         const selection = pdfWin?.getSelection?.();
@@ -2431,15 +2431,14 @@ Object.assign(ZoteroVim, {
     return -1;
   },
 
-  _isKeywordChar(ch) {
-    return /^[A-Za-z0-9_]$/.test(ch || '');
-  },
-
-  _cursorCharAt(nodes, idx, off) {
-    if (idx < 0 || idx >= nodes.length) return null;
-    const n = nodes[idx];
-    if (off < 0 || off >= n.length) return null;
-    return n.data.charAt(off);
+  /** Distinguish a visible gap or line wrap from a font change inside a word. */
+  _pdfTextHasGap(prev, next) {
+    if (!prev || !next) return false;
+    const height = Math.min(prev.height, next.height);
+    if (!(height > 0)) return false;
+    const overlap = Math.min(prev.bottom, next.bottom) - Math.max(prev.top, next.top);
+    return overlap < height * 0.35 || next.left - prev.right > Math.max(2, height * 0.25)
+      || next.left < prev.left - Math.max(2, height * 0.3);
   },
 
   _cursorAdvancePos(nodes, pos) {
@@ -2467,31 +2466,6 @@ Object.assign(ZoteroVim, {
       off = Math.max(0, nodes[idx].length - 1);
     }
     return { idx, off };
-  },
-
-  _cursorSkipForward(nodes, pos, pred) {
-    let cur = { idx: pos.idx, off: pos.off };
-    while (cur.idx >= 0 && cur.idx < nodes.length) {
-      const ch = this._cursorCharAt(nodes, cur.idx, cur.off);
-      if (ch === null || !pred(ch)) break;
-      const next = this._cursorAdvancePos(nodes, cur);
-      if (next.idx === cur.idx && next.off === cur.off) break;
-      cur = next;
-      if (cur.idx === nodes.length - 1 && cur.off >= nodes[cur.idx].length) break;
-    }
-    return cur;
-  },
-
-  _cursorSkipBackward(nodes, pos, pred) {
-    let cur = { idx: pos.idx, off: pos.off };
-    while (cur.idx >= 0 && cur.idx < nodes.length) {
-      const ch = this._cursorCharAt(nodes, cur.idx, cur.off);
-      if (ch === null || !pred(ch)) break;
-      const prev = this._cursorRetreatPos(nodes, cur);
-      if (prev.idx === cur.idx && prev.off === cur.off) break;
-      cur = prev;
-    }
-    return cur;
   },
 
   _cursorMoveWord(state, pdfWin, direction, bigWord, count) {
@@ -2729,51 +2703,62 @@ Object.assign(ZoteroVim, {
     }
   },
 
-  _cursorComputeWordPosition(nodes, startPos, direction, bigWord, count) {
-    let pos = { idx: startPos.idx, off: startPos.off };
-    const isSpace = (ch) => /\s/.test(ch);
+  /** Derive word starts from source offsets, ignoring invisible PDF formatting characters. */
+  _pdfWordStops(text, bigWord) {
+    const starts = [];
+    let kind = null, offset = 0, lastEnd = 0, mayJoin = true;
+    for (const char of text) {
+      const start = offset;
+      offset += char.length;
+      if (/[\p{White_Space}\u200B\uFEFF]/u.test(char)) {
+        kind = null;
+        mayJoin = false;
+      } else if (!/[\p{Cf}\p{Cc}\p{Default_Ignorable_Code_Point}]/u.test(char)) {
+        const word = bigWord || /[\p{L}\p{M}\p{N}_]/u.test(char);
+        if (word !== kind) starts.push({ off: start, kind: word, joins: mayJoin });
+        kind = word;
+        mayJoin = false;
+        lastEnd = offset;
+      }
+    }
+    return { starts, tail: kind, lastEnd, transparent: mayJoin };
+  },
 
-    for (let i = 0; i < count; i++) {
-      if (direction === 'forward') {
-        let ch = this._cursorCharAt(nodes, pos.idx, pos.off);
-        if (ch === null) break;
-
-        if (isSpace(ch)) {
-          pos = this._cursorSkipForward(nodes, pos, isSpace);
-          continue;
+  _cursorComputeWordPosition(nodes, startPos, direction, bigWord, count, extend = false) {
+    const forward = direction === 'forward';
+    const step = forward ? 1 : -1;
+    let target = startPos;
+    let lastGlyph = null;
+    const stopsByNode = new Map();
+    const stops = idx => {
+      if (!stopsByNode.has(idx)) {
+        stopsByNode.set(idx, this._pdfWordStops(nodes[idx].data, bigWord));
+      }
+      return stopsByNode.get(idx);
+    };
+    for (let idx = startPos.idx; idx >= 0 && idx < nodes.length; idx += step) {
+      const node = nodes[idx];
+      const words = stops(idx);
+      if (words.lastEnd) lastGlyph = { idx, off: words.lastEnd };
+      const matches = forward ? words.starts : [...words.starts].reverse();
+      for (const { off, kind, joins } of matches) {
+        if (idx === startPos.idx && (off - startPos.off) * step <= 0) continue;
+        if (joins && idx > 0) {
+          let previous = idx - 1;
+          while (previous >= 0 && stops(previous).transparent) previous--;
+          if (previous >= 0 && stops(previous).tail === kind
+              && !this._pdfTextHasGap(nodes[previous].parentElement?.getBoundingClientRect?.(),
+                node.parentElement?.getBoundingClientRect?.())) continue;
         }
-
-        const groupPred = bigWord
-          ? (c) => !isSpace(c)
-          : (this._isKeywordChar(ch)
-            ? this._isKeywordChar.bind(this)
-            : (c) => !isSpace(c) && !this._isKeywordChar(c));
-        pos = this._cursorSkipForward(nodes, pos, groupPred);
-        pos = this._cursorSkipForward(nodes, pos, isSpace);
-      } else {
-        pos = this._cursorRetreatPos(nodes, pos);
-        pos = this._cursorSkipBackward(nodes, pos, isSpace);
-        let ch = this._cursorCharAt(nodes, pos.idx, pos.off);
-        if (ch === null) break;
-
-        const groupPred = bigWord
-          ? (c) => !isSpace(c)
-          : (this._isKeywordChar(ch)
-            ? this._isKeywordChar.bind(this)
-            : (c) => !isSpace(c) && !this._isKeywordChar(c));
-
-        while (true) {
-          const prev = this._cursorRetreatPos(nodes, pos);
-          if (prev.idx === pos.idx && prev.off === pos.off) break;
-          const prevCh = this._cursorCharAt(nodes, prev.idx, prev.off);
-          if (prevCh === null || !groupPred(prevCh)) break;
-          pos = prev;
-          if (pos.idx === 0 && pos.off === 0) break;
-        }
+        target = { idx, off };
+        if (--count <= 0) return target;
       }
     }
 
-    return pos;
+    if (extend && forward && lastGlyph
+        && (lastGlyph.idx > target.idx
+          || (lastGlyph.idx === target.idx && lastGlyph.off > target.off))) return lastGlyph;
+    return target;
   },
 
   _readerWordRange(nodes, focusNode, focusOffset) {
@@ -2912,7 +2897,7 @@ Object.assign(ZoteroVim, {
       let idx = this._cursorNodeIndex(nodes, sel.focusNode);
       if (idx < 0) idx = 0;
       const off = Math.max(0, Math.min(sel.focusOffset || 0, nodes[idx].length));
-      const pos = this._cursorComputeWordPosition(nodes, { idx, off }, direction, bigWord, 1);
+      const pos = this._cursorComputeWordPosition(nodes, { idx, off }, direction, bigWord, 1, true);
       const targetNode = nodes[Math.max(0, Math.min(pos.idx, nodes.length - 1))];
       const targetOffset = Math.max(0, Math.min(pos.off, targetNode.length));
       this._setVisualSelectionFromAnchor(state, pdfWin, targetNode, targetOffset);
@@ -3007,19 +2992,21 @@ Object.assign(ZoteroVim, {
    * Create one badge element for a target.  The label is split into a dim
    * prefix span (typed part) and a bold rest span (still to be typed).
    */
-  _createHintBadge(doc, label, textNode, offset) {
-    let badgeLeft, badgeTop, badgeHeight;
-    try {
-      const r = doc.createRange();
-      r.setStart(textNode, offset);
-      r.setEnd(textNode, Math.min(offset + 1, textNode.length));
-      const rects = r.getClientRects();
-      if (rects.length > 0) {
-        badgeLeft = rects[0].left;
-        badgeTop = rects[0].top;
-        badgeHeight = rects[0].height;
-      }
-    } catch (_) {}
+  _createHintBadge(doc, label, textNode, offset, targetRect = null) {
+    let badgeLeft = targetRect?.left, badgeTop = targetRect?.top, badgeHeight = targetRect?.height;
+    if (!targetRect) {
+      try {
+        const r = doc.createRange();
+        r.setStart(textNode, offset);
+        r.setEnd(textNode, Math.min(offset + 1, textNode.length));
+        const rects = r.getClientRects();
+        if (rects.length > 0) {
+          badgeLeft = rects[0].left;
+          badgeTop = rects[0].top;
+          badgeHeight = rects[0].height;
+        }
+      } catch (_) {}
+    }
     if (badgeLeft === undefined) {
       const pr = textNode.parentElement?.getBoundingClientRect?.();
       if (!pr) return null;
@@ -3072,23 +3059,25 @@ Object.assign(ZoteroVim, {
    * which badges are currently visible, otherwise filtering would make the
    * remaining badges drift.
    */
-  _layoutHintBadges(doc, badges) {
+  _layoutHintBadges(doc, badges, measure = true) {
     let lineTop = null;
     let prevRight = -Infinity;
     let prevBottom = -Infinity;
     for (const b of badges) {
       let { left, top, height } = b;
-      try {
-        const r = doc.createRange();
-        r.setStart(b.textNode, b.offset);
-        r.setEnd(b.textNode, Math.min(b.offset + 1, b.textNode.length));
-        const rects = r.getClientRects();
-        if (rects.length > 0) {
-          left = rects[0].left;
-          top = rects[0].top;
-          height = rects[0].height;
-        }
-      } catch (_) {}
+      if (measure) {
+        try {
+          const r = doc.createRange();
+          r.setStart(b.textNode, b.offset);
+          r.setEnd(b.textNode, Math.min(b.offset + 1, b.textNode.length));
+          const rects = r.getClientRects();
+          if (rects.length > 0) {
+            left = rects[0].left;
+            top = rects[0].top;
+            height = rects[0].height;
+          }
+        } catch (_) {}
+      }
       const badgeH = Math.max(16, height + 6);
       const badgeW = Math.max(12, b.label.length * 7 + 8);
       if (lineTop === null || Math.abs(top - lineTop) > 6) {
@@ -3253,10 +3242,20 @@ Object.assign(ZoteroVim, {
       if (focusNode.nodeType === 3 && focusNode.length > 0) {
         const r   = doc.createRange();
         const off = Math.min(focusOffset, focusNode.length - 1);
+        r.setStart(focusNode, focusOffset);
+        r.collapse(true);
+        const caret = r.getBoundingClientRect?.();
+        if (caret?.height > 0) rect = caret;
         r.setStart(focusNode, off);
         r.setEnd(focusNode, off + 1);
         const rects = r.getClientRects();
-        if (rects.length > 0) rect = rects[0];
+        if (!rect && rects.length) {
+          rect = rects[0];
+          if (focusOffset === focusNode.length) {
+            rect = { left: rect.right, right: rect.right, top: rect.top,
+              bottom: rect.bottom, height: rect.height };
+          }
+        }
       }
     } catch (_) {}
     if (!rect) {
@@ -4215,8 +4214,8 @@ Object.assign(ZoteroVim, {
     this._showStatus(state, '▶ ' + colorName, 800);
     Zotero.debug('[ZoteroVim] _highlight: color=' + color + ' (' + colorName + ')');
 
-    const params = state.selectionParams ||
-      (Date.now() - this._lastSelectionTS < 10000 ? this._lastSelectionParams : null);
+    const params = state._flashSelection ? null : (state.selectionParams ||
+      (Date.now() - this._lastSelectionTS < 10000 ? this._lastSelectionParams : null));
     Zotero.debug('[ZoteroVim] _highlight: hasParams=' + !!(params?.annotation) +
                  ' selText="' + (pdfWin.getSelection?.()?.toString?.() || '').slice(0, 40) + '"');
     if (params?.annotation) {
@@ -4233,8 +4232,8 @@ Object.assign(ZoteroVim, {
   _addNote(state, reader, pdfWin) {
     const noteColor = this.getDefaultHighlightColor();
     this._showStatus(state, '▶ note', 800);
-    const params = state.selectionParams ||
-      (Date.now() - this._lastSelectionTS < 10000 ? this._lastSelectionParams : null);
+    const params = state._flashSelection ? null : (state.selectionParams ||
+      (Date.now() - this._lastSelectionTS < 10000 ? this._lastSelectionParams : null));
     if (params?.annotation) {
       state.selectionParams     = null;
       this._lastSelectionParams = null;

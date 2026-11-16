@@ -747,7 +747,17 @@ highlighted in the PDF and scrolled to in the sidebar.
 |-----|--------|
 | `v` | Enter Visual mode |
 | `c` | Enter Cursor mode |
+| `Shift+V` (`V`) | Find visible PDF text with Flash and select the match in Visual mode |
+| `Shift+C` (`C`) | Find visible PDF text with Flash and place the caret in Cursor mode |
 | `i` | Enter Insert mode |
+
+In Flash, type a word or phrase into the search box in the pane's bottom right.
+A partial match selects the complete word or phrase. The match count appears
+below the search box. Type a badge's label, click it, or press `Enter` for
+the match nearest the viewport centre. Press `Shift+C` again in Cursor mode to
+relocate the caret, or press `Shift+V` again in Visual mode to adjust the active
+end. The previous selection stays highlighted while you search. `Esc` restores
+the preceding selection or caret. The usual motions apply after confirming.
 
 ---
 
@@ -801,7 +811,8 @@ character. `Escape` cancels a pending `f`/`F`/`t`/`T` without leaving Cursor.
 | Key | Action |
 |-----|--------|
 | `a..z` (hint) | Pick a sentence hint, then a word hint inside it to place the caret |
-| `v` | Enter Visual mode from current caret |
+| `v` | Enter Visual mode from the caret |
+| `Shift+C` (`C`) | Reopen Flash and relocate the caret |
 | `Escape` | Exit to Normal mode |
 
 ---
@@ -896,6 +907,7 @@ supports `api.translate(text, { pluginID, itemID })`.
 | Key | Action |
 |-----|--------|
 | `v` | Exit to Normal mode (clears selection) |
+| `Shift+V` (`V`) | Reopen Flash and adjust the active selection end |
 | `Escape` | Exit to Normal mode (clears selection) |
 
 ---
@@ -1043,6 +1055,8 @@ failures are reported to `zv-startup.log` in the profile directory with
 | `yankAnnotation` | Copy annotation highlighted text |
 | `yankAnnotationComment` | Copy annotation comment text |
 | `enterVisual` | Enter Visual mode |
+| `flashCursor` | Find visible text and place the Cursor caret at its start |
+| `flashVisual` | Find and select visible text in Visual mode |
 | `enterCursor` | Enter Cursor mode |
 | `enterInsert` | Enter Insert mode (also focuses comment if annotation selected) |
 | `exitMode` | Return to Normal mode |

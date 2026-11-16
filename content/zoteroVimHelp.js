@@ -307,6 +307,8 @@ Object.assign(ZoteroVim, {
       }
       const viewer = sourceWin.PDFViewerApplication?.pdfViewer;
       if (viewer?.pagesCount) {
+        if (this.isModeEnabled('cursor')) actions.push('flashCursor');
+        if (this.isModeEnabled('visual')) actions.push('flashVisual');
         actions.push('readerOutlinePick', 'toggleReaderSidebarOutline', 'toggleMarksExplorer');
         if ([0, 1, 2].includes(viewer.spreadMode)) {
           actions.push('toggleReaderSpread', 'toggleReaderSpreadParity',

@@ -32,7 +32,7 @@ function fixture() {
     clearTimeout(id) { timers.delete(id); },
   });
   for (const name of ['keymapLabels.js', 'zoteroVim.js', 'zoteroVimReader.js',
-    'zoteroVimMain.js', 'zoteroVimSearch.js', 'zoteroVimHelp.js']) {
+    'zoteroVimFlash.js', 'zoteroVimMain.js', 'zoteroVimSearch.js', 'zoteroVimHelp.js']) {
     vm.runInContext(fs.readFileSync(path.join(__dirname, '../content', name), 'utf8'), context);
   }
   const z = context.ZoteroVim;
@@ -55,7 +55,11 @@ function fixture() {
       get firstChild() { return this.children[0]; },
       get isConnected() { return this === doc.body || !!this.parentNode?.isConnected; },
       appendChild(node) { this.children.push(node); node.parentNode = this; },
-      removeChild(node) { this.children.splice(this.children.indexOf(node), 1); node.parentNode = null; },
+      removeChild(node) {
+        this.children.splice(this.children.indexOf(node), 1);
+        node.parentNode = null;
+        if (node.contains(doc.activeElement)) doc.activeElement = doc.body;
+      },
       remove() { this.parentNode?.removeChild(this); },
       setAttribute(name, value) { this.attrs[name] = value; },
       removeAttribute(name) { delete this.attrs[name]; },
@@ -152,6 +156,165 @@ check('bare / keeps document search and Insert mode keeps native typing', () => 
   assert.equal(f.z._shortcutHelpForWindow(f.win), null);
   f.main._contextNoteMode = 'insert'; f.noteKey(' '); f.noteKey('/');
   assert.equal(f.z._shortcutHelpForWindow(f.win), null);
+});
+
+check('Flash C/V repeat in the initiating split and keep a Visual selection visible', () => {
+  const cases = [['C', 'cursor', 7, false], ['V', 'visual', 15, false], ['V', 'visual', 15, true]];
+  for (const [key, mode, endOffset, nativeHighlight] of cases) {
+    const f = fixture();
+    const { secondary, state, z } = f;
+    const doc = secondary.document;
+    const rect = { left: 50, right: 135, top: 100, bottom: 110, width: 85, height: 10 };
+    const textLayer = { opacity: '0.2' };
+    const node = { nodeType: 3, data: 'before matching after last', length: 26,
+      isConnected: true, ownerDocument: doc,
+      parentElement: { closest: selector => selector === '.textLayer' ? textLayer : null } };
+    const span = { firstChild: node, closest: () => null, getBoundingClientRect: () => rect };
+    const sel = secondary.getSelection();
+    doc.createElement = tag => {
+      const element = doc.createElementNS('', tag);
+      element.style.setProperty = (property, value) => { element.style[property] = value; };
+      if (tag === 'input') {
+        const focus = element.focus.bind(element);
+        element.focus = () => {
+          focus();
+          // Gecko may hide or drop the text selection when the query takes focus.
+          if (state.mode === 'visual') sel.setBaseAndExtent(node, 0, node, 0);
+        };
+      }
+      return element;
+    };
+    doc.querySelectorAll = selector => selector === '.textLayer span' ? [span] : [];
+    doc.createRange = () => ({
+      setStart(node, offset) { this.startContainer = node; this.startOffset = offset; },
+      setEnd(node, offset) { this.endContainer = node; this.endOffset = offset; },
+      collapse() { this.setEnd(this.startContainer, this.startOffset); },
+      getClientRects: () => [rect],
+    });
+    Object.assign(secondary, { innerWidth: 500, innerHeight: 500, PDFViewerApplication: {
+      pdfViewer: { pagesCount: 1 },
+    }, getComputedStyle: element => ({ opacity: element.opacity || '1' }) });
+    const highlights = new Map();
+    if (nativeHighlight) {
+      secondary.CSS = { highlights };
+      secondary.Highlight = function (range) { this.range = range; };
+    }
+    sel.removeAllRanges = () => {};
+    sel.addRange = range => sel.setBaseAndExtent(
+      range.startContainer, range.startOffset, range.endContainer, range.endOffset);
+    sel.setBaseAndExtent(node, 6, node, 2);
+    f.pdfKey(key, secondary);
+    f.pdfKey('Escape', secondary);
+    assert(!state._readerFlash);
+    assert.equal(state.mode, 'normal');
+    assert.equal(sel.anchorOffset, 6);
+    assert.equal(sel.focusOffset, 2);
+    f.pdfKey(key, secondary);
+    const ui = state._readerFlash;
+    assert.equal(ui.pdfWin, secondary);
+    assert.equal(ui.input.placeholder, '输入可见的词句');
+    assert.match(ui.panel.style.cssText, /right:\d+px;bottom:\d+px/);
+    assert.equal(ui.status.textContent, '0 个匹配');
+    assert.equal(state.mode, 'normal');
+    assert(z._readerConsumesKey(state, 's', secondary));
+    assert(!z._readerConsumesKey(state, 's', f.pdf));
+    const original = node.data;
+    node.data = 'matching '.repeat(52);
+    node.length = node.data.length;
+    ui.index = null;
+    ui.input.value = 'm';
+    ui.input.emit('input');
+    assert.equal(ui.status.textContent, '52 个匹配 · 请继续输入');
+    assert.equal(ui.badges.length, 0);
+    node.data = original;
+    node.length = original.length;
+    ui.index = null;
+    ui.input.value = 'm';
+    ui.input.emit('compositionstart');
+    ui.input.emit('input');
+    assert.equal(ui.badges.length, 0);
+    assert(!f.pdfKey('Enter', secondary).defaultPrevented);
+    ui.input.emit('compositionend');
+    assert.equal(ui.badges.length, 1);
+    assert.equal(ui.status.textContent, '1 个匹配');
+    assert(!ui.badges[0].label.startsWith('A'));
+    assert(!f.pdfKey('a', secondary).defaultPrevented);
+    assert.equal(state._readerFlash, ui);
+    if (mode === 'visual') {
+      assert(f.pdfKey(ui.badges[0].label.toLowerCase(), secondary).defaultPrevented);
+    } else f.pdfKey('Enter', secondary);
+    assert.equal(state.mode, mode);
+    assert.equal(sel.anchorNode, node);
+    assert.equal(sel.anchorOffset, 7);
+    assert.equal(sel.focusOffset, endOffset);
+    assert.equal(f.pdf.getSelection().anchorNode, f.pdf.document.body);
+    assert(!ui.panel.isConnected);
+    assert(!state._readerFlash);
+
+    for (const [query, anchor, focus] of mode === 'visual'
+      ? [['after', 7, 21], ['before', 15, 0], ['last', 7, 26], ['matching', 7, 15]]
+      : [['after', 16, 16], ['before', 0, 0], ['last', 22, 22]]) {
+      const [start, end] = [sel.anchorOffset, sel.focusOffset].sort((a, b) => a - b);
+      f.pdfKey(key, secondary);
+      const repeat = state._readerFlash;
+      assert(repeat, query);
+      if (mode === 'visual') {
+        assert.equal(sel.focusOffset, 0, 'query stole native selection focus');
+        assert.equal(repeat.preview.className, 'zv-flash-selection-preview');
+        assert('data-zv-flash-preview' in doc.documentElement.attrs);
+        const highlight = highlights.get('zv-flash-selection');
+        if (nativeHighlight) {
+          assert.equal(repeat.preview.children.length, 0);
+          assert.equal(highlight.range.startContainer, node);
+          assert.equal(highlight.range.endContainer, node);
+          assert.equal(highlight.range.startOffset, start);
+          assert.equal(highlight.range.endOffset, end);
+        } else {
+          assert.equal(repeat.preview.children.length, 1);
+          assert.equal(repeat.preview.children[0].className, 'zv-flash-selection-rect');
+          assert.equal(repeat.preview.style['--zv-flash-text-layer-opacity'], textLayer.opacity);
+        }
+        let redraw;
+        secondary.requestAnimationFrame = callback => { redraw = callback; return 1; };
+        rect.top += 5;
+        rect.bottom += 5;
+        z._refreshReaderFlash(state, secondary);
+        redraw();
+        if (nativeHighlight) assert.equal(highlights.get('zv-flash-selection'), highlight);
+        else assert(repeat.preview.children[0].style.cssText.includes('top:' + rect.top + 'px'));
+      } else assert(!repeat.preview);
+      repeat.input.value = query;
+      repeat.input.emit('input');
+      if (mode === 'visual') assert(repeat.preview.isConnected);
+      assert.equal(repeat.badges.length, 1, query);
+      f.pdfKey(repeat.badges[0].label, secondary);
+      assert.equal(state.mode, mode, query);
+      assert.equal(sel.anchorOffset, anchor, query);
+      assert.equal(sel.focusOffset, focus, query);
+      assert(!repeat.preview?.isConnected);
+      assert.equal(highlights.size, 0);
+      assert(!('data-zv-flash-preview' in doc.documentElement.attrs));
+    }
+    const prior = [sel.anchorOffset, sel.focusOffset];
+    f.pdfKey(key, secondary);
+    const cancelled = state._readerFlash;
+    if (mode === 'visual') assert(cancelled.preview.isConnected);
+    if (nativeHighlight) assert.equal(highlights.size, 1);
+    f.pdfKey('Escape', secondary);
+    assert(!state._readerFlash);
+    assert(!cancelled.preview?.isConnected);
+    assert.equal(highlights.size, 0);
+    assert(!('data-zv-flash-preview' in doc.documentElement.attrs));
+    assert.equal(state.mode, mode);
+    assert.deepEqual([sel.anchorOffset, sel.focusOffset], prior);
+
+    z._setMode(state, 'normal');
+    f.pdfKey(key, secondary);
+    f.reader._internalReader._secondaryView = { _iframeWindow: secondary };
+    assert(f.pdfKey('Enter', secondary).defaultPrevented);
+    assert.equal(state.mode, 'normal');
+    assert(!state._readerFlash);
+  }
 });
 
 function queryPalette(f, query) {

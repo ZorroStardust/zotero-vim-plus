@@ -42,6 +42,7 @@ async function startup({ id, version, rootURI }) {
   Services.scriptloader.loadSubScript(rootURI + 'content/keymapLabels.js');
   Services.scriptloader.loadSubScript(rootURI + 'content/zoteroVim.js');
   Services.scriptloader.loadSubScript(rootURI + 'content/zoteroVimReader.js');
+  Services.scriptloader.loadSubScript(rootURI + 'content/zoteroVimFlash.js');
   Services.scriptloader.loadSubScript(rootURI + 'content/zoteroVimMain.js');
   Services.scriptloader.loadSubScript(rootURI + 'content/zoteroVimSearch.js');
   Services.scriptloader.loadSubScript(rootURI + 'content/zoteroVimFocus.js');

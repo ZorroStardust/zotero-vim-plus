@@ -19,7 +19,7 @@ if (Get-Command node -ErrorAction SilentlyContinue) {
         foreach ($source in @(
             'bootstrap.js', 'content/i18n.js', 'content/zoteroVim.js',
             'content/keymapLabels.js', 'content/zoteroVimHelp.js',
-            'content/zoteroVimReader.js', 'content/zoteroVimMain.js',
+            'content/zoteroVimReader.js', 'content/zoteroVimFlash.js', 'content/zoteroVimMain.js',
             'content/zoteroVimSearch.js',
             'content/zoteroVimFocus.js',
             'content/zoteroVimNoteDiagnostics.js', 'content/prefs.js'

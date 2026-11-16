@@ -86,6 +86,8 @@ var ZoteroVim = {
     'normal:Za':      'filterClear',
     'normal:v':       'enterVisual',
     'normal:c':       'enterCursor',
+    'normal:V':       'flashVisual',
+    'normal:C':       'flashCursor',
     'normal:i':       'enterInsert',
     'normal:J':       'mainPrevTab',
     'normal:K':       'mainNextTab',
@@ -146,6 +148,7 @@ var ZoteroVim = {
     'visual:o':       'swapVisualEnds',
     'visual:.':       'repeatLastChange',
     // Visual mode — exit
+    'visual:V':       'flashVisual',
     'visual:v':       'exitMode',
     'visual:escape':  'exitMode',
 
@@ -166,6 +169,7 @@ var ZoteroVim = {
     'cursor:T':       'cursorTillBackward',
     'cursor:*':       'searchWordForward',
     'cursor:#':       'searchWordBackward',
+    'cursor:C':       'flashCursor',
     'cursor:v':       'cursorToVisual',
     'cursor:escape':  'exitMode',
 
@@ -610,6 +614,9 @@ var ZoteroVim = {
       state = [...this._readerState.values()][0];
     }
 
+    // A native popup from before the Flash query must not take over its input.
+    if (state?._readerFlash) return;
+
     // Always cache at the plugin level — this covers cases where the
     // per-reader state lookup returns null.
     this._lastSelectionParams = params;
@@ -813,6 +820,7 @@ var ZoteroVim = {
 
     state.cleanup = () => {
       this._closeShortcutHelp?.(state, false);
+      this._closeReaderFlash?.(state, false);
       this._cancelSpacekeys(state);
       // Cancel any insert session that is still resolving an annotation item.
       state._insertSessionID = (state._insertSessionID || 0) + 1;
@@ -935,6 +943,9 @@ var ZoteroVim = {
     if (!state?._pdfViewHandlers) return;
     this._syncShortcutHelp?.(state);
     this._syncSpacekeysContext(state);
+    if (state._readerFlash && !this._readerFlashCurrent(state)) {
+      this._closeReaderFlash(state, false);
+    }
 
     const primaryWin = reader?._internalReader?._primaryView?._iframeWindow;
     const secondaryWin = reader?._internalReader?._secondaryView?._iframeWindow;
@@ -992,6 +1003,7 @@ var ZoteroVim = {
           } catch (_) {}
         },
         scroll: () => {
+          this._refreshReaderFlash?.(state, viewWin);
           if (state.hintMode) {
             this._repositionHintBadges(state, viewWin);
           }
@@ -1001,6 +1013,7 @@ var ZoteroVim = {
           this._showReaderProgress(state, viewWin);
         },
         resize: () => {
+          this._refreshReaderFlash?.(state, viewWin);
           if (state.hintMode) {
             this._repositionHintBadges(state, viewWin);
           }
@@ -1144,7 +1157,8 @@ var ZoteroVim = {
           try {
             if (zv._shortcutHelpForWindow?.(reader._window
                 || reader._iframe?.ownerDocument?.defaultView)) return true;
-            if (state._translationPopup?.pdfWin === view._iframeWindow) return true;
+            if (state._translationPopup?.pdfWin === view._iframeWindow
+                || state._readerFlash?.pdfWin === view._iframeWindow) return true;
             if (state._outlinePicker?.pdfWin === view._iframeWindow
                 || zv._readerOutlineExplorerFocused(state, view._iframeWindow)) return true;
             const input = state._commentOverlayInput;
@@ -1471,11 +1485,23 @@ var ZoteroVim = {
         // Force user-select on the text layer so programmatic selection shows.
         '.textLayer { user-select: text !important; -moz-user-select: text !important; }',
         '.textLayer span { user-select: text !important; cursor: text !important; }',
-        // Visible selection colour in both light and dark themes.
-        '.textLayer ::selection { background: rgba(0, 140, 255, 0.6) !important; color: inherit !important; }',
+        // Use the same colors for native selection and the Flash preview.
+        ':root { --zv-selection-rgb: 0, 140, 255; --zv-selection-opacity: 0.6; }',
         '@media (prefers-color-scheme: dark) {',
-        '  .textLayer ::selection { background: rgba(255, 180, 0, 0.75) !important; color: inherit !important; }',
+        '  :root { --zv-selection-rgb: 255, 180, 0; --zv-selection-opacity: 0.75; }',
         '}',
+        '.textLayer ::selection {',
+        '  background-color: rgba(var(--zv-selection-rgb), var(--zv-selection-opacity)) !important;',
+        '  color: inherit !important;',
+        '}',
+        '.textLayer ::highlight(zv-flash-selection) {',
+        '  background-color: rgba(var(--zv-selection-rgb), var(--zv-selection-opacity));',
+        '}',
+        '.zv-flash-selection-preview {',
+        '  opacity: calc(var(--zv-selection-opacity) * var(--zv-flash-text-layer-opacity, 1));',
+        '}',
+        '.zv-flash-selection-rect { background-color: rgb(var(--zv-selection-rgb)); }',
+        ':root[data-zv-flash-preview] .textLayer ::selection { background: transparent !important; }',
         // Blinking cursor animation for visual mode.
         '@keyframes zv-cursor-blink {',
         '  0%, 100% { opacity: 1; }',
@@ -1511,6 +1537,8 @@ var ZoteroVim = {
 
   _setMode(state, mode) {
     this._hideSpacekeys(state);
+    if (mode !== state.mode) this._closeReaderFlash?.(state, false);
+    if (mode !== 'visual' && mode !== 'cursor') state._flashSelection = null;
     if (state._outlinePicker && mode !== state.mode) {
       this._closeReaderOutlinePicker(state, false);
     }
@@ -1762,6 +1790,18 @@ var ZoteroVim = {
     const help = this._shortcutHelpForWindow?.(reader?._window
       || reader?._iframe?.ownerDocument?.defaultView);
     if (help) { this._onShortcutHelpKeyDown(event, help); return; }
+    if (state._readerFlash) {
+      if (state._readerFlash.pdfWin === pdfWin) {
+        if (this._readerFlashCurrent(state)) this._onReaderFlashKeyDown(event, state);
+        else {
+          this._closeReaderFlash(state, false);
+          event.preventDefault();
+          event.stopImmediatePropagation();
+        }
+        return;
+      }
+      this._closeReaderFlash(state, false);
+    }
     if (state._spacekeys && state._spacekeys.sourceWin !== pdfWin) {
       this._cancelSpacekeys(state);
     }
@@ -2194,6 +2234,7 @@ var ZoteroVim = {
         || state.reader?._iframe?.ownerDocument?.defaultView)) return true;
     if (keyStr === 'escape' && state.keyBuffer?.startsWith(' ')) return true;
     if (state._outlinePicker && (!pdfWin || state._outlinePicker.pdfWin === pdfWin)) return true;
+    if (state._readerFlash && (!pdfWin || state._readerFlash.pdfWin === pdfWin)) return true;
     if (state.outlineExplorerOpen && this._readerOutlineExplorerFocused(state, pdfWin)) return true;
     if (state._translationPopup) return true;
     if (state.mode === 'insert') {
@@ -2462,6 +2503,14 @@ var ZoteroVim = {
         case 'enterCursor':
           if (this.isModeEnabled('cursor')) this._enterCursorMode(state, pdfWin);
           break;
+        case 'flashCursor':
+        case 'flashVisual': {
+          const mode = action === 'flashCursor' ? 'cursor' : 'visual';
+          if (state.mode === 'normal' || state.mode === mode) {
+            this._openReaderFlash(state, pdfWin, mode);
+          }
+          break;
+        }
         case 'enterInsert':
           if (this.isModeEnabled('insert')) {
             this._setMode(state, 'insert');

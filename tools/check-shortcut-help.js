@@ -32,7 +32,7 @@ function fixture() {
     clearTimeout(id) { timers.delete(id); },
   });
   for (const name of ['keymapLabels.js', 'zoteroVim.js', 'zoteroVimReader.js',
-    'zoteroVimMain.js', 'zoteroVimHelp.js']) {
+    'zoteroVimMain.js', 'zoteroVimSearch.js', 'zoteroVimHelp.js']) {
     vm.runInContext(fs.readFileSync(path.join(__dirname, '../content', name), 'utf8'), context);
   }
   const z = context.ZoteroVim;
@@ -58,6 +58,7 @@ function fixture() {
       removeChild(node) { this.children.splice(this.children.indexOf(node), 1); node.parentNode = null; },
       remove() { this.parentNode?.removeChild(this); },
       setAttribute(name, value) { this.attrs[name] = value; },
+      removeAttribute(name) { delete this.attrs[name]; },
       contains(other) {
         for (; other; other = other.parentNode) if (other === this) return true;
         return false;
@@ -113,7 +114,9 @@ function fixture() {
   };
   const noteKey = key => {
     context.Services.focus.focusedWindow = note;
-    z._onMainContextNoteKeyDown(event(key, editable), win, main);
+    const e = event(key, editable);
+    z._onMainContextNoteKeyDown(e, win, main);
+    return e;
   };
   const helpKey = (key, extra = {}, target) => {
     const ui = z._shortcutHelpForWindow(win);
@@ -149,6 +152,179 @@ check('bare / keeps document search and Insert mode keeps native typing', () => 
   assert.equal(f.z._shortcutHelpForWindow(f.win), null);
   f.main._contextNoteMode = 'insert'; f.noteKey(' '); f.noteKey('/');
   assert.equal(f.z._shortcutHelpForWindow(f.win), null);
+});
+
+function queryPalette(f, query) {
+  const ui = f.z._shortcutHelpForWindow(f.win);
+  ui.input.value = query;
+  ui.input.emit('input');
+  return ui;
+}
+
+check('gg searches and executes the first-page command, including in snapshots', () => {
+  for (const paged of [true, false]) {
+    const f = fixture();
+    const ir = f.reader._internalReader;
+    const jumps = [];
+    if (paged) {
+      ir._primaryView.navigateToNextPage = () => {};
+      ir.navigateToFirstPage = () => jumps.push('first page');
+    } else {
+      const container = {};
+      f.z._getScrollContainer = () => container;
+      f.z._scrollContainerTo = (target, y) => {
+        assert.equal(target, container);
+        jumps.push(y);
+      };
+    }
+    f.pdfKey(':');
+    assert.equal(queryPalette(f, '第一页').filtered[0].action, 'firstPage');
+    for (const key of ['G', 'gg', 'ｇｇ']) {
+      const matches = queryPalette(f, key).filtered;
+      assert.equal(matches.length, 1);
+      assert.equal(matches[0].action, key === 'G' ? 'lastPage' : 'firstPage');
+    }
+    f.helpKey('Enter');
+    assert.deepEqual(jumps, [paged ? 'first page' : 0]);
+  }
+});
+
+check('shortcut search uses the current scope, remaps and Space notation', () => {
+  const f = fixture();
+  f.mainKey(':');
+  assert.equal(queryPalette(f, 'gg').filtered[0].action, 'mainNavFirst');
+  f.helpKey('Escape');
+  f.values.set('bindings', JSON.stringify({ 'normal:gg': null, 'normal:gq': 'firstPage' }));
+  f.secondary.PDFViewerApplication = { pdfViewer: { pagesCount: 2, spreadMode: 1 } };
+  f.pdfKey(':', f.secondary);
+  assert(!queryPalette(f, 'gg').filtered.some(row => row.action === 'firstPage'));
+  const remapped = queryPalette(f, 'gq').filtered;
+  assert.equal(remapped.length, 1);
+  assert.equal(remapped[0].action, 'firstPage');
+  assert.equal(queryPalette(f, 'Space s').filtered[0].action, 'toggleReaderSpread');
+  for (const key of ['Space S', '<space>S', '空格S']) {
+    const matches = queryPalette(f, key).filtered;
+    assert.equal(matches.length, 1);
+    assert.equal(matches[0].action, 'toggleReaderSpreadParity');
+  }
+});
+
+check('colon opens context-specific commands and stays native in Insert mode', () => {
+  const expected = { main: 'mainFuzzyAll', pdf: 'openSearch', note: 'mainTabPick' };
+  for (const source of ['main', 'pdf', 'note']) {
+    const f = fixture();
+    f[source + 'Key'](':');
+    const ui = f.z._shortcutHelpForWindow(f.win);
+    assert(ui.palette, source);
+    assert(ui.rows.some(row => row.action === expected[source]));
+    assert(!ui.rows.some(row => row.action === 'deleteAnnotation'));
+    if (source === 'note') assert(!ui.rows.some(row => row.action === 'mainFuzzyAll'));
+    f.helpKey('Escape');
+    assert(!f.z._shortcutHelpForWindow(f.win));
+    if (source === 'note') {
+      assert.equal(f.note.document.activeElement, f.editable);
+      assert.equal(f.editable.selectionStart, 2);
+      assert.equal(f.editable.selectionEnd, 7);
+    }
+  }
+  const f = fixture();
+  f.main._contextNoteMode = 'insert';
+  f.state.mode = 'insert';
+  assert(!f.noteKey(':').defaultPrevented);
+  assert(!f.pdfKey(':').defaultPrevented);
+  assert(!f.z._shortcutHelpForWindow(f.win));
+});
+
+check('palette applies an unbound PDF layout to the originating split only', () => {
+  const f = fixture();
+  for (const view of [f.pdf, f.secondary]) {
+    view.PDFViewerApplication = { pdfViewer: { pagesCount: 2, spreadMode: 1 } };
+  }
+  f.pdfKey(':', f.secondary);
+  const ui = queryPalette(f, '使用单页');
+  assert.equal(ui.filtered.length, 1);
+  assert.equal(ui.filtered[0].key, '未绑定');
+  f.state.activePdfWin = f.pdf;
+  f.helpKey('Enter');
+  assert.equal(f.secondary.PDFViewerApplication.pdfViewer.spreadMode, 0);
+  assert.equal(f.pdf.PDFViewerApplication.pdfViewer.spreadMode, 1);
+  assert(!f.state._shortcutHelp);
+});
+
+check('selection confirms once after IME, and mouse chooses its own result', () => {
+  const f = fixture();
+  const runs = [];
+  f.z._mainCycleTab = (_win, dir) => runs.push(dir);
+  f.mainKey(':');
+  let ui = queryPalette(f, '标签页');
+  const index = ui.filtered.findIndex(row => row.action === 'mainNextTab');
+  assert(index >= 0);
+  while (ui.selected < index) f.helpKey('ArrowDown');
+  while (ui.selected > index) f.helpKey('ArrowUp');
+  assert(!f.helpKey('Enter', { isComposing: true }).defaultPrevented);
+  assert.deepEqual(runs, []);
+  const confirm = f.helpKey('Enter');
+  f.z._onShortcutHelpKeyDown(confirm, ui);
+  assert.deepEqual(runs, [1]);
+  f.mainKey(':');
+  ui = queryPalette(f, '上一个标签页');
+  ui.list.children[0].emit('click');
+  assert.deepEqual(runs, [1, -1]);
+  assert(!f.main._shortcutHelp);
+});
+
+check('the library entry can be remapped and empty results cannot execute', () => {
+  const f = fixture();
+  f.values.set('bindings', JSON.stringify({ 'main::': null, 'main:;': 'openCommandPalette' }));
+  f.mainKey(':');
+  assert(!f.main._shortcutHelp);
+  f.mainKey(';');
+  const ui = queryPalette(f, 'no such command');
+  assert.equal(ui.filtered.length, 0);
+  assert(!ui.input.attrs['aria-activedescendant']);
+  f.helpKey('Enter');
+  assert.equal(f.main._shortcutHelp, ui);
+});
+
+check('palette keeps the library search scope and hands focus to the search field', () => {
+  const f = fixture();
+  const collection = f.win.document.createElementNS('', 'div');
+  collection.id = 'collection-tree';
+  const input = f.win.document.createElementNS('', 'input');
+  f.win.document.body.appendChild(collection);
+  f.win.document.body.appendChild(input);
+  f.z._mainOpenCollectionSearch = () => input.focus();
+  collection.focus();
+  f.mainKey(':');
+  const ui = queryPalette(f, 'mainSearch');
+  assert.equal(ui.filtered[0].action, 'mainSearch');
+  f.helpKey('Enter');
+  assert.equal(f.win.document.activeElement, input);
+  for (const fn of f.timers.values()) fn();
+  assert.equal(f.win.document.activeElement, input);
+});
+
+check('reader commands target the owning main window and reject a replaced view', () => {
+  const f = fixture();
+  const other = f.window();
+  f.z._mainWindowState.delete(f.win);
+  f.z._mainWindowState.set(other, { win: other });
+  f.z._mainWindowState.set(f.win, f.main);
+  const targets = [];
+  f.z._openFuzzyPicker = win => targets.push(win);
+  f.pdfKey(':', f.secondary);
+  queryPalette(f, 'mainFuzzyAll');
+  f.helpKey('Enter');
+  assert.deepEqual(targets, [f.win]);
+
+  f.pdfKey(':', f.secondary);
+  queryPalette(f, 'mainFuzzyAll');
+  f.reader._internalReader._secondaryView = { _iframeWindow: f.secondary };
+  const before = f.secondary.focusCount;
+  f.helpKey('Enter');
+  assert.deepEqual(targets, [f.win]);
+  assert.equal(f.secondary.focusCount, before);
+  assert(!f.state._shortcutHelp);
 });
 
 check('Space / also works from a focused outline and a reader using its iframe window', () => {

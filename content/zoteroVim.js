@@ -57,6 +57,7 @@ var ZoteroVim = {
     'normal:ctrl+o':  'navigateBack',
     'normal:ctrl+i':  'navigateForward',
     'normal:/':       'openSearch',
+    'normal::':       'openCommandPalette',
     'normal:*':       'searchWordForward',
     'normal:#':       'searchWordBackward',
     'normal:n':       'findNext',
@@ -202,6 +203,7 @@ var ZoteroVim = {
     'main:t9':    'mainColoredTag9',
     // Main window — panel-scoped navigation
     'main:/':     'mainSearch',
+    'main::':     'openCommandPalette',
     'main:h':     'mainTreeCollapse',
     'main:l':     'mainTreeExpand',
     'main:j':     'mainNavDown',
@@ -2253,6 +2255,13 @@ var ZoteroVim = {
       if (action === 'showShortcutHelp') {
         this._openShortcutHelp(state,
           reader._window || reader._iframe?.ownerDocument?.defaultView, pdfWin);
+        return;
+      }
+      if (action === 'openCommandPalette') {
+        if (state.mode === 'normal') {
+          this._openShortcutHelp(state,
+            reader._window || reader._iframe?.ownerDocument?.defaultView, pdfWin, true);
+        }
         return;
       }
 

@@ -414,10 +414,16 @@ Object.assign(ZoteroVim, {
     return tag === 'INPUT' || tag === 'TEXTAREA' || el.isContentEditable === true;
   },
 
-  _executeMainAction(action, win, winState, count) {
+  _executeMainAction(action, win, winState, count, libraryPanel = null) {
     this._cancelWindowSpacekeys(win);
     if (action === 'showShortcutHelp') {
       this._openShortcutHelp(winState, win);
+      return;
+    }
+    if (action === 'openCommandPalette') {
+      const noteWin = winState._contextNoteEditorWin;
+      const source = noteWin && Services.focus?.focusedWindow === noteWin ? noteWin : win;
+      this._openShortcutHelp(winState, win, source, true);
       return;
     }
     if (action === 'mainPrevTab' || action === 'mainNextTab') {
@@ -461,7 +467,7 @@ Object.assign(ZoteroVim, {
       case 'mainPrevTab':          this._mainCycleTab(win, -1);                        break;
       case 'mainNextTab':          this._mainCycleTab(win, +1);                        break;
       case 'mainFocusSearch':      this._mainFocusSearch(win);                         break;
-      case 'mainSearch':           this._mainOpenSearch(win, winState);                break;
+      case 'mainSearch':           this._mainOpenSearch(win, winState, libraryPanel);  break;
       case 'mainNavDown':          this._mainNavigate(win, winState, +1, count);       break;
       case 'mainNavUp':            this._mainNavigate(win, winState, -1, count);       break;
       case 'mainTreeToggle':       this._mainTreeToggle(win, winState);                break;
@@ -944,8 +950,10 @@ Object.assign(ZoteroVim, {
       const noteWin = this._getContextNoteEditorWindow(editor);
       if (!this._isLikelyMainNoteEditorWindow(noteWin, win)) return null;
       // Older builds may not expose itemPane.mode. Require real focus then,
-      // rather than binding an editor left hidden behind the library deck.
-      if (noteMode || Services.focus?.focusedWindow === noteWin
+      // or the command palette that temporarily borrowed this editor's focus.
+      const help = this._mainWindowState.get(win)?._shortcutHelp;
+      const ownsPalette = help?.palette && help.sourceWin === noteWin;
+      if (noteMode || ownsPalette || Services.focus?.focusedWindow === noteWin
           || doc.activeElement?.contentWindow === noteWin) return noteWin;
     } catch (_) {}
     return null;
@@ -1185,6 +1193,16 @@ Object.assign(ZoteroVim, {
 
     if (mode === 'visual' || mode === 'visual-line') {
       this._handleNoteVisualKey(event, keyStr, win, winState);
+      return;
+    }
+
+    if (keyStr === ':' && !winState._contextNoteKeyBuffer && !winState._contextNoteMainBuffer) {
+      this._clearMainContextNoteKeyState(winState);
+      const doc = event.target?.ownerDocument;
+      if (doc && doc === winState._contextNoteEditorDoc
+          && !event.repeat && !event.isComposing && event.keyCode !== 229) {
+        this._openShortcutHelp(winState, win, doc.defaultView, true);
+      }
       return;
     }
 

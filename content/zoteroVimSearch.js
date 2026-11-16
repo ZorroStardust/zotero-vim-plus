@@ -36,8 +36,8 @@ Object.assign(ZoteroVim, {
       || active === this._librarySearchInput(field));
   },
 
-  _mainOpenSearch(win, state) {
-    const panel = this._mainDetectFocusedPanel(win, state, { strict: true });
+  _mainOpenSearch(win, state, panel = null) {
+    panel ??= this._mainDetectFocusedPanel(win, state, { strict: true });
     if (panel === 'collections') this._mainOpenCollectionSearch(win, state);
     else if (panel === 'items') this._mainOpenItemSearch(win, state);
   },

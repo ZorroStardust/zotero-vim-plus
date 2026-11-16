@@ -206,6 +206,14 @@ search shortcut is reassigned; `mainFocusSearch` remains available for rebinding
 On first upgrade, an explicitly saved old `Space /` → `mainFocusSearch` binding
 is removed once; other overrides and explicit unbindings are preserved.
 
+**Command palette:** press `:` in the library, reader or note Normal mode.
+Search by name or shortcut, use ↑/↓ or Ctrl+j/k to select, and press Enter
+or click a result to run it. Escape returns to the original pane or editor.
+The palette lists commands for the current context, including unbound actions.
+For example, in a PDF split pane, search for **Use single-page view** to apply
+that layout to the pane that opened the palette. Remap the library and reader
+entry in Preferences. The note Normal mode entry is fixed.
+
 ### Normal mode
 
 #### Scrolling
@@ -1097,6 +1105,7 @@ failures are reported to `zv-startup.log` in the profile directory with
 | `mainFocusSearch` | Focus Zotero's search bar |
 | `mainSearch` | Filter collections or search items according to the focused library pane (`/`) |
 | `showShortcutHelp` | Open the searchable shortcut reference (`Space /`) |
+| `openCommandPalette` | Search and execute commands for the current context (`:`) |
 | `mainNavDown` | Move selection down (collections tree / item list) |
 | `mainNavUp` | Move selection up (collections tree / item list) |
 | `mainNavFirst` | Jump to the first row |

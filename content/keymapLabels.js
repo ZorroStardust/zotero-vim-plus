@@ -144,7 +144,8 @@ var ZV_KEYMAP_LABELS = {
     "readerOutlinePick": "Reader: search PDF headings (<space>fh)",
     "focusReaderSidebar": "Reader: focus or reopen outline explorer overlay",
     "toggleMarksExplorer": "Reader: toggle marks explorer overlay (<space>m)",
-    "showShortcutHelp": "Show all plugin shortcuts"
+    "showShortcutHelp": "Show all plugin shortcuts",
+    "openCommandPalette": "Open command palette"
   },
   "zh-CN": {
     "scrollDown": "向下滚动",
@@ -288,6 +289,7 @@ var ZV_KEYMAP_LABELS = {
     "readerOutlinePick": "阅读器：搜索 PDF 目录标题（<space>fh）",
     "focusReaderSidebar": "阅读器：聚焦或重新打开目录浏览浮层",
     "toggleMarksExplorer": "阅读器：切换标记浏览浮层（<space>m）",
-    "showShortcutHelp": "显示插件快捷键总览"
+    "showShortcutHelp": "显示插件快捷键总览",
+    "openCommandPalette": "打开命令面板"
   }
 };

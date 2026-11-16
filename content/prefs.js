@@ -60,6 +60,7 @@ const ZV_DEFAULT_BINDINGS = {
   "normal:ctrl+o":  "navigateBack",
   "normal:ctrl+i":  "navigateForward",
   "normal:/":       "openSearch",
+  "normal::":       "openCommandPalette",
   "normal:*":       "searchWordForward",
   "normal:#":       "searchWordBackward",
   "normal:n":       "findNext",
@@ -179,6 +180,7 @@ const ZV_DEFAULT_BINDINGS = {
   "main: ww":   "mainFocusItems",
   // Main window — bare keys
   "main:/":      "mainSearch",
+  "main::":      "openCommandPalette",
   "main:j":      "mainNavDown",
   "main:k":      "mainNavUp",
   "main:h":      "mainTreeCollapse",

@@ -1,7 +1,7 @@
 /* global Zotero, Services, ZV_KEYMAP_LABELS, ZoteroVim */
 /* eslint-disable no-unused-vars */
 
-/** Searchable shortcut reference. All DOM is outside managed note content. */
+/** Searchable shortcut reference and command palette, outside managed note content. */
 Object.assign(ZoteroVim, {
   // Action order also defines key/description order. Group by meaning within a
   // single scope, never by the spelling of a default key (which may be remapped).
@@ -255,6 +255,11 @@ Object.assign(ZoteroVim, {
       .replace(/^(enter|return)$/i, 'Enter').replace(/^escape$/i, 'Esc');
   },
 
+  _noteInheritsMainBinding(key, action) {
+    return key.startsWith(' ') || (['mainPrevTab', 'mainNextTab'].includes(action)
+      && ![':', 'i', 'escape', 'ctrl+h', 'ctrl+H', 'ctrl+backspace', 'ctrl+l'].includes(key));
+  },
+
   /** Build a fresh reference on every open, including note-inherited main chords. */
   _shortcutHelpRows() {
     const rows = [], seen = new Set();
@@ -276,9 +281,7 @@ Object.assign(ZoteroVim, {
       const zh = this._shortcutActionLabel(action, true);
       const custom = this.DEFAULT_BINDINGS[binding] !== action;
       add(mode === 'main' ? 'library' : 'reader', mode, display, en, zh, action, custom);
-      if (mode === 'main' && (key.startsWith(' ')
-          || (['mainPrevTab', 'mainNextTab'].includes(action)
-            && !['i', 'escape', 'ctrl+h', 'ctrl+H', 'ctrl+backspace', 'ctrl+l'].includes(key)))) {
+      if (mode === 'main' && this._noteInheritsMainBinding(key, action)) {
         add('notes', 'noteNormal', display, en, zh, action, custom);
       }
     }
@@ -287,7 +290,95 @@ Object.assign(ZoteroVim, {
           && (bindings['normal:m'] || bindings['normal:`'])) continue;
       add(category, scope, key, en, zh, '', false, search);
     }
+    add('notes', 'noteNormal', ':', this._shortcutActionLabel('openCommandPalette', false),
+      this._shortcutActionLabel('openCommandPalette', true), 'openCommandPalette');
     return rows;
+  },
+
+  /** List commands independently of their bindings and any pending Vim key sequence. */
+  _commandPaletteActions(ui) {
+    const { owner, scope, sourceWin, win } = ui;
+    const actions = ['showShortcutHelp'];
+    if (scope === 'normal') {
+      // gg/G also work in snapshots, where they scroll to the document boundaries.
+      actions.push('openSearch', 'firstPage', 'lastPage', 'scrollTop', 'scrollCenter', 'scrollBottom');
+      if (typeof ui.readerView?.navigateToNextPage === 'function') {
+        actions.push('prevPage', 'nextPage');
+      }
+      const viewer = sourceWin.PDFViewerApplication?.pdfViewer;
+      if (viewer?.pagesCount) {
+        actions.push('readerOutlinePick', 'toggleReaderSidebarOutline', 'toggleMarksExplorer');
+        if ([0, 1, 2].includes(viewer.spreadMode)) {
+          actions.push('toggleReaderSpread', 'toggleReaderSpreadParity',
+            'setReaderSinglePage', 'setReaderOddSpread', 'setReaderEvenSpread');
+        }
+        for (const [method, action] of [
+          ['toggleHorizontalSplit', 'toggleReaderSplitHorizontal'],
+          ['toggleVerticalSplit', 'toggleReaderSplitVertical'],
+        ]) {
+          if (typeof owner.reader[method] === 'function'
+              || typeof owner.reader._internalReader?.[method] === 'function') actions.push(action);
+        }
+      }
+    }
+    if (scope === 'main' || (scope === 'normal' && ui.mainState)) {
+      actions.push('mainFuzzyAll');
+      if (win.ZoteroPane?.collectionsView?.getSelectedCollection?.()) {
+        actions.push('mainFuzzyCollection');
+      }
+    }
+    if (scope === 'main') {
+      actions.push('mainFocusSearch', 'mainFocusTree', 'mainFocusItems', 'mainNotesLayout',
+        'mainNavFirst', 'mainNavLast');
+      if (ui.libraryPanel) actions.push('mainSearch');
+    }
+    if (win.Zotero_Tabs && (scope !== 'normal' || ui.mainState)) {
+      actions.push('mainTabPick', 'mainPrevTab', 'mainNextTab');
+    }
+    return actions;
+  },
+
+  _commandPaletteRows(ui) {
+    const bindings = this.getBindings();
+    const prefix = (ui.scope === 'noteNormal' ? 'main' : ui.scope) + ':';
+    return this._commandPaletteActions(ui).map(action => {
+      const keys = Object.entries(bindings)
+        .filter(([binding, bound]) => binding.startsWith(prefix) && bound === action)
+        .map(([binding]) => binding.slice(prefix.length))
+        .filter(key => ui.scope !== 'noteNormal' || this._noteInheritsMainBinding(key, action))
+        .map(key => this._shortcutKeyDisplay(key));
+      const key = keys.join(' / ') || (ui.zh ? '未绑定' : 'Unbound');
+      return { scope: ui.scope, action, key, keys, en: this._shortcutActionLabel(action, false),
+        zh: this._shortcutActionLabel(action, true), members: [] };
+    }).sort((a, b) => ui.zh ? a.zh.localeCompare(b.zh, 'zh-CN') : a.en.localeCompare(b.en, 'en'));
+  },
+
+  /** Accept displayed and preference notation while preserving Vim key case. */
+  _paletteShortcutQuery(value) {
+    return value.normalize('NFKC').trim()
+      .replace(/^(?:<space>|空格|space(?=\s|$))\s*/i, 'Space ')
+      .replace(/\s*\+\s*/g, '+')
+      .replace(/(?:ctrl|alt)\+/gi, modifier => modifier.toLowerCase());
+  },
+
+  /** Validate the source again after restoring focus, which may run native listeners. */
+  _runPaletteCommand(ui, action) {
+    if (ui.owner._shortcutHelp !== ui || !action) return;
+    try {
+      const current = () => this._shortcutHelpContextCurrent(ui)
+        && this._commandPaletteActions(ui).includes(action);
+      if (!current()) { this._closeShortcutHelp(ui.owner, false); return; }
+      this._closeShortcutHelp(ui.owner);
+      if (this._shortcutHelpForWindow(ui.win) || !current()) return;
+      if (ui.scope === 'normal' && !action.startsWith('main')) {
+        this._executeAction(action, ui.owner.reader, ui.owner, ui.sourceWin, 0);
+      } else {
+        this._executeMainAction(action, ui.win, ui.mainState, 0, ui.libraryPanel);
+      }
+    } catch (e) {
+      if (ui.owner._shortcutHelp === ui) this._closeShortcutHelp(ui.owner, false);
+      Zotero.debug('[ZoteroVim] command palette: ' + e);
+    }
   },
 
   /** Shorten only shared modifier/leader tokens; literal key case is significant. */
@@ -387,7 +478,7 @@ Object.assign(ZoteroVim, {
   },
 
   /** Own the popup on its originating state so closing a reader also removes it. */
-  _openShortcutHelp(owner, win, sourceWin = null) {
+  _openShortcutHelp(owner, win, sourceWin = null, palette = false) {
     if (!win?.document || !owner) return;
     const previous = this._shortcutHelpForWindow(win);
     if (previous) { previous.input.focus(); return; }
@@ -397,12 +488,24 @@ Object.assign(ZoteroVim, {
     const sourceDoc = sourceWin.document;
     const note = sourceDoc === owner._contextNoteEditorDoc;
     const scope = owner.reader ? owner.mode : note ? 'noteNormal' : 'main';
-    const ui = { owner, win, doc, sourceWin, sourceDoc, zh, scope,
+    const ui = { owner, win, doc, sourceWin, sourceDoc, zh, scope, palette,
       tabID: win.Zotero_Tabs?.selectedID, focus: sourceDoc.activeElement,
       category: 'all', composing: false, focusing: false, listeners: [], timer: null,
-      handledKeys: new WeakSet(), rows: this._compactShortcutHelpRows(this._shortcutHelpRows()),
+      handledKeys: new WeakSet(),
       ranges: [], anchor: null, textSelection: null };
     try {
+      if (palette) {
+        const reader = owner.reader?._internalReader;
+        ui.readerView = [reader?._primaryView, reader?._secondaryView]
+          .find(view => view?._iframeWindow === sourceWin);
+        ui.mainState = this._mainWindowState.get(win);
+        if (scope === 'main') {
+          ui.libraryPanel = this._mainDetectFocusedPanel(win, owner, { strict: true });
+        }
+        if (!this._shortcutHelpContextCurrent(ui)) return;
+      }
+      ui.rows = palette ? this._commandPaletteRows(ui)
+        : this._compactShortcutHelpRows(this._shortcutHelpRows());
       const selection = sourceWin.getSelection?.();
       for (let i = 0; i < (selection?.rangeCount || 0); i++) {
         ui.ranges.push(selection.getRangeAt(i).cloneRange());
@@ -461,7 +564,8 @@ Object.assign(ZoteroVim, {
     panel.setAttribute('role', 'dialog');
     panel.setAttribute('aria-modal', 'true');
     panel.setAttribute('aria-labelledby', 'zv-shortcut-help-title');
-    panel.style.cssText = 'width:min(1100px,100%);max-height:88vh;display:flex;flex-direction:column;'
+    panel.style.cssText = (ui.palette ? 'width:min(640px,100%);' : 'width:min(1100px,100%);')
+      + 'max-height:88vh;display:flex;flex-direction:column;'
       + 'background:#1e1e2e;color:#cdd6f4;border:1px solid #45475a;border-radius:12px;'
       + 'box-shadow:0 20px 70px #0006;font:13px/1.6 sans-serif;overflow:hidden;';
     const header = h('div');
@@ -471,7 +575,8 @@ Object.assign(ZoteroVim, {
     heading.style.cssText = 'display:flex;align-items:baseline;flex-wrap:wrap;gap:2px 14px;';
     const title = h('h2');
     title.id = 'zv-shortcut-help-title';
-    title.textContent = ui.zh ? '快捷键总览' : 'Keyboard shortcuts';
+    title.textContent = ui.palette ? (ui.zh ? '命令面板' : 'Command palette')
+      : (ui.zh ? '快捷键总览' : 'Keyboard shortcuts');
     title.style.cssText = 'margin:0;font-size:20px;color:#cdd6f4;';
     const subtitle = h('div');
     subtitle.style.cssText = 'color:#a6adc8;font-size:12px;';
@@ -487,8 +592,8 @@ Object.assign(ZoteroVim, {
     searchWrap.style.cssText = 'padding:0 18px 8px;flex-shrink:0;';
     const input = h('input');
     input.type = 'text';
-    input.placeholder = ui.zh ? '搜索按键、功能或模式，例如：Space、标注、删除…'
-      : 'Search keys, actions or modes…';
+    input.placeholder = ui.palette ? (ui.zh ? '搜索命令或按键…' : 'Search commands or keys…')
+      : (ui.zh ? '搜索按键、功能或模式，例如：Space、标注、删除…' : 'Search keys, actions or modes…');
     input.setAttribute('aria-label', input.placeholder);
     input.style.cssText = 'width:100%;box-sizing:border-box;background:#313244;color:#cdd6f4;'
       + 'border:1px solid #585b70;border-radius:7px;padding:6px 10px;font:inherit;';
@@ -501,7 +606,7 @@ Object.assign(ZoteroVim, {
     const categories = [['all', 'All', '全部'], ['reader', 'Reader', '阅读器'],
       ['library', 'Library', '文献库'], ['notes', 'Notes', '笔记'],
       ['popups', 'Popups', '弹窗操作']];
-    ui.categories = categories.map(([category, en, zh]) => {
+    ui.categories = (ui.palette ? [] : categories).map(([category, en, zh]) => {
       const button = h('button'); button.type = 'button';
       button.textContent = ui.zh ? zh : en;
       button.addEventListener('click', () => {
@@ -513,8 +618,16 @@ Object.assign(ZoteroVim, {
     });
     const list = h('div');
     list.tabIndex = 0;
-    list.setAttribute('role', 'region');
-    list.setAttribute('aria-label', ui.zh ? '快捷键列表' : 'Shortcut list');
+    list.setAttribute('role', ui.palette ? 'listbox' : 'region');
+    list.setAttribute('aria-label', ui.palette ? (ui.zh ? '命令列表' : 'Command list')
+      : (ui.zh ? '快捷键列表' : 'Shortcut list'));
+    if (ui.palette) {
+      list.id = 'zv-command-palette-results';
+      input.setAttribute('role', 'combobox');
+      input.setAttribute('aria-controls', list.id);
+      input.setAttribute('aria-autocomplete', 'list');
+      input.setAttribute('aria-expanded', 'true');
+    }
     list.style.cssText = 'overflow:auto;overscroll-behavior:contain;min-height:0;'
       + 'flex:1;padding:0 18px 8px;outline-offset:-3px;';
     const style = h('style');
@@ -534,10 +647,14 @@ Object.assign(ZoteroVim, {
       + 'font-size:11px;display:flex;flex-wrap:wrap;justify-content:space-between;gap:8px;flex-shrink:0;';
     const count = h('span'); count.setAttribute('aria-live', 'polite');
     const hint = h('span');
-    hint.textContent = ui.zh ? 'Ctrl+h/l 分类 · Ctrl+j/k 滚动 · Ctrl+f 搜索 · Esc 关闭'
-      : 'Ctrl+h/l categories · Ctrl+j/k scroll · Ctrl+f search · Esc close';
+    hint.textContent = ui.palette
+      ? (ui.zh ? '↑/↓ 选择 · Enter 执行 · Esc 关闭' : '↑/↓ Select · Enter Run · Esc Close')
+      : (ui.zh ? 'Ctrl+h/l 分类 · Ctrl+j/k 滚动 · Ctrl+f 搜索 · Esc 关闭'
+        : 'Ctrl+h/l categories · Ctrl+j/k scroll · Ctrl+f search · Esc close');
     footer.appendChild(count); footer.appendChild(hint);
-    for (const node of [style, header, searchWrap, tabs, list, footer]) panel.appendChild(node);
+    const sections = ui.palette ? [style, header, searchWrap, list, footer]
+      : [style, header, searchWrap, tabs, list, footer];
+    for (const node of sections) panel.appendChild(node);
     overlay.appendChild(panel);
     overlay.addEventListener('mousedown', event => {
       if (event.target === overlay) {
@@ -552,7 +669,15 @@ Object.assign(ZoteroVim, {
 
   _renderShortcutHelp(ui) {
     const h = tag => ui.doc.createElementNS('http://www.w3.org/1999/xhtml', tag);
-    const terms = ui.input.value.toLowerCase().trim().split(/\s+/).filter(Boolean);
+    const query = ui.input.value;
+    if (ui.palette) {
+      const shortcut = this._paletteShortcutQuery(query);
+      // An exact key takes precedence over descriptive text, especially for G vs gg.
+      const matches = shortcut && ui.rows.filter(row =>
+        row.keys.some(key => this._paletteShortcutQuery(key) === shortcut));
+      if (matches?.length) { this._renderCommandPalette(ui, matches); return; }
+    }
+    const terms = query.normalize('NFKC').toLowerCase().trim().split(/\s+/).filter(Boolean);
     const filtered = ui.rows.filter(row => {
       if (ui.category !== 'all' && row.category !== ui.category) return false;
       const haystack = [row.key, row.key.replace(/Space/g, '空格'), row.en, row.zh, row.action,
@@ -562,6 +687,7 @@ Object.assign(ZoteroVim, {
         .join(' ').toLowerCase();
       return terms.every(term => haystack.includes(term));
     });
+    if (ui.palette) { this._renderCommandPalette(ui, filtered); return; }
     for (const { category, button } of ui.categories) {
       const selected = category === ui.category;
       button.setAttribute('aria-pressed', String(selected));
@@ -616,6 +742,55 @@ Object.assign(ZoteroVim, {
     ui.list.scrollTop = 0;
   },
 
+  _renderCommandPalette(ui, rows) {
+    const previous = ui.filtered?.[ui.selected]?.action;
+    ui.filtered = rows;
+    while (ui.list.firstChild) ui.list.removeChild(ui.list.firstChild);
+    const h = tag => ui.doc.createElementNS('http://www.w3.org/1999/xhtml', tag);
+    rows.forEach((row, index) => {
+      const entry = h('div');
+      entry.id = 'zv-command-option-' + index;
+      entry.setAttribute('role', 'option');
+      entry.style.cssText = 'display:flex;align-items:baseline;justify-content:space-between;'
+        + 'gap:12px;padding:6px 8px;border-radius:5px;cursor:pointer;';
+      const label = h('span');
+      label.textContent = ui.zh ? row.zh : row.en;
+      const key = h('kbd');
+      key.className = 'zv-shortcut-key';
+      key.textContent = row.key;
+      entry.appendChild(label);
+      entry.appendChild(key);
+      entry.addEventListener('mousedown', event => event.preventDefault());
+      entry.addEventListener('click', () => {
+        if (entry.isConnected) this._runPaletteCommand(ui, row.action);
+      });
+      ui.list.appendChild(entry);
+    });
+    if (!rows.length) {
+      const empty = h('p');
+      empty.textContent = ui.zh ? '没有匹配的命令。' : 'No matching commands.';
+      ui.list.appendChild(empty);
+    }
+    ui.count.textContent = rows.length + (ui.zh ? ' 个命令' : ' commands');
+    ui.list.scrollTop = 0;
+    this._selectPaletteRow(ui, Math.max(0, rows.findIndex(row => row.action === previous)));
+  },
+
+  _selectPaletteRow(ui, index) {
+    ui.selected = Math.min(Math.max(0, index), ui.filtered.length - 1);
+    const selected = ui.list.children[ui.selected];
+    for (const target of [ui.input, ui.list]) {
+      if (selected) target.setAttribute('aria-activedescendant', selected.id);
+      else target.removeAttribute('aria-activedescendant');
+    }
+    ui.filtered.forEach((_, i) => {
+      const entry = ui.list.children[i];
+      entry.setAttribute('aria-selected', String(entry === selected));
+      entry.style.backgroundColor = entry === selected ? '#45475a' : '';
+    });
+    selected?.scrollIntoView?.({ block: 'nearest' });
+  },
+
   _focusShortcutHelp(ui) {
     if (ui.owner._shortcutHelp !== ui || ui.focusing) return;
     ui.focusing = true;
@@ -640,7 +815,7 @@ Object.assign(ZoteroVim, {
     if (key === 'escape') {
       event.preventDefault(); this._closeShortcutHelp(ui.owner); return;
     }
-    if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey) {
+    if (!ui.palette && (event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey) {
       const letter = String(event.key || '').toLowerCase();
       const left = event.code === 'KeyH' || letter === 'h' || letter === '\b';
       const right = event.code === 'KeyL' || letter === 'l' || letter === '\f';
@@ -654,6 +829,20 @@ Object.assign(ZoteroVim, {
       event.preventDefault(); this._focusShortcutHelp(ui); ui.input.select(); return;
     }
     const onList = event.target === ui.list;
+    if (ui.palette && (event.target === ui.input || onList)) {
+      if (key === 'enter' || key === 'return') {
+        event.preventDefault();
+        if (!event.repeat) this._runPaletteCommand(ui, ui.filtered[ui.selected]?.action);
+        return;
+      }
+      const next = ['ctrl+j', 'ctrl+n', 'arrowdown'].includes(key) || (onList && key === 'j');
+      const previous = ['ctrl+k', 'ctrl+p', 'arrowup'].includes(key) || (onList && key === 'k');
+      if (next || previous) {
+        event.preventDefault();
+        this._selectPaletteRow(ui, ui.selected + (next ? 1 : -1));
+        return;
+      }
+    }
     let delta = 0;
     if (['ctrl+j', 'ctrl+n', 'arrowdown'].includes(key) || (onList && key === 'j')) delta = 60;
     if (['ctrl+k', 'ctrl+p', 'arrowup'].includes(key) || (onList && key === 'k')) delta = -60;
@@ -672,15 +861,32 @@ Object.assign(ZoteroVim, {
     }
   },
 
+  _shortcutHelpContextCurrent(ui) {
+    const { owner, sourceWin, win } = ui;
+    if (win.closed || win.document !== ui.doc || sourceWin.closed
+        || sourceWin.document !== ui.sourceDoc || ui.tabID !== win.Zotero_Tabs?.selectedID) {
+      return false;
+    }
+    if (ui.scope === 'noteNormal' && owner._contextNoteEditorDoc !== ui.sourceDoc) return false;
+    const reader = owner.reader;
+    const views = reader?._internalReader;
+    const currentView = [views?._primaryView, views?._secondaryView]
+      .find(view => view?._iframeWindow === sourceWin);
+    if (views && !currentView) return false;
+    if (!ui.palette) return true;
+    if (reader) {
+      return owner.mode === 'normal' && !!currentView && currentView === ui.readerView
+        && this._readerState.get(reader._instanceID) === owner
+        && (!ui.mainState || this._mainWindowState.get(win) === ui.mainState);
+    }
+    return this._mainWindowState.get(win) === owner
+      && (ui.scope !== 'noteNormal' || (owner._contextNoteMode === 'normal'
+        && this.isNoteEditorVimEnabled() && ui.focus?.isConnected));
+  },
+
   _syncShortcutHelp(owner) {
     const ui = owner?._shortcutHelp;
-    if (!ui) return;
-    const views = owner.reader?._internalReader;
-    if (ui.sourceWin.closed || !ui.overlay.isConnected
-        || ui.tabID !== ui.win.Zotero_Tabs?.selectedID
-        || (views && ![views._primaryView?._iframeWindow,
-          views._secondaryView?._iframeWindow].includes(ui.sourceWin))
-        || (ui.scope === 'noteNormal' && owner._contextNoteEditorDoc !== ui.sourceDoc)) {
+    if (ui && (!ui.overlay?.isConnected || !this._shortcutHelpContextCurrent(ui))) {
       this._closeShortcutHelp(owner, false);
     }
   },
@@ -695,12 +901,8 @@ Object.assign(ZoteroVim, {
       try { target.removeEventListener(type, handler, true); } catch (_) {}
     }
     try { ui.overlay?.remove(); } catch (_) {}
-    if (!restore || ui.sourceWin.closed || ui.tabID !== ui.win.Zotero_Tabs?.selectedID) return;
-    const views = owner.reader?._internalReader;
-    if (views && ![views._primaryView?._iframeWindow,
-      views._secondaryView?._iframeWindow].includes(ui.sourceWin)) return;
-    if (ui.scope === 'noteNormal' && owner._contextNoteEditorDoc !== ui.sourceDoc) return;
     try {
+      if (!restore || !this._shortcutHelpContextCurrent(ui)) return;
       ui.sourceWin.focus();
       if (ui.focus?.isConnected) ui.focus.focus();
       if (ui.textSelection && ui.focus?.isConnected) {

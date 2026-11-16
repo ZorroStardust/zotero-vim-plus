@@ -768,12 +768,7 @@ var ZoteroVim = {
       this._handOverAnnotationInsert(state, reader);
     };
     const outerKeyHandler = (e) => {
-      if (!outerDoc) return;
-      const active = outerDoc.activeElement;
-      // While a Zotero-native editor has focus, the plugin stays inert.
-      if (active && (active.tagName === 'TEXTAREA' || active.tagName === 'INPUT' || active.isContentEditable)) {
-        return;
-      }
+      if (this._nativeEditableFocused(reader)) return;
       const keyStr = this._keyString(e);
       if (!keyStr) return;
       // Forward every key that lands on the reader's outer document.  After a
@@ -793,29 +788,11 @@ var ZoteroVim = {
     // _patchReaderKeyForwarding() so that keys consumed by vim are not also
     // handled by Zotero (Read Aloud, hand/pointer tools, find, etc.).
 
-    // Vim-style search flow: Zotero's find popup keeps focus in its input, so
-    // pressing n/N after searching would type into the box.  When Enter or
-    // Shift+Enter is pressed inside the find popup, wait for Zotero to process
-    // the key, then blur the input and return focus to the PDF — back in
-    // Normal mode, where `n`/`N` now cycle the matches.
-    const findBarReturnBridge = (e) => {
-      if (e.key !== 'Enter') return;
-      const active = outerDoc?.activeElement;
-      if (!active || active.tagName !== 'INPUT') return;
-      if (typeof active.closest !== 'function' || !active.closest('.find-popup')) return;
-      setTimeout(() => {
-        try {
-          active.blur();
-          const targetWin = this._activeReaderPdfWin(reader, pdfWin) || pdfWin;
-          targetWin.focus();
-        } catch (_) {}
-      }, 150);
-    };
+    const detachFindShortcuts = this._attachReaderFindShortcuts(state, pdfWin);
 
     if (outerDoc) {
       outerDoc.addEventListener('focusin', outerFocusinHandover, true);
       outerDoc.addEventListener('keydown', outerKeyHandler, true);
-      outerDoc.addEventListener('keydown', findBarReturnBridge, true);
     }
 
     state.cleanup = () => {
@@ -837,7 +814,7 @@ var ZoteroVim = {
       this._clearReaderPdfViewListeners(state);
       if (outerDoc) outerDoc.removeEventListener('focusin', outerFocusinHandover, true);
       if (outerDoc) outerDoc.removeEventListener('keydown', outerKeyHandler, true);
-      if (outerDoc) outerDoc.removeEventListener('keydown', findBarReturnBridge, true);
+      detachFindShortcuts?.();
       state.indicatorEl?.remove();
       try { for (const el of pdfWin.document.querySelectorAll('[data-zv-cursor]')) el.remove(); } catch (_) {}
       clearTimeout(state.keyTimeout);
@@ -874,16 +851,14 @@ var ZoteroVim = {
   },
 
   /**
-   * Whether a Zotero-native editable in reader.html (annotation popup comment
-   * editor, sidebar comment field, find input, …) currently has DOM focus.
-   * While one does, the plugin stays completely inert — no key consumption,
-   * no focus moves — so native editing works exactly as without the plugin.
+   * Whether a native editable or find control in reader.html owns focus.
+   * Let the outer document handle keys for these controls in place.
    */
   _nativeEditableFocused(reader) {
     try {
       const active = reader?._iframeWindow?.document?.activeElement;
       if (!active) return false;
-      return active.tagName === 'TEXTAREA' || active.tagName === 'INPUT' || active.isContentEditable;
+      return this._isEditableElement(active) || !!active.closest?.('.find-popup');
     } catch (_) {}
     return false;
   },
@@ -1807,10 +1782,7 @@ var ZoteroVim = {
     }
     state.activePdfWin = pdfWin || state.activePdfWin;
 
-    // While a Zotero-native editor (annotation popup / sidebar comment /
-    // find input) has DOM focus, the plugin is completely inert: it must
-    // never consume keys or move focus, otherwise typing in Zotero's own
-    // editors loses focus.
+    // Leave native controls in reader.html in charge of their own keys.
     if (this._nativeEditableFocused(reader)) return;
 
     this._onReaderFocusCueEvent?.(state, { kind: 'pdf', win: pdfWin }, event);
@@ -2442,7 +2414,7 @@ var ZoteroVim = {
           }
           break;
 
-        case 'openSearch':      this._openSearch(reader, pdfWin);           break;
+        case 'openSearch':      this._openSearch(reader, state);            break;
         case 'searchWordForward':
           this._searchWordUnderCursor(state, reader, pdfWin, false);
           break;

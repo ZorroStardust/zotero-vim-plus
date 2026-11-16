@@ -4930,10 +4930,168 @@ Object.assign(ZoteroVim, {
 
   // ── Search helpers ────────────────────────────────────────────────────────
 
-  _openSearch(reader, pdfWin) {
+  /** Attach find shortcuts and inline help to this reader's native popups. */
+  _attachReaderFindShortcuts(state, fallbackWin) {
+    const reader = state.reader;
+    const doc = reader._iframeWindow?.document;
+    if (!doc) return;
+
+    const optionsSelector = 'input[type="checkbox"]'
+      + ':is(#highlight-all, #case-sensitive, #entire-word)';
+    const hintClass = 'zv-find-shortcuts';
+    const highlightClass = 'zv-find-option-highlight';
+    const style = doc.createElement('style');
+    style.textContent = `
+      .find-popup > .${hintClass} { display: none; margin-top: -6px; font-size: 11px; opacity: .8; }
+      .find-popup:focus-within > .${hintClass} { display: block; }
+      .find-popup ${optionsSelector}:is(:focus, .${highlightClass}) {
+        outline: 2px solid var(--color-focus-search, Highlight);
+        outline-offset: 2px;
+      }
+    `;
+    (doc.head || doc.documentElement).appendChild(style);
+
+    const showHint = (active, applied = false) => {
+      const popup = active?.closest?.('.find-popup');
+      const options = popup?.querySelector('.row.options');
+      if (!options?.querySelector(optionsSelector)) return;
+      let hint = popup.querySelector('.' + hintClass);
+      if (!hint) {
+        hint = doc.createElement('div');
+        hint.className = hintClass;
+        options.after(hint);
+      }
+      const zh = this._isZhLocale();
+      hint.textContent = applied
+        ? (zh ? '已应用 · Ctrl+h/l 选择查找选项' : 'Applied · Ctrl+h/l Select find option')
+        : (zh ? 'Ctrl+h/l 选择查找选项 · 空格勾选或取消'
+          : 'Ctrl+h/l Select find option · Space Toggle');
+    };
+
+    let returnTimer;
+    let lastOption = null;
+    let pendingOption = null;
+    let swallowSpaceRepeat = false;
+    const clearOptionHighlight = () => {
+      lastOption?.classList.remove(highlightClass);
+      pendingOption = null;
+    };
+    const dismissOption = () => {
+      if (!lastOption?.classList.contains(highlightClass)) return;
+      clearOptionHighlight();
+      showHint(doc.activeElement);
+    };
+    const selectOption = (option) => {
+      clearOptionHighlight();
+      pendingOption = lastOption = option;
+      option.classList.add(highlightClass);
+    };
+    const onInput = (e) => {
+      if (e.target.matches?.('.find-popup input[type="text"]')) dismissOption();
+    };
+    const onFocusIn = (e) => {
+      clearTimeout(returnTimer);
+      clearOptionHighlight();
+      lastOption = null;
+      swallowSpaceRepeat = false;
+      if (state._selectFirstFindOptionOnFocus) {
+        state._selectFirstFindOptionOnFocus = false;
+        if (e.target.matches?.('.find-popup input[type="text"]')) {
+          const firstOption = e.target.closest('.find-popup').querySelector(optionsSelector);
+          if (firstOption) selectOption(firstOption);
+        }
+      }
+      showHint(e.target);
+    };
+    const onKeyDown = (e) => {
+      if (e.isComposing || e.keyCode === 229) {
+        dismissOption();
+        return;
+      }
+      if (e.defaultPrevented) return;
+      const active = doc.activeElement;
+      const popup = active?.closest?.('.find-popup');
+      if (!popup) return;
+      const key = e.key.toLowerCase();
+      if (['alt', 'control', 'meta', 'shift'].includes(key)) return;
+      clearTimeout(returnTimer);
+      const input = popup.querySelector('input[type="text"]');
+      const plainModifiers = !e.altKey && !e.metaKey && !e.shiftKey;
+
+      if (active === input && plainModifiers && e.ctrlKey && (key === 'h' || key === 'l')) {
+        const options = Array.from(popup.querySelectorAll(optionsSelector));
+        if (!options.length) return;
+        const direction = key === 'l' ? 1 : -1;
+        const current = options.indexOf(lastOption);
+        const next = current < 0 ? (direction === 1 ? 0 : options.length - 1)
+          : (current + direction + options.length) % options.length;
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        selectOption(options[next]);
+        showHint(active);
+        return;
+      }
+      if (active === input && plainModifiers && !e.ctrlKey && key === ' ') {
+        // Consume just the option toggle and its repeats. A fresh Space types normally.
+        if (!e.repeat) swallowSpaceRepeat = popup.contains(pendingOption);
+        if (swallowSpaceRepeat) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          if (!e.repeat) {
+            const option = pendingOption;
+            pendingOption = null;
+            option.click();
+            showHint(active, true);
+          }
+          return;
+        }
+      }
+      dismissOption();
+      if (e.ctrlKey || e.altKey || e.metaKey || (key !== 'enter' && key !== 'escape')) return;
+
+      const ir = reader._internalReader;
+      const view = popup.closest('.secondary-view') ? ir?._secondaryView : ir?._primaryView;
+      const pdfWin = view?._iframeWindow || this._activeReaderPdfWin(reader, fallbackWin);
+      if (active === input && key === 'enter') {
+        // Let Zotero finish its search before returning to document shortcuts.
+        returnTimer = setTimeout(() => {
+          if (doc.hasFocus() && doc.activeElement === input) pdfWin?.focus();
+        }, 150);
+      } else if (active.matches(optionsSelector) && !e.shiftKey) {
+        const close = popup.querySelector('button.close');
+        if (key === 'enter' ? !input : !close) return;
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        if (key === 'enter') {
+          input.focus();
+        } else {
+          close.click();
+          pdfWin?.focus();
+        }
+      }
+    };
+
+    doc.addEventListener('focusin', onFocusIn, true);
+    doc.addEventListener('input', onInput, true);
+    doc.addEventListener('keydown', onKeyDown, true);
+    showHint(doc.activeElement);
+    return () => {
+      clearTimeout(returnTimer);
+      clearOptionHighlight();
+      doc.removeEventListener('focusin', onFocusIn, true);
+      doc.removeEventListener('input', onInput, true);
+      doc.removeEventListener('keydown', onKeyDown, true);
+      for (const hint of doc.querySelectorAll('.find-popup > .' + hintClass)) hint.remove();
+      style.remove();
+    };
+  },
+
+  _openSearch(reader, state) {
     // Primary: toggleFindPopup({open:true}) on _internalReader.
     // The {open:true} object crosses the chrome→reader.html compartment boundary
     // so it must be cloned.
+    // Arm the first option when Zotero focuses the input for this command.
+    state._selectFirstFindOptionOnFocus = true;
     try {
       const ir = reader._internalReader;
       if (typeof ir?.toggleFindPopup === 'function') {
@@ -4954,6 +5112,7 @@ Object.assign(ZoteroVim, {
       const inp = outerDoc?.querySelector('.primary-view .find-popup input');
       if (inp) { inp.focus(); inp.select(); return; }
     } catch (_) {}
+    state._selectFirstFindOptionOnFocus = false;
   },
 
   /**

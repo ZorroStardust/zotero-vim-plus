@@ -3948,9 +3948,8 @@ Object.assign(ZoteroVim, {
       this._placeCursorAtFirstText(state, pdfWin);
       return;
     }
-    // Lowercase i starts Visual text objects (iw, i", i(, ...), so coarse
-    // Visual hints must not advertise an unreachable I label.
-    const excluded = targetMode === 'visual' ? 'I'
+    // Reserve g for Visual text objects (giw, gi", gi(, ...) in coarse hints.
+    const excluded = targetMode === 'visual' ? 'G'
       : targetMode === 'cursor' ? 'FT' : '';
     const labels = this._hintLabelList(starts.length, null, excluded);
     const badges = [];
@@ -5023,6 +5022,7 @@ Object.assign(ZoteroVim, {
       // Zotero's text-selection "add note" workflow is highlight + comment.
       this._createAnnotationFromParams(state, reader, params.annotation, 'highlight', noteColor, {
         focusComment: true,
+        pdfWin,
       });
       return;
     }
@@ -5067,7 +5067,7 @@ Object.assign(ZoteroVim, {
       state.lastAnnotationKey = item.key;
       this._showStatus(state, '✓ annotated', 1200);
       if (opts?.focusComment) {
-        this._enterInsertForAnnotation(state, reader, item.key);
+        this._enterInsertForAnnotation(state, reader, item, opts.pdfWin);
         return;
       }
       setTimeout(() => {
@@ -5279,7 +5279,7 @@ Object.assign(ZoteroVim, {
       this._showStatus(state, '✓ annotated', 1200);
       try { pdfWin.getSelection()?.removeAllRanges(); } catch (_) {}
       if (opts?.focusComment) {
-        this._enterInsertForAnnotation(state, reader, annotItem.key);
+        this._enterInsertForAnnotation(state, reader, annotItem, pdfWin);
         return;
       }
       setTimeout(() => {
@@ -7035,7 +7035,7 @@ Object.assign(ZoteroVim, {
     const readerWin = reader._iframeWindow;
     const Cu = Components.utils;
 
-    const key = this._selectedAnnotationKey(state, reader);
+    const key = opts?.item?.key || this._selectedAnnotationKey(state, reader);
     if (!key) {
       this._showStatus(state, '✗ navigate first with [a / ]a', 2000);
       return;
@@ -7051,7 +7051,7 @@ Object.assign(ZoteroVim, {
     // Resolve the annotation item via the attachment's child list — a bare
     // key passed to Zotero.Items.get() returns false (IDs only), which left
     // the overlay permanently empty.
-    const item = await this._resolveAnnotationItem(reader, key);
+    const item = opts?.item || await this._resolveAnnotationItem(reader, key);
     if (state._insertSessionID !== mySession || state.mode !== 'insert') return;
 
     state._commentItemID = item?.id || null;
@@ -7086,12 +7086,13 @@ Object.assign(ZoteroVim, {
       ir._enableAnnotationDeletionFromComment = false;
     } catch (_) {}
 
-    const pdfWin = this._activeReaderPdfWin?.(reader) || state.activePdfWin || state.pdfWin;
+    const pdfWin = opts?.pdfWin || this._activeReaderPdfWin?.(reader)
+      || state.activePdfWin || state.pdfWin;
     this._createAnnotationCommentOverlay(state, pdfWin, key, commentText, quotedText);
     const ta = state._commentOverlayInput;
     this._armAnnotationPopupGuard(state, reader);
 
-    const initialDelayMs = Math.max(0, Number(opts?.initialDelayMs || 60));
+    const initialDelayMs = Math.max(0, Number(opts?.initialDelayMs ?? 60));
     const holdMs = Math.max(100, Number(opts?.holdMs || 500));
 
     const tryKeep = (attempt) => {
@@ -7117,7 +7118,7 @@ Object.assign(ZoteroVim, {
     };
 
     state.insertWatchdog = null;
-    setTimeout(() => {
+    const focusEditor = () => {
       // The overlay may have been closed (Esc) or handed over while this
       // focus timeout was pending. Never resurrect the insert session then.
       if (state._insertSessionID !== mySession || !ta?.isConnected) return;
@@ -7130,13 +7131,15 @@ Object.assign(ZoteroVim, {
       const zh = this._isZhLocale();
       this._showStatus(state, zh ? '-- INSERT --  Esc 保存' : '-- INSERT --  Esc save', 2000);
       tryKeep(0);
-    }, initialDelayMs);
+    };
+    if (initialDelayMs > 0) setTimeout(focusEditor, initialDelayMs);
+    else focusEditor();
   },
-  async _enterInsertForAnnotation(state, reader, annotationKey) {
+  /** Start editing a freshly saved annotation in the PDF pane that created it. */
+  async _enterInsertForAnnotation(state, reader, item, pdfWin) {
     try {
-      state.lastAnnotationKey = annotationKey;
       if (state.mode !== 'insert') this._setMode(state, 'insert');
-      await this._enterAnnotationInsertMode(state, reader, { initialDelayMs: 150 });
+      await this._enterAnnotationInsertMode(state, reader, { item, pdfWin, initialDelayMs: 0 });
     } catch (e) {
       Zotero.debug('[ZoteroVim] _enterInsertForAnnotation error: ' + e);
     }

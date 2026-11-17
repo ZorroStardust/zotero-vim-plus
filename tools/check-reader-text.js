@@ -203,7 +203,7 @@ check('character find falls back to the caret text node outside the visible-line
   z._cursorVisibleLines = originalVisibleLines;
 });
 
-check('viw leaves hint picking and resolves as a Visual text object', () => {
+check('vgiw leaves hint picking and resolves as a Visual text object', () => {
   z._nativeEditableFocused = () => false;
   z._smoothHoldSpecForEvent = () => null;
   z._clearVisualHints = state => { state.hintMode = false; };
@@ -215,12 +215,29 @@ check('viw leaves hint picking and resolves as a Visual text object', () => {
   state.executeAction = action => actions.push(action);
   const key = (value) => z._onKeyDown({ key: value, preventDefault() {},
     stopImmediatePropagation() {} }, {}, state, {});
-  key('i');
+  key('g');
   assert.equal(state.hintMode, false);
-  assert.equal(state.keyBuffer, 'i');
+  assert.equal(state.keyBuffer, 'g');
+  key('i');
+  assert.equal(state.keyBuffer, 'gi');
   key('w');
   assert.deepEqual(actions, ['visualInnerWord']);
-  assert.equal(z._hintLabelList(40, null, 'I').some(label => label.includes('I')), false);
+  assert.equal(z._hintLabelList(40, null, 'G').some(label => label.includes('G')), false);
+});
+
+check('i dispatches addNote immediately in Visual mode', () => {
+  const actions = [];
+  const state = {
+    mode: 'visual',
+    keyBuffer: '',
+    countBuffer: '',
+    executeAction: action => actions.push(action),
+  };
+  const event = { key: 'i', preventDefault() {}, stopImmediatePropagation() {} };
+  z._onKeyDown(event, {}, state, {});
+  assert.deepEqual(actions, ['addNote']);
+  assert.equal(state.keyBuffer, '');
+  assert.equal(state.keyTimeout, null);
 });
 
 check('dot repeats only the last annotation-changing reader action', () => {

@@ -875,9 +875,9 @@ sentence hints (then to Normal mode).
 | `0` / `$` | Extend selection to line start / line end |
 | `)` / `(` | Extend selection to next / previous sentence start |
 | `}` / `{` | Extend selection to paragraph end / start |
-| `iw` | Select the word under the active end (`viw` directly from Normal) |
-| `i"` | Select inside the surrounding double quotes |
-| `i(` / `i[` / `i{` | Select inside the nearest enclosing pair |
+| `giw` | Select the word under the active end (`vgiw` directly from Normal) |
+| `gi"` | Select inside the surrounding double quotes |
+| `gi(` / `gi[` / `gi{` | Select inside the nearest enclosing pair |
 | `o` | **Swap anchor and focus** — jump to the opposite end of the selection (like Vim's `o` in Visual mode); subsequent movement keys extend from the new end |
 
 Selection follows the PDF's text order and repairs clearly alternating column

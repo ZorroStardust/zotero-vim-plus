@@ -134,11 +134,11 @@ var ZoteroVim = {
     'visual:{':       'extendParagraphBackward',
     'visual:w':       'extendWordForward',
     'visual:b':       'extendWordBackward',
-    'visual:iw':      'visualInnerWord',
-    'visual:i"':      'visualInnerDoubleQuote',
-    'visual:i(':      'visualInnerParen',
-    'visual:i[':      'visualInnerBracket',
-    'visual:i{':      'visualInnerBrace',
+    'visual:giw':     'visualInnerWord',
+    'visual:gi"':     'visualInnerDoubleQuote',
+    'visual:gi(':     'visualInnerParen',
+    'visual:gi[':     'visualInnerBracket',
+    'visual:gi{':     'visualInnerBrace',
     'visual:0':       'extendLineStart',
     'visual:$':       'extendLineEnd',
     // Visual mode — annotation
@@ -1902,7 +1902,7 @@ var ZoteroVim = {
       const cursorFindPrefix = state.hintTargetMode === 'cursor'
         && ['f', 'F', 't', 'T'].includes(event.key);
       const visualObjectPrefix = state.hintTargetMode === 'visual'
-        && state.hintStage === 'coarse' && event.key === 'i';
+        && state.hintStage === 'coarse' && event.key === 'g';
       if (cursorFindPrefix) {
         if (state.hintStage === 'fine' && state.hintSelected) {
           this._activateHint(state, pdfWin, state.hintSelected);

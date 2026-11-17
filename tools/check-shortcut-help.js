@@ -594,7 +594,7 @@ check('compact groups preserve every effective command, aliases and mode boundar
   assert(normal.some(row => row.key === '*/#'));
   assert(normal.some(row => row.key === 'Ctrl+d/u'));
   assert(normal.some(row => row.key === 'Space ff/fb/fh'));
-  assert(normal.find(row => row.action.includes('recolorBlue')).zh.includes('zb→页底'));
+  assert(normal.find(row => row.action.includes('highlightBlue')).zh.includes('zb→页底'));
   assert(grouped.some(row => row.scope === 'cursor' && row.key === 'f/F/t/T + {char}'));
   assert(grouped.some(row => row.scope === 'main' && row.key === 't1…t9 / t0'));
   assert(grouped.every(row => row.members.every(member => member.scope === row.scope)));

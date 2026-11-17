@@ -243,22 +243,30 @@ check('i dispatches addNote immediately in Visual mode', () => {
 check('dot repeats only the last annotation-changing reader action', () => {
   z._handleReaderSidebarAction = () => false;
   const calls = [];
-  z._highlight = (_state, _reader, _win, color) => calls.push(color);
+  const annotateSelection = z._annotateSelection;
+  z._annotateSelection = (_state, _reader, _win, type, color) => calls.push([type, color]);
   const state = { mode: 'visual', lastReaderChange: null,
     selectionParams: { annotation: {} } };
   const reader = {};
   const pdfWin = { document: {} };
-  z._executeAction('highlightRed', reader, state, pdfWin, 3);
-  z._executeAction('repeatLastChange', reader, state, pdfWin);
-  assert.deepEqual(calls, [z.COLORS.red, z.COLORS.red]);
-  assert.equal(state.lastReaderChange.action, 'highlightRed');
-  assert.equal(state.lastReaderChange.count, 3);
+  try {
+    z._executeAction('highlightRed', reader, state, pdfWin);
+    z._executeAction('underlineRed', reader, state, pdfWin, 3);
+    z._executeAction('repeatLastChange', reader, state, pdfWin);
+    assert.deepEqual(calls, [
+      ['highlight', z.COLORS.red], ['underline', z.COLORS.red], ['underline', z.COLORS.red],
+    ]);
+    assert.equal(state.lastReaderChange.action, 'underlineRed');
+    assert.equal(state.lastReaderChange.count, 3);
 
-  state.selectionParams = null;
-  pdfWin.getSelection = () => ({ isCollapsed: true, toString: () => '' });
-  z._lastSelectionParams = null;
-  z._executeAction('highlightBlue', reader, state, pdfWin);
-  assert.equal(state.lastReaderChange.action, 'highlightRed');
+    state.selectionParams = null;
+    pdfWin.getSelection = () => ({ isCollapsed: true, toString: () => '' });
+    z._lastSelectionParams = null;
+    z._executeAction('underlineBlue', reader, state, pdfWin);
+    assert.equal(state.lastReaderChange.action, 'underlineRed');
+  } finally {
+    z._annotateSelection = annotateSelection;
+  }
 });
 
 check('word search normalizes text and starts backward search after filling the popup', () => {
@@ -731,7 +739,9 @@ async function checkPdfAnnotationSelection() {
     assert.equal(state.mode, 'normal');
     state.mode = 'visual';
     z._applyReaderVisualSelection(state, f.pdfWin, a, b);
-    await z._createAnnotationFromSelection({ itemID: 11 }, state, f.pdfWin, 'highlight', 'yellow');
+    await z._executeAction('highlightYellow', { itemID: 11 }, state, f.pdfWin);
+    assert.equal(saved[0].annotationType, 'highlight');
+    assert.equal(saved[0].annotationColor, z.COLORS.yellow);
     assert.equal(saved[0].annotationText, copied);
     assert.deepEqual(JSON.parse(saved[0].annotationPosition), {
       pageIndex: 0, rects: [[40, 690, 295, 700], [40, 676, 295, 686]],
@@ -739,7 +749,9 @@ async function checkPdfAnnotationSelection() {
 
     z._applyReaderVisualSelection(state, f.pdfWin, { node: second, offset: 0 },
       { node: second, offset: second.length });
-    await z._createAnnotationFromSelection({ itemID: 11 }, state, f.pdfWin, 'highlight', 'yellow');
+    await z._executeAction('underlineYellow', { itemID: 11 }, state, f.pdfWin);
+    assert.equal(saved[1].annotationType, 'underline');
+    assert.equal(saved[1].annotationColor, z.COLORS.yellow);
     assert.deepEqual(JSON.parse(saved[1].annotationPosition), {
       pageIndex: 1, rects: [[40, 690, 580, 700]],
     });
@@ -748,16 +760,27 @@ async function checkPdfAnnotationSelection() {
     const lastBody = firstPage.at(-2);
     z._applyReaderVisualSelection(state, f.pdfWin, { node: lastBody, offset: 0 },
       { node: second, offset: second.length });
-    await z._createAnnotationFromSelection({ itemID: 11 }, state, f.pdfWin, 'highlight', 'yellow');
+    await z._executeAction('underlinePurple', { itemID: 11 }, state, f.pdfWin);
+    assert.equal(saved[2].annotationType, 'underline');
+    assert.equal(saved[2].annotationColor, z.COLORS.purple);
     assert.equal(saved[2].annotationText, 'Right six Next page');
     assert.deepEqual(JSON.parse(saved[2].annotationPosition), {
       pageIndex: 0, rects: [[325, 598, 580, 608]], nextPageRects: [[40, 690, 580, 700]],
     });
 
     z._applyReaderVisualSelection(state, f.pdfWin, a, { node: third, offset: third.length });
-    await z._createAnnotationFromSelection({ itemID: 11 }, state, f.pdfWin, 'highlight', 'yellow');
+    await z._executeAction('underlineBlue', { itemID: 11 }, state, f.pdfWin);
     assert.equal(saved.length, 3, 'refuse a three-page range without discarding its text');
     assert(z._readerSelectedText(state, f.pdfWin).includes('Third page'));
+
+    z._clearOrderedReaderVisual(state, f.pdfWin);
+    const position = { pageIndex: 0, rects: [[40, 690, 295, 700]] };
+    state.selectionParams = { annotation: { type: 'highlight', text: 'Left one', position } };
+    await z._executeAction('underlineGreen', { itemID: 11 }, state, f.pdfWin);
+    assert.equal(saved[3].annotationType, 'underline');
+    assert.equal(saved[3].annotationColor, z.COLORS.green);
+    assert.equal(saved[3].annotationText, 'Left one');
+    assert.deepEqual(JSON.parse(saved[3].annotationPosition), position);
   } finally {
     context.Components.classes = oldClasses;
     context.Zotero.Items = oldItems;
@@ -765,8 +788,51 @@ async function checkPdfAnnotationSelection() {
   }
 }
 
-checkPdfAnnotationSelection().then(() => {
+async function checkAnnotationStyleSelection() {
+  const watermark = { key: 'OLD', annotationType: 'highlight' };
+  const mark = { key: 'MARK', annotationType: 'highlight', annotationColor: z.COLORS.yellow,
+    annotationComment: 'Keep me' };
+  const box = { key: 'BOX', annotationType: 'text', annotationColor: z.COLORS.red };
+  const saved = [];
+  for (const item of [watermark, mark, box]) {
+    item.save = async () => saved.push([item.key, item.annotationType, item.annotationColor]);
+  }
+  const native = { selectedAnnotationIDs: ['MARK'] };
+  const reader = { itemID: 11, _internalReader: { _state: native } };
+  const state = { mode: 'normal', lastAnnotationKey: 'OLD' };
+  const { Items, DB } = context.Zotero;
+  context.Zotero.Items = { get: () => ({ getAnnotations: () => [watermark, mark, box] }) };
+  context.Zotero.DB = { executeTransaction: async fn => fn() };
+  try {
+    await z._executeAction('underlineMagenta', reader, state, {});
+    assert.deepEqual(saved, [['MARK', 'underline', z.COLORS.magenta]]);
+    assert.equal(mark.annotationComment, 'Keep me');
+    assert.equal(state.lastReaderChange.action, 'underlineMagenta');
+    await z._executeAction('highlightGray', reader, state, {});
+    assert.deepEqual(saved.at(-1), ['MARK', 'highlight', z.COLORS.gray]);
+
+    native.selectedAnnotationIDs = ['BOX'];
+    await z._executeAction('highlightOrange', reader, state, {});
+    assert.deepEqual(saved.at(-1), ['BOX', 'text', z.COLORS.orange]);
+    await z._executeAction('underlineOrange', reader, state, {});
+    native.selectedAnnotationIDs = [];
+    await z._executeAction('highlightGray', reader, state, {});
+    native.selectedAnnotationIDs = ['MARK', 'BOX'];
+    await z._executeAction('highlightGray', reader, state, {});
+    native.selectedAnnotationIDs = ['MARK'];
+    mark.annotationIsExternal = true;
+    await z._executeAction('highlightOrange', reader, state, {});
+    assert.equal(saved.length, 3);
+  } finally {
+    Object.assign(context.Zotero, { Items, DB });
+  }
+}
+
+checkPdfAnnotationSelection().then(async () => {
   pass++;
   console.log('  ok  Copy and PDF annotations use the projected ranges and their actual pages');
+  await checkAnnotationStyleSelection();
+  pass++;
+  console.log('  ok  Annotation styles update a single editable native selection in place');
   console.log('Reader text checks passed (' + pass + ' cases).');
 }).catch(error => { console.error(error); process.exitCode = 1; });

@@ -104,7 +104,7 @@ Object.assign(ZoteroVim, {
 
   /** Record dot-repeat only when the requested mutation has a real target. */
   _readerChangeTargetAvailable(action, reader, state, pdfWin) {
-    if (/^(highlight|addNote)/.test(action)) {
+    if (/^(highlight|underline|addNote)/.test(action)) {
       if (!state?._orderedVisual && state?.selectionParams?.annotation) return true;
       if (!state?._orderedVisual && Date.now() - (this._lastSelectionTS || 0) < 10000
           && this._lastSelectionParams?.annotation) return true;
@@ -5011,7 +5011,7 @@ Object.assign(ZoteroVim, {
   // ── Annotation helpers ────────────────────────────────────────────────────
 
   /**
-   * Highlight the current selection.
+   * Create a highlight or underline on the current selection.
    *
    * When Zotero's renderTextSelectionPopup has fired we have pre-computed
    * position data (params.annotation).  We use that data but create the
@@ -5021,45 +5021,20 @@ Object.assign(ZoteroVim, {
    * When no params are available (keyboard-built selection) we compute the
    * PDF-coordinate rects ourselves via _createAnnotationFromSelection.
    */
-  _highlight(state, reader, pdfWin, color, opts = null) {
+  _annotateSelection(state, reader, pdfWin, type, color, opts = null) {
     // Brief flash confirms the action fired (disappears when ✓/✗ arrives).
     const colorName = Object.entries(this.COLORS).find(([, v]) => v === color)?.[0] || color;
-    this._showStatus(state, '▶ ' + colorName, 800);
-    Zotero.debug('[ZoteroVim] _highlight: color=' + color + ' (' + colorName + ')');
+    this._showStatus(state, '▶ ' + (opts?.focusComment ? 'note' : colorName), 800);
 
-    const params = state._orderedVisual ? null : (state.selectionParams ||
-      (Date.now() - this._lastSelectionTS < 10000 ? this._lastSelectionParams : null));
-    Zotero.debug('[ZoteroVim] _highlight: hasParams=' + !!(params?.annotation) +
-                 ' selText="' + (pdfWin.getSelection?.()?.toString?.() || '').slice(0, 40) + '"');
-    if (params?.annotation) {
-      state.selectionParams     = null;
-      this._lastSelectionParams = null;
-      Zotero.debug('[ZoteroVim] _highlight: using params path, ann.text="' +
-                   (params.annotation.text || '').slice(0, 40) + '"');
-      this._createAnnotationFromParams(state, reader, params.annotation, 'highlight', color, opts);
-      return;
-    }
-    this._createAnnotationFromSelection(reader, state, pdfWin, 'highlight', color, opts);
-  },
-
-  _addNote(state, reader, pdfWin) {
-    const noteColor = this.getDefaultHighlightColor();
-    this._showStatus(state, '▶ note', 800);
     const params = state._orderedVisual ? null : (state.selectionParams ||
       (Date.now() - this._lastSelectionTS < 10000 ? this._lastSelectionParams : null));
     if (params?.annotation) {
       state.selectionParams     = null;
       this._lastSelectionParams = null;
-      // Zotero's text-selection "add note" workflow is highlight + comment.
-      this._createAnnotationFromParams(state, reader, params.annotation, 'highlight', noteColor, {
-        focusComment: true,
-        pdfWin,
-      });
-      return;
+      return this._createAnnotationFromParams(state, reader, pdfWin, params.annotation,
+        type, color, opts);
     }
-    this._createAnnotationFromSelection(reader, state, pdfWin, 'highlight', noteColor, {
-      focusComment: true,
-    });
+    return this._createAnnotationFromSelection(reader, state, pdfWin, type, color, opts);
   },
 
   /**
@@ -5069,7 +5044,7 @@ Object.assign(ZoteroVim, {
    *
    * ann — the params.annotation object: { type, color, text, sortIndex, position }
    */
-  async _createAnnotationFromParams(state, reader, ann, type, color, opts = null) {
+  async _createAnnotationFromParams(state, reader, pdfWin, ann, type, color, opts = null) {
     try {
       const attachment = Zotero.Items.get(reader.itemID);
       if (!attachment) { this._showStatus(state, '✗ no attachment'); return; }
@@ -5098,12 +5073,13 @@ Object.assign(ZoteroVim, {
       state.lastAnnotationKey = item.key;
       this._showStatus(state, '✓ annotated', 1200);
       if (opts?.focusComment) {
-        this._enterInsertForAnnotation(state, reader, item, opts.pdfWin);
+        this._enterInsertForAnnotation(state, reader, item, pdfWin);
         return;
       }
       setTimeout(() => {
+        if (state._orderedVisual || (state.activePdfWin && state.activePdfWin !== pdfWin)) return;
         this._setMode(state, 'normal');
-        try { state.pdfWin?.focus(); } catch (_) {}
+        try { pdfWin.focus(); } catch (_) {}
         try {
           const Cu = Components.utils;
           const readerWin = reader._iframeWindow;
@@ -7241,29 +7217,47 @@ Object.assign(ZoteroVim, {
     }
   },
 
-  /**
-   * Change the colour of the currently-selected annotation (zy/zr/zg/zb/zp in
-   * normal mode after [a / ]a navigation).
-   */
-  async _recolorAnnotation(state, reader, color) {
-    const key = state.lastAnnotationKey;
-    if (!key) { this._showStatus(state, '✗ navigate first with [a / ]a', 2000); return; }
+  /** Resolve one editable annotation. An empty native selection is authoritative. */
+  _annotationStyleTarget(state, reader) {
+    if (!reader?.itemID) return null;
     try {
+      const native = reader._internalReader?._state;
+      const ids = native?.selectedAnnotationIDs;
+      const key = Array.isArray(ids) ? (ids.length === 1 ? ids[0] : null)
+        : state.lastAnnotationKey;
+      if (!key || native?.readOnly) return null;
       const attachment = Zotero.Items.get(reader.itemID);
-      if (!attachment) { this._showStatus(state, '✗ no attachment', 2000); return; }
-
-      const target = attachment.getAnnotations().find(a => a.key === key);
-      if (!target) { this._showStatus(state, '✗ annotation not found', 2000); return; }
-
-      const colorName = Object.entries(this.COLORS).find(([, v]) => v === color)?.[0] || color;
-      target.annotationColor = color;
-      await target.saveTx();
-
-      this._showStatus(state, '✓ → ' + colorName, 1200);
-      Zotero.debug('[ZoteroVim] recolorAnnotation key=' + key + ' color=' + color);
+      const target = attachment?.getAnnotations().find(item => item.key === key);
+      if (!target || target.deleted || target.annotationIsExternal
+          || target.isEditable?.() === false) return null;
+      return target;
     } catch (e) {
-      Zotero.debug('[ZoteroVim] _recolorAnnotation error: ' + e);
-      this._showStatus(state, '✗ ' + String(e).slice(0, 35), 3000);
+      Zotero.debug('[ZoteroVim] _annotationStyleTarget: ' + e);
+      return null;
+    }
+  },
+
+  _canConvertAnnotation(item) {
+    return item.annotationType === 'highlight' || item.annotationType === 'underline';
+  },
+
+  /** Apply style to the same Zotero item so links, tags and comments keep their identity. */
+  async _styleAnnotation(state, target, color, type) {
+    try {
+      await Zotero.DB.executeTransaction(async () => {
+        if (target.deleted || target.isEditable?.() === false) {
+          throw new Error(this._isZhLocale() ? '标注已不可编辑' : 'Annotation is no longer editable');
+        }
+        if (type && this._canConvertAnnotation(target)) target.annotationType = type;
+        target.annotationColor = color;
+        await target.save();
+      });
+
+      const colorName = Object.entries(this.COLORS).find(([, value]) => value === color)?.[0];
+      this._showStatus(state, '✓ → ' + colorName, 1200);
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] _styleAnnotation error: ' + e);
+      this._showStatus(state, '✗ ' + (e.message || String(e)).slice(0, 45), 3000);
     }
   },
 

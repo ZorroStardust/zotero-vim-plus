@@ -26,8 +26,14 @@ Object.assign(ZoteroVim, {
       'Enter ', '进入', ' mode', '模式'],
     ['recolorYellow recolorRed recolorGreen recolorBlue recolorPurple',
       'yellow|red|green|blue|purple', '黄|红|绿|蓝|紫', 'Recolour: ', '标注改色：'],
-    ['highlightYellow highlightRed highlightGreen highlightBlue highlightPurple',
-      'yellow|red|green|blue|purple', '黄|红|绿|蓝|紫', 'Highlight: ', '高亮：'],
+    ['highlightYellow highlightRed highlightGreen highlightBlue highlightPurple '
+      + 'highlightMagenta highlightOrange highlightGray',
+      'yellow|red|green|blue|purple|magenta|orange|gray', '黄|红|绿|蓝|紫|品红|橙|灰',
+      'Highlight: ', '高亮：'],
+    ['underlineYellow underlineRed underlineGreen underlineBlue underlinePurple '
+      + 'underlineMagenta underlineOrange underlineGray',
+      'yellow|red|green|blue|purple|magenta|orange|gray', '黄|红|绿|蓝|紫|品红|橙|灰',
+      'Underline: ', '下划线：'],
     ['filterYellow filterRed filterGreen filterBlue filterPurple filterClear',
       'yellow|red|green|blue|purple|clear', '黄|红|绿|蓝|紫|清除', 'Filter: ', '筛选标注：'],
     ['extendDown extendUp extendLeft extendRight', 'down|up|left|right', '下|上|左|右',
@@ -221,8 +227,8 @@ Object.assign(ZoteroVim, {
       '聚焦搜索／关闭并恢复焦点'],
     ['popups', 'help', 'j/k / gg/G / Space', 'When the list has focus: scroll / first or last / page down',
       '列表获得焦点时：滚动／首尾／向下翻页'],
-    ['popups', 'spacekeys', 'Space + {chord} / Esc', 'Narrow leader hints / cancel the pending chord',
-      '逐层筛选 Space 组合键／取消待完成组合'],
+    ['popups', 'spacekeys', 'Space / z / Esc',
+      'Show available chords / cancel the pending chord', '显示可用组合键／取消待完成组合'],
   ],
 
   _shortcutScope(scope, zh) {
@@ -461,7 +467,7 @@ Object.assign(ZoteroVim, {
         row.en = 'Toggle coloured tag 1–9 / clear all';
         row.zh = '切换第1–9个彩色标签／清除全部';
       }
-      const blue = members.filter(member => member.action === 'recolorBlue');
+      const blue = members.filter(member => ['highlightBlue', 'recolorBlue'].includes(member.action));
       if (row.scope === 'normal' && blue.length) {
         const key = blue.map(member => member.key).join('/');
         row.en += '; no annotation: ' + key + ' → page bottom';

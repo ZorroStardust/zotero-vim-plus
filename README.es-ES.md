@@ -581,7 +581,7 @@ primero.
 | `Zp` | Filtrar barra lateral → Solo anotaciones moradas |
 | `Za` | Borrar filtro de color (mostrar todas las anotaciones) |
 
-> **Consejo:** `z` (minúscula) actúa *sobre* una anotación (recolorar). `Z` (mayúscula) actúa *sobre la vista de barra lateral* (filtrar).
+> `z` abre la paleta de la anotación seleccionada. `Z` inicia un filtro de la barra lateral.
 
 #### Navegación y edición de anotaciones
 
@@ -608,11 +608,11 @@ La anotación seleccionada se resalta en el visor de PDF y la barra lateral se d
 | `y` | Copiar el **texto resaltado** de la anotación al portapapeles |
 | `yy` | Copiar el **texto del comentario** de la anotación al portapapeles |
 | `dd` | Eliminar la anotación seleccionada |
-| `zy` | Cambiar color de anotación → Amarillo |
-| `zr` | Cambiar color de anotación → Rojo |
-| `zg` | Cambiar color de anotación → Verde |
-| `zb` | Cambiar color de anotación → Azul |
-| `zp` | Cambiar color de anotación → Morado |
+| `z` | Mostrar las opciones de color y estilo de la anotación seleccionada |
+
+Para un resaltado o subrayado seleccionado, usa las [combinaciones de color](#creación-de-anotaciones)
+para cambiar su estilo y color. Los cuadros de texto usan las teclas en minúscula
+para cambiar de color. Si no hay una anotación seleccionada, `zb` desplaza la página al final de la vista.
 
 > **Consejo:** `y` vs `yy` — el plugin espera hasta 800 ms para el segundo `y` antes de ejecutar la acción de `y` único. Escribir `yy` rápidamente siempre gana.
 
@@ -672,13 +672,21 @@ Entra en modo Visual con `v` desde el modo Normal. Si no hay selección de texto
 
 #### Creación de anotaciones
 
+Tras seleccionar texto en modo Visual, pulsa `z` y espera un momento para ver
+las combinaciones disponibles en la esquina inferior derecha. Usa una minúscula
+para resaltar o una mayúscula para subrayar con el mismo color. `Esc` cancela la
+combinación y conserva la selección.
+
 | Tecla | Acción |
 |-----|--------|
-| `zy` | Crear un resaltado **amarillo** |
-| `zr` | Crear un resaltado **rojo** |
-| `zg` | Crear un resaltado **verde** |
-| `zb` | Crear un resaltado **azul** |
-| `zp` | Crear un resaltado **morado** |
+| `zy` / `zY` | Resaltado / subrayado **amarillo** |
+| `zr` / `zR` | Resaltado / subrayado **rojo** |
+| `zg` / `zG` | Resaltado / subrayado **verde** |
+| `zb` / `zB` | Resaltado / subrayado **azul** |
+| `zp` / `zP` | Resaltado / subrayado **morado** |
+| `zm` / `zM` | Resaltado / subrayado **magenta** |
+| `zo` / `zO` | Resaltado / subrayado **naranja** |
+| `zs` / `zS` | Resaltado / subrayado **gris** |
 | `za` | Añadir una anotación **nota** (crea resaltado + abre editor de comentario) |
 | `i` | Igual que `za` (nota rápida + entrar en Insertar en comentario) |
 
@@ -715,13 +723,14 @@ Cuando `i` se presiona en modo Normal mientras una anotación está seleccionada
 
 ## Flujo de trabajo de anotación
 
-### Crear un resaltado desde cero
+### Crear un resaltado o un subrayado
 
 1. Presionar `v` para entrar en modo Visual.
 2. Presionar la letra de pista mostrada en el inicio de oración deseado (o `j`/`k` para empezar desde la posición actual).
 3. Extender la selección con `j`/`k`/`w`/`b`/`)`/`}`/`h`/`l`.
 4. Usar `o` para saltar al otro extremo de la selección si necesitas recortar el inicio en lugar de extender el fin.
-5. Presionar `zy`/`zr`/`zg`/`zb`/`zp` para crear un resaltado de color, o `za` para añadir una nota.
+5. Pulsa `z` y elige un color. Usa `zy` para resaltar en amarillo, `zY` para
+   subrayar en amarillo o `za` para añadir una nota.
 
 ### Navegar y editar anotaciones existentes
 
@@ -814,6 +823,17 @@ Abrir **Editar → Preferencias** (macOS: **Zotero → Ajustes**) y navegar al p
 | `highlightGreen` | Crear resaltado verde |
 | `highlightBlue` | Crear resaltado azul |
 | `highlightPurple` | Crear resaltado morado |
+| `highlightMagenta` | Crear resaltado magenta |
+| `highlightOrange` | Crear resaltado naranja |
+| `highlightGray` | Crear resaltado gris |
+| `underlineYellow` | Crear subrayado amarillo |
+| `underlineRed` | Crear subrayado rojo |
+| `underlineGreen` | Crear subrayado verde |
+| `underlineBlue` | Crear subrayado azul |
+| `underlinePurple` | Crear subrayado morado |
+| `underlineMagenta` | Crear subrayado magenta |
+| `underlineOrange` | Crear subrayado naranja |
+| `underlineGray` | Crear subrayado gris |
 | `addNote` | Añadir anotación nota |
 | `copySelection` | Copiar selección actual al portapapeles |
 | `searchSelection` | Abrir barra de búsqueda y buscar por selección actual |

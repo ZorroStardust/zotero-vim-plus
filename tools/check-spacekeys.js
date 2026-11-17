@@ -59,7 +59,8 @@ function fixture(smooth = false) {
     setTimeout(fn, delay) { timers.set(++serial, { fn, time: now + delay }); return serial; },
     clearTimeout(id) { timers.delete(id); },
   });
-  for (const name of ['zoteroVim.js', 'zoteroVimReader.js', 'zoteroVimMain.js']) {
+  for (const name of ['keymapLabels.js', 'zoteroVim.js', 'zoteroVimReader.js',
+    'zoteroVimMain.js', 'zoteroVimHelp.js']) {
     vm.runInContext(fs.readFileSync(path.join(__dirname, '../content', name), 'utf8'), context);
   }
   const z = context.ZoteroVim;
@@ -166,6 +167,82 @@ check('reader shows fh and preserves distinct s/S actions and count prefixes', (
   assert.equal(f.state.countBuffer, '');
   assert.equal(f.actions.pop(), 'toggleReaderSpread');
   assert.equal(f.counts.pop(), 3);
+});
+
+check('Visual z pairs highlight and underline keys in the reader hint popup', () => {
+  const f = fixture();
+  f.state.mode = 'visual';
+  assert(f.z._readerConsumesKey(f.state, 'z'));
+  f.pdfKey('z');
+  f.advance(199);
+  assert.equal(f.state._spacekeys.el, null);
+  f.advance(1);
+  const { el, rows } = f.state._spacekeys;
+  assert.equal(el.ownerDocument, f.outer.document);
+  assert.match(el.style.cssText, /right:14px;bottom:42px/);
+  assert.equal(el.firstChild.textContent, '标注  z');
+  assert.deepEqual(Array.from(rows, row => row.key), ['a', 'b/B', 'g/G', 'm/M',
+    'o/O', 'p/P', 'r/R', 's/S', 'y/Y']);
+  assert.match(text(el), /高亮 \/ 下划线/);
+  assert.deepEqual(Array.from(rows.slice(1), row => row.style.color).sort(),
+    Object.values(f.z.COLORS).sort());
+  const yellow = el.children[1].children.at(-1).children[0];
+  assert.match(yellow.style.cssText, /background:#ffd400/);
+  f.advance(1500);
+  f.pdfKey('Shift');
+  assert(f.z._readerConsumesKey(f.state, 'Y'));
+  f.pdfKey('Y');
+  assert.equal(f.state._spacekeys, null);
+  assert.deepEqual(f.actions, ['underlineYellow']);
+  f.pdfKey('z'); f.pdfKey('y'); f.advance(200);
+  assert.equal(f.outer.document.body.children.length, 0);
+  assert.deepEqual(f.actions, ['underlineYellow', 'highlightYellow']);
+});
+
+check('Visual z uses effective bindings and cancels without exiting Visual', () => {
+  const f = fixture();
+  f.state.mode = 'visual';
+  f.prefs.bindings = JSON.stringify({ 'visual:zY': null, 'visual:zuv': 'underlineYellow',
+    'visual:zB': 'underlineGreen' });
+  f.pdfKey('z'); f.advance(200);
+  const rows = Array.from(f.state._spacekeys.rows, row => row.key);
+  assert(rows.includes('y') && !rows.includes('y/Y'));
+  assert(rows.includes('b') && rows.includes('B') && !rows.includes('b/B'));
+  f.pdfKey('u');
+  assert.deepEqual(Array.from(f.state._spacekeys.rows, row => row.key), ['v']);
+  assert(f.z._readerConsumesKey(f.state, 'escape'));
+  f.pdfKey('Escape');
+  assert.equal(f.state._spacekeys, null);
+  assert.equal(f.state.keyBuffer, '');
+  assert.equal(f.state.mode, 'visual');
+  assert.deepEqual(f.actions, []);
+
+  f.pdfKey('z'); f.advance(200);
+  f.pdfKey('B', f.secondary);
+  assert.equal(f.state._spacekeys, null);
+  assert.equal(f.state.keyBuffer, '');
+  assert.deepEqual(f.actions, []);
+});
+
+check('Normal z offers appropriate actions and cancels if the selection changes', () => {
+  const f = fixture();
+  let selected = { key: 'MARKUP', annotationType: 'underline' };
+  f.z._annotationStyleTarget = () => selected;
+  f.pdfKey('z'); f.advance(200);
+  assert.deepEqual(Array.from(f.state._spacekeys.rows, row => row.key),
+    ['b/B', 'g/G', 'm/M', 'o/O', 'p/P', 'r/R', 's/S', 'y/Y']);
+  selected = { key: 'BOX', annotationType: 'text' };
+  f.pdfKey('B');
+  assert.equal(f.state._spacekeys, null);
+  assert.deepEqual(f.actions, []);
+
+  f.pdfKey('z'); f.advance(200);
+  assert.deepEqual(Array.from(f.state._spacekeys.rows, row => row.key),
+    ['b', 'g', 'm', 'o', 'p', 'r', 's', 'y']);
+  assert.match(text(f.state._spacekeys.el), /改色/);
+  assert(!text(f.state._spacekeys.el).includes('下划线'));
+  f.pdfKey('o');
+  assert.deepEqual(f.actions, ['highlightOrange']);
 });
 
 check('reader hint prefixes switch in place once the popup is visible', () => {

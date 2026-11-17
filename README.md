@@ -740,7 +740,7 @@ search.
 | `Zp` | Filter sidebar → Purple annotations only |
 | `Za` | Clear colour filter (show all annotations) |
 
-> **Tip:** `z` (lowercase) acts *on* an annotation (recolour). `Z` (uppercase) acts *on the sidebar view* (filter).
+> `z` opens the palette for the selected annotation. `Z` starts a sidebar filter chord.
 
 #### Annotation navigation and editing
 
@@ -769,12 +769,13 @@ Selected annotations are highlighted in the PDF and scrolled to in the sidebar.
 | `y` | Copy the annotation's **highlighted text** to the clipboard |
 | `yy` | Copy the annotation's **comment text** to the clipboard |
 | `dd` | Delete the selected annotation |
-| `zy` | Change annotation colour → Yellow |
-| `zr` | Change annotation colour → Red |
-| `zg` | Change annotation colour → Green |
-| `zb` | Change annotation colour → Blue |
-| `zp` | Change annotation colour → Purple |
-| `.` | Repeat the last annotation change (highlight/note, delete or recolour) |
+| `z` | Show the selected annotation's colour and style options |
+| `.` | Repeat the last annotation change (highlight, underline, note, delete or recolour) |
+
+For a selected highlight or underline, use the [colour pairs below](#creating-annotations)
+to change its colour and style in place. A selected text box offers the
+lowercase colour keys for recolouring. With no selection, `zb` positions the
+page at the bottom of the viewport.
 
 > **Tip:** `y` vs `yy` — the plugin waits up to 800 ms for the second `y`
 > before firing the single-`y` action. Typing `yy` quickly always wins.
@@ -895,13 +896,21 @@ Visual and Cursor modes. Run the command again to include all text.
 
 #### Creating annotations
 
+After selecting text in Visual mode, press `z` and pause to see the available
+bindings and colour swatches in the bottom-right corner. Use a lowercase second key for a highlight
+or hold Shift for an underline of the same colour. `Esc` cancels the pending
+chord and keeps the selection.
+
 | Key | Action |
 |-----|--------|
-| `zy` | Create a **yellow** highlight |
-| `zr` | Create a **red** highlight |
-| `zg` | Create a **green** highlight |
-| `zb` | Create a **blue** highlight |
-| `zp` | Create a **purple** highlight |
+| `zy` / `zY` | **Yellow** highlight / underline |
+| `zr` / `zR` | **Red** highlight / underline |
+| `zg` / `zG` | **Green** highlight / underline |
+| `zb` / `zB` | **Blue** highlight / underline |
+| `zp` / `zP` | **Purple** highlight / underline |
+| `zm` / `zM` | **Magenta** highlight / underline |
+| `zo` / `zO` | **Orange** highlight / underline |
+| `zs` / `zS` | **Gray** highlight / underline |
 | `za` | Add a **note** annotation (creates highlight + opens comment editor) |
 | `i` | Same as `za` (quick note + enter Insert on comment) |
 | `.` | Repeat the last annotation-changing action on the current target/selection |
@@ -992,7 +1001,7 @@ editors keeps its Zotero behavior).
 
 ## Annotation workflow
 
-### Creating a highlight from scratch
+### Creating a highlight or underline
 
 1. Press `v` to enter Visual mode.
 2. Press the hint label shown at the desired sentence start — optionally
@@ -1001,8 +1010,8 @@ editors keeps its Zotero behavior).
 3. Extend the selection with `j`/`k`/`w`/`b`/`)`/`}`/`h`/`l`.
 4. Use `o` to jump to the other end of the selection if you need to trim the
    start rather than extend the end.
-5. Press `zy`/`zr`/`zg`/`zb`/`zp` to create a coloured highlight, or `za` to
-   add a note.
+5. Press `z` and choose a colour key. For yellow, use `zy` for a highlight or
+   `zY` for an underline. Press `za` to add a note.
 
 ### Navigating and editing existing annotations
 
@@ -1128,6 +1137,17 @@ failures are reported to `zv-startup.log` in the profile directory with
 | `highlightGreen` | Create green highlight |
 | `highlightBlue` | Create blue highlight |
 | `highlightPurple` | Create purple highlight |
+| `highlightMagenta` | Create magenta highlight |
+| `highlightOrange` | Create orange highlight |
+| `highlightGray` | Create gray highlight |
+| `underlineYellow` | Create yellow underline |
+| `underlineRed` | Create red underline |
+| `underlineGreen` | Create green underline |
+| `underlineBlue` | Create blue underline |
+| `underlinePurple` | Create purple underline |
+| `underlineMagenta` | Create magenta underline |
+| `underlineOrange` | Create orange underline |
+| `underlineGray` | Create gray underline |
 | `addNote` | Add note annotation |
 | `copySelection` | Copy current selection to clipboard |
 | `translateSelection` | Translate selection in a popup using Translate for Zotero |
@@ -1206,9 +1226,9 @@ failures are reported to `zv-startup.log` in the profile directory with
 | Note editor Vim mode | on | Enable Vim-style editing in library notes, reader-side notes and note tabs |
 | Note editor line numbers | on | Absolute logical line numbers with the current number highlighted; requires note Vim mode |
 | Reader page progress | Briefly after navigation | `12/34 · 35%` in the mode indicator; can be Off, transient, or always visible |
-| Spacekeys hints | on | Grouped leader-key hints in the bottom-right corner, above the mode/progress indicator |
+| Spacekeys hints | on | Grouped key chord hints in the bottom-right corner, above the mode/progress indicator |
 | Spacekeys popup delay | 200 ms | Delay before showing hints; fast chords do not flash a popup (0–1000 ms) |
-| Leader chord timeout | 10 seconds | Time to finish a Space chord in the library, reader or note Normal mode (1–30 seconds) |
+| Chord timeout | 10 seconds | Time to finish a Space chord, a reader bracket jump or an annotation `z` chord (1–30 seconds) |
 | Scroll mode | Constant-speed scrolling | Step / Constant-speed / Accelerating — only the active mode's parameters are shown |
 | Scroll step | 60 px | Pixels scrolled per `j`/`k`/`H`/`L` keypress (step mode; count prefixes like `3j` always use this) |
 | Scroll speed | 2000 px/s | Constant hold-scroll speed (constant-speed mode) |

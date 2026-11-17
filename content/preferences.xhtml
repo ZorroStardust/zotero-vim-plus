@@ -131,10 +131,10 @@
   <groupbox>
     <label value="Spacekeys" style="font-weight: bold;" />
     <checkbox id="zv-spacekeys-enabled" data-i18n="zv.spacekeys.enabled"
-      label="Show leader-key hints in the bottom-right corner" />
+      label="Show key chord hints in the bottom-right corner" />
     <html:p data-i18n="zv.spacekeys.help"
       style="margin:4px 0 10px;font-size:.9em;color:#666;">
-      Press Space to see available chords. Works in the library, reader and note Normal mode.
+      Press Space in the library, reader or note Normal mode, or z with text or an annotation selected in the PDF.
     </html:p>
     <hbox align="center" style="margin-top:4px;">
       <html:label for="zv-spacekeys-delay" data-i18n="zv.spacekeys.delay"
@@ -144,7 +144,7 @@
     </hbox>
     <hbox align="center" style="margin-top:6px;">
       <html:label for="zv-spacekeys-timeout" data-i18n="zv.spacekeys.timeout"
-        style="min-width:180px;">Leader chord timeout (seconds)</html:label>
+        style="min-width:180px;">Chord timeout (seconds)</html:label>
       <html:input id="zv-spacekeys-timeout" type="number" min="1" max="30"
         step="1" style="width:80px;" />
     </hbox>
@@ -262,6 +262,9 @@
           <menuitem value="green"  data-i18n="zv.color.opt.green" label="Green   (#5FB236)" />
           <menuitem value="blue"   data-i18n="zv.color.opt.blue" label="Blue    (#2EA8E5)" />
           <menuitem value="purple" data-i18n="zv.color.opt.purple" label="Purple  (#A28AE5)" />
+          <menuitem value="magenta" data-i18n="zv.color.opt.magenta" label="Magenta (#E56EEE)" />
+          <menuitem value="orange" data-i18n="zv.color.opt.orange" label="Orange  (#F19837)" />
+          <menuitem value="gray" data-i18n="zv.color.opt.gray" label="Gray    (#AAAAAA)" />
         </menupopup>
       </menulist>
       <html:span id="zv-default-color-status"

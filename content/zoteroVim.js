@@ -38,6 +38,9 @@ var ZoteroVim = {
     green:  '#5fb236',
     blue:   '#2ea8e5',
     purple: '#a28ae5',
+    magenta: '#e56eee',
+    orange: '#f19837',
+    gray:   '#aaaaaa',
   },
 
   DEFAULT_BINDINGS: {
@@ -79,11 +82,22 @@ var ZoteroVim = {
     'normal:dd':      'deleteAnnotation',
     'normal:y':       'yankAnnotation',
     'normal:yy':      'yankAnnotationComment',
-    'normal:zy':      'recolorYellow',
-    'normal:zr':      'recolorRed',
-    'normal:zg':      'recolorGreen',
-    'normal:zb':      'recolorBlue',
-    'normal:zp':      'recolorPurple',
+    'normal:zy':      'highlightYellow',
+    'normal:zY':      'underlineYellow',
+    'normal:zr':      'highlightRed',
+    'normal:zR':      'underlineRed',
+    'normal:zg':      'highlightGreen',
+    'normal:zG':      'underlineGreen',
+    'normal:zb':      'highlightBlue',
+    'normal:zB':      'underlineBlue',
+    'normal:zp':      'highlightPurple',
+    'normal:zP':      'underlinePurple',
+    'normal:zm':      'highlightMagenta',
+    'normal:zM':      'underlineMagenta',
+    'normal:zo':      'highlightOrange',
+    'normal:zO':      'underlineOrange',
+    'normal:zs':      'highlightGray',
+    'normal:zS':      'underlineGray',
     'normal:zt':      'scrollTop',
     'normal:zz':      'scrollCenter',
     // Normal mode — filter sidebar by annotation colour
@@ -143,10 +157,21 @@ var ZoteroVim = {
     'visual:$':       'extendLineEnd',
     // Visual mode — annotation
     'visual:zy':      'highlightYellow',
+    'visual:zY':      'underlineYellow',
     'visual:zr':      'highlightRed',
+    'visual:zR':      'underlineRed',
     'visual:zg':      'highlightGreen',
+    'visual:zG':      'underlineGreen',
     'visual:zb':      'highlightBlue',
+    'visual:zB':      'underlineBlue',
     'visual:zp':      'highlightPurple',
+    'visual:zP':      'underlinePurple',
+    'visual:zm':      'highlightMagenta',
+    'visual:zM':      'underlineMagenta',
+    'visual:zo':      'highlightOrange',
+    'visual:zO':      'underlineOrange',
+    'visual:zs':      'highlightGray',
+    'visual:zS':      'underlineGray',
     'visual:za':      'addNote',
     'visual:i':       'addNote',
     'visual:y':       'copySelection',
@@ -412,7 +437,7 @@ var ZoteroVim = {
     return ['off', 'transient', 'always'].includes(mode) ? mode : 'transient';
   },
 
-  /** Leader chords allow time to read Spacekeys; other Vim prefixes stay unchanged. */
+  /** Prefixes with hints allow time to read the available chords. */
   getSpacekeysTimeout() {
     const value = Number(this.getPref('spacekeys.timeout', 10000));
     return Number.isFinite(value) ? Math.max(1000, Math.min(30000, value)) : 10000;
@@ -983,7 +1008,7 @@ var ZoteroVim = {
           if (event?.target === viewWin) this._closeReaderLinkHints?.(state, viewWin);
           if (event?.target === viewWin && state.activePdfWin === viewWin) {
             state._readerJumpRequest = null;
-            if (this._isReaderHintPrefix(state.mode + ':', state.keyBuffer)) {
+            if (this._isReaderHintPrefix(state.mode + ':', state.keyBuffer, state)) {
               this._cancelSpacekeys(state);
             }
           }
@@ -1294,9 +1319,11 @@ var ZoteroVim = {
   },
 
   /** Group matching bindings by the next key, keeping case and modifiers intact. */
-  _spacekeysRows(modePrefix, buffer) {
+  _spacekeysRows(modePrefix, buffer, annotation = null) {
     const zh = this._isZhLocale();
     const prefix = modePrefix + buffer;
+    const palette = annotation || (modePrefix === 'visual:' && buffer.startsWith('z')
+      ? 'selection' : null);
     const groups = new Map();
     const named = 'arrow(?:left|right|up|down)|page(?:up|down)|backspace|delete|escape|enter|'
       + 'return|tab|home|end|insert|f(?:2[0-4]|1\\d|[1-9])(?!\\d)';
@@ -1305,14 +1332,18 @@ var ZoteroVim = {
       if (!binding.startsWith(prefix)) continue;
       const rest = binding.slice(prefix.length);
       if (!rest) continue;
+      const style = palette ? this._annotationStyleForAction(action) : null;
+      if (annotation && (!style || (annotation === 'color' && style.type === 'underline'))) {
+        continue;
+      }
       const token = rest.match(nextKey);
       const key = token[0];
       if (!groups.has(key)) groups.set(key, []);
-      groups.get(key).push({ action, rest });
+      groups.get(key).push({ action, rest, style });
     }
     const names = zh ? { f: '搜索', b: '标签页', w: '窗口', y: '复制' }
       : { f: 'Search', b: 'Tabs', w: 'Windows', y: 'Copy' };
-    return Array.from(groups, ([key, entries]) => {
+    const rows = Array.from(groups, ([key, entries]) => {
       const exact = entries.find(entry => entry.rest === key);
       const grouped = entries.some(entry => entry.rest !== key);
       const action = (exact || entries[0]).action;
@@ -1324,8 +1355,35 @@ var ZoteroVim = {
         label = buffer === ' ' && names[key] ? names[key]
           : entries.length === 1 ? label : (zh ? '更多组合' : 'More chords');
       }
-      return { key, label, grouped };
-    }).sort((a, b) => a.key < b.key ? -1 : a.key > b.key ? 1 : 0);
+      return { key, label, grouped, style: grouped ? null : exact?.style };
+    }).sort((a, b) => {
+      const first = palette ? a.key.toLowerCase() : a.key;
+      const second = palette ? b.key.toLowerCase() : b.key;
+      if (first !== second) return first < second ? -1 : 1;
+      return a.key > b.key ? -1 : a.key < b.key ? 1 : 0;
+    });
+    if (!palette) return rows;
+    // Pair only the effective same-colour bindings. Remaps and unbindings keep their own labels.
+    const byKey = new Map(rows.map(row => [row.key, row]));
+    const paired = new Set();
+    return rows.filter(row => {
+      if (paired.has(row.key)) return false;
+      if (!row.style) return true;
+      row.swatchLabel = row.label.split(' — ').at(-1);
+      const upper = /^[a-z]$/.test(row.key) && byKey.get(row.key.toUpperCase());
+      if (row.style.type === 'highlight' && upper?.style?.type === 'underline'
+          && upper.style.color === row.style.color) {
+        paired.add(upper.key);
+        row.key += '/' + upper.key;
+        row.label = zh ? '高亮 / 下划线' : 'Highlight / Underline';
+      } else if (annotation === 'color' || row.style.type === 'recolor') {
+        row.label = zh ? '改色' : 'Recolour';
+      } else {
+        row.label = row.style.type === 'highlight' ? (zh ? '高亮' : 'Highlight')
+          : (zh ? '下划线' : 'Underline');
+      }
+      return true;
+    });
   },
 
   /** Remove the passive popup, its delayed render and its focus observers. */
@@ -1343,7 +1401,7 @@ var ZoteroVim = {
   /** Losing the originating input context cancels its chord as well as its UI. */
   _cancelSpacekeys(state) {
     const ui = state?._spacekeys;
-    if (!ui && !this._isReaderHintPrefix(state?.mode + ':', state?.keyBuffer)
+    if (!ui && !this._isReaderHintPrefix(state?.mode + ':', state?.keyBuffer, state)
         && !state?.keyBuffer?.startsWith(' ')) return;
     this._hideSpacekeys(state);
     if (ui?.source === 'note') this._clearMainContextNoteKeyState(state);
@@ -1368,6 +1426,8 @@ var ZoteroVim = {
     if (!ui) return;
     const views = state.reader?._internalReader;
     if (!this.getPref('spacekeys.enabled', true) || ui.sourceWin?.closed
+        || (ui.annotationKey
+          && this._annotationStyleTarget(state, state.reader)?.key !== ui.annotationKey)
         || ui.tabID !== ui.win?.Zotero_Tabs?.selectedID
         || (ui.source === 'note' && state._contextNoteEditorWin !== ui.sourceWin)
         || (views && ![views._primaryView?._iframeWindow,
@@ -1379,12 +1439,15 @@ var ZoteroVim = {
   /** Update from either the generic key buffer or the note editor's leader buffer. */
   _updateSpacekeys(state, modePrefix, buffer = state.keyBuffer, source = 'keys') {
     const leader = buffer?.startsWith(' ') && ['normal:', 'main:'].includes(modePrefix);
-    if ((!leader && !this._isReaderHintPrefix(modePrefix, buffer))
+    const target = modePrefix === 'normal:' && buffer?.startsWith('z')
+      ? this._annotationStyleTarget?.(state, state.reader) : null;
+    if ((!leader && !target && !this._isReaderHintPrefix(modePrefix, buffer))
         || !this.getPref('spacekeys.enabled', true)) {
       this._hideSpacekeys(state);
       return;
     }
-    const rows = this._spacekeysRows(modePrefix, buffer);
+    const annotation = target && (this._canConvertAnnotation(target) ? 'style' : 'color');
+    const rows = this._spacekeysRows(modePrefix, buffer, annotation);
     if (!rows.length) { this._hideSpacekeys(state); return; }
     try {
       const sourceWin = source === 'note' ? state._contextNoteEditorWin
@@ -1432,6 +1495,7 @@ var ZoteroVim = {
       }
       ui.buffer = buffer;
       ui.rows = rows;
+      ui.annotationKey = target?.key;
       if (ui.el) this._renderSpacekeys(state, ui);
     } catch (e) {
       this._hideSpacekeys(state);
@@ -1458,9 +1522,11 @@ var ZoteroVim = {
       while (ui.el.firstChild) ui.el.removeChild(ui.el.firstChild);
       const header = h('div');
       header.style.cssText = 'font:bold 12px/1.5 monospace;color:#89b4fa;margin-bottom:6px;';
-      const bracket = this._isReaderHintPrefix('normal:', ui.buffer);
-      header.textContent = (bracket ? (this._isZhLocale() ? '跳转  ' : 'Jump  ') : 'Spacekeys  ')
-        + ui.buffer.replace(/ /g, '␣');
+      const zh = this._isZhLocale();
+      let title = 'Spacekeys';
+      if (ui.buffer.startsWith('z')) title = zh ? '标注' : 'Annotations';
+      else if (this._isReaderHintPrefix('normal:', ui.buffer)) title = zh ? '跳转' : 'Jump';
+      header.textContent = title + '  ' + ui.buffer.replace(/ /g, '␣');
       ui.el.appendChild(header);
       const grid = h('div');
       grid.style.cssText = 'display:grid;grid-template-columns:max-content minmax(0,1fr);'
@@ -1473,12 +1539,25 @@ var ZoteroVim = {
         label.style.cssText = 'overflow-wrap:anywhere;';
         label.textContent = row.label + (row.grouped ? '  + ' : '');
         grid.appendChild(key);
+        if (row.style) {
+          const swatch = h('span');
+          swatch.style.cssText = 'display:inline-block;width:10px;height:10px;margin-right:7px;'
+            + 'border-radius:2px;vertical-align:baseline;background:' + row.style.color + ';';
+          swatch.setAttribute('title', row.swatchLabel);
+          swatch.setAttribute('role', 'img');
+          swatch.setAttribute('aria-label', row.swatchLabel);
+          const cell = h('span');
+          cell.appendChild(swatch);
+          cell.appendChild(label);
+          grid.appendChild(cell);
+          continue;
+        }
         grid.appendChild(label);
       }
       ui.el.appendChild(grid);
       const footer = h('div');
       footer.style.cssText = 'color:#a6adc8;font-size:11px;margin-top:6px;';
-      footer.textContent = this._isZhLocale()
+      footer.textContent = zh
         ? 'Esc 取消 · 继续输入组合键' : 'Esc cancel · Keep typing a chord';
       ui.el.appendChild(footer);
     } catch (e) {
@@ -1850,9 +1929,10 @@ var ZoteroVim = {
     }
     if ((state._spacekeys && state._spacekeys.sourceWin !== pdfWin)
         || (state.activePdfWin && state.activePdfWin !== pdfWin
-          && this._isReaderHintPrefix(state.mode + ':', state.keyBuffer))) {
+          && this._isReaderHintPrefix(state.mode + ':', state.keyBuffer, state))) {
       this._cancelSpacekeys(state);
     }
+    if (state._spacekeys?.annotationKey) this._syncSpacekeysContext(state);
     if (state._orderedVisual && state._orderedVisual.pdfWin !== pdfWin) {
       this._clearOrderedReaderVisual(state);
     }
@@ -1994,7 +2074,7 @@ var ZoteroVim = {
     if (!keyStr) return;
 
     if (keyStr === 'escape' && (state.keyBuffer?.startsWith(' ')
-        || this._isReaderHintPrefix(state.mode + ':', state.keyBuffer))) {
+        || this._isReaderHintPrefix(state.mode + ':', state.keyBuffer, state))) {
       this._cancelSpacekeys(state);
       event.preventDefault();
       event.stopImmediatePropagation();
@@ -2230,8 +2310,11 @@ var ZoteroVim = {
     this._updateIndicator(state);
   },
 
-  _isReaderHintPrefix(modePrefix, buffer) {
-    return modePrefix === 'normal:' && (buffer === '[' || buffer === ']');
+  _isReaderHintPrefix(modePrefix, buffer, state = null) {
+    if (modePrefix === 'normal:' && (buffer === '[' || buffer === ']')) return true;
+    if (!buffer?.startsWith('z')) return false;
+    return modePrefix === 'visual:' || (modePrefix === 'normal:' && !!state
+      && !!this._annotationStyleTarget?.(state, state.reader));
   },
 
   _processBuffer(buffer, exact, possible, modePrefix, bindings, state) {
@@ -2272,7 +2355,8 @@ var ZoteroVim = {
         state.countBuffer = '';
         this._updateIndicator(state);
         this._hideSpacekeys(state);
-      }, leader || this._isReaderHintPrefix(modePrefix, buffer) ? this.getSpacekeysTimeout() : 1200);
+      }, leader || this._isReaderHintPrefix(modePrefix, buffer, state)
+        ? this.getSpacekeysTimeout() : 1200);
       return;
     }
     state.keyBuffer = '';
@@ -2321,7 +2405,7 @@ var ZoteroVim = {
     if (this._shortcutHelpForWindow?.(state.reader?._window
         || state.reader?._iframe?.ownerDocument?.defaultView)) return true;
     if (keyStr === 'escape' && (state.keyBuffer?.startsWith(' ')
-        || this._isReaderHintPrefix(state.mode + ':', state.keyBuffer))) return true;
+        || this._isReaderHintPrefix(state.mode + ':', state.keyBuffer, state))) return true;
     if (state._outlinePicker && (!pdfWin || state._outlinePicker.pdfWin === pdfWin)) return true;
     if (state._readerFlash && (!pdfWin || state._readerFlash.pdfWin === pdfWin)) return true;
     if (this._readerLinkHintOwnsKey?.(state, keyStr, pdfWin)) return true;
@@ -2379,6 +2463,13 @@ var ZoteroVim = {
 
   // ── Action dispatcher ─────────────────────────────────────────────────────
 
+  _annotationStyleForAction(action) {
+    const match = /^(highlight|underline|recolor)([A-Z][a-z]+)$/.exec(action);
+    const colorName = match?.[2].toLowerCase();
+    return Object.hasOwn(this.COLORS, colorName)
+      ? { type: match[1], color: this.COLORS[colorName] } : null;
+  },
+
   _executeAction(action, reader, state, pdfWin, count = 0) {
     try {
       state._readerJumpRequest = null;
@@ -2412,16 +2503,39 @@ var ZoteroVim = {
         return;
       }
 
-      if ([
-        'deleteAnnotation', 'recolorYellow', 'recolorRed', 'recolorGreen',
-        'recolorBlue', 'recolorPurple', 'highlightYellow', 'highlightRed',
-        'highlightGreen', 'highlightBlue', 'highlightPurple', 'addNote',
-      ].includes(action) && this._readerChangeTargetAvailable(
-        action,
-        reader,
-        state,
-        pdfWin
-      )) {
+      const style = this._annotationStyleForAction(action);
+      if (style) {
+        const { type, color } = style;
+        if (state.mode !== 'normal' && type !== 'recolor') {
+          if (this._readerChangeTargetAvailable(action, reader, state, pdfWin)) {
+            state.lastReaderChange = { action, count };
+          }
+          return this._annotateSelection(state, reader, pdfWin, type, color);
+        }
+        const target = this._annotationStyleTarget(state, reader);
+        if (!target) {
+          if ((action === 'highlightBlue' || action === 'recolorBlue')
+              && !reader?._internalReader?._state?.selectedAnnotationIDs?.length) {
+            this._scrollToPagePosition(pdfWin, 'bottom');
+          } else {
+            this._showStatus(state, this._isZhLocale()
+              ? '✗ 请先选中一个可编辑的标注' : '✗ Select an editable annotation', 2000);
+          }
+          return;
+        }
+        const convertible = this._canConvertAnnotation(target);
+        if (!convertible && type === 'underline') {
+          this._showStatus(state, this._isZhLocale()
+            ? '该标注仅支持改色，请使用小写颜色键' : 'Use a lowercase colour key to recolour', 1800);
+          return;
+        }
+        state.lastReaderChange = { action, count };
+        return this._styleAnnotation(state, target, color,
+          convertible && type !== 'recolor' ? type : null);
+      }
+
+      if ((action === 'deleteAnnotation' || action === 'addNote')
+          && this._readerChangeTargetAvailable(action, reader, state, pdfWin)) {
         state.lastReaderChange = { action, count };
       }
 
@@ -2434,8 +2548,7 @@ var ZoteroVim = {
       // count; `G`/`gg` with a count jump to that page number.
       const n = Math.max(1, count || 1);
 
-      // Scrolling / page navigation clears any active annotation selection so that
-      // zb (recolorBlue) correctly falls through to the scroll-to-bottom path.
+      // Scrolling and page navigation clear the plugin's last annotation jump.
       const clearAnnotation = () => { state.lastAnnotationKey = null; };
 
       // While the PDF document is still loading there is nothing rendered to
@@ -2565,17 +2678,6 @@ var ZoteroVim = {
           }
           break;
         case 'deleteAnnotation':  this._deleteAnnotation(state, reader);                        break;
-        case 'recolorYellow':   this._recolorAnnotation(state, reader, this.COLORS.yellow); break;
-        case 'recolorRed':      this._recolorAnnotation(state, reader, this.COLORS.red);    break;
-        case 'recolorGreen':    this._recolorAnnotation(state, reader, this.COLORS.green);  break;
-        case 'recolorBlue':
-          if (state.lastAnnotationKey) {
-            this._recolorAnnotation(state, reader, this.COLORS.blue);
-          } else {
-            this._scrollToPagePosition(pdfWin, 'bottom');
-          }
-          break;
-        case 'recolorPurple':   this._recolorAnnotation(state, reader, this.COLORS.purple); break;
         case 'filterYellow':    this._filterByColor(state, reader, this.COLORS.yellow); break;
         case 'filterRed':       this._filterByColor(state, reader, this.COLORS.red);    break;
         case 'filterGreen':     this._filterByColor(state, reader, this.COLORS.green);  break;
@@ -2671,12 +2773,9 @@ var ZoteroVim = {
           this._selectVisualTextObject(state, pdfWin, '{');
           break;
 
-        case 'highlightYellow':  this._highlight(state, reader, pdfWin, this.COLORS.yellow);  break;
-        case 'highlightRed':     this._highlight(state, reader, pdfWin, this.COLORS.red);     break;
-        case 'highlightGreen':   this._highlight(state, reader, pdfWin, this.COLORS.green);   break;
-        case 'highlightBlue':    this._highlight(state, reader, pdfWin, this.COLORS.blue);    break;
-        case 'highlightPurple':  this._highlight(state, reader, pdfWin, this.COLORS.purple);  break;
-        case 'addNote':          this._addNote(state, reader, pdfWin);                         break;
+        case 'addNote':
+          return this._annotateSelection(state, reader, pdfWin, 'highlight',
+            this.getDefaultHighlightColor(), { focusComment: true });
         case 'copySelection':    this._copySelection(state, pdfWin);                           break;
         case 'translateSelection':
           this._translateSelection(state, reader, pdfWin)

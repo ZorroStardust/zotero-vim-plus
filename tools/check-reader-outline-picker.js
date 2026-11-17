@@ -12,6 +12,7 @@ const context = vm.createContext({
   Services: { focus: {}, prefs: { getPrefType: () => 0 } },
   Components: { utils: {
     unwrap: value => value, exportFunction: fn => fn,
+    waiveXrays: value => value.content,
     cloneInto(value, target) {
       const copy = JSON.parse(JSON.stringify(value));
       clones.push({ value: copy, target });
@@ -939,13 +940,13 @@ async function main() {
     let reads = 0;
     pdfDocument.getPage = async page => {
       reads++;
-      return { getTextContent: async () => ({ items: page === 3 ? [
+      return { content: { getTextContent: async () => ({ items: page === 3 ? [
         run('Figure', 30, 720, 31), run('2. Setup', 64, 720),
         run('Figure 2 shows the equipment', 280, 720, 160),
         run('See Table 1 for the baseline.', 30, 680, 130),
         run('TABLE IV', 280, 680),
         run('Outcome metrics', 273, 665, 56),
-      ] : [] }) };
+      ] : [] }) } };
     };
     pdfViewer.scrollPageIntoView = dest => f.secondary.calls.push(dest);
     key(f, ' ', {}, f.secondary); key(f, 'f', {}, f.secondary); key(f, 'g', {}, f.secondary);
@@ -1060,8 +1061,7 @@ async function main() {
     removeAttribute: key => attributes.delete(key) };
     const viewport = {
       width: 612 * zoom, height: 792 * zoom,
-      convertToViewportRectangle: r => [r[0] * zoom, (792 - r[1]) * zoom,
-        r[2] * zoom, (792 - r[3]) * zoom],
+      convertToViewportPoint: (x, y) => [x * zoom, (792 - y) * zoom],
       convertToPdfPoint: (x, y) => [x / zoom, 792 - y / zoom],
     };
     pdfViewer.getPageView = () => ({ viewport, div });
@@ -1071,8 +1071,8 @@ async function main() {
     for (const prefix of [']', '[']) {
       key(f, prefix); key(f, 'f');
       await settle();
-      assert.equal(f.state._readerCaptionJumps.get(f.primary.win).node, div);
-      assert.equal(attributes.get('data-zv-caption-jump'), '');
+      assert.equal(f.state._readerJumpCues.get(f.primary.win).node, div);
+      assert.equal(attributes.get('data-zv-jump-cue'), '');
     }
     assert.equal(drawingReads, 1);
     assert.deepEqual(f.secondary.calls, []);
@@ -1081,12 +1081,12 @@ async function main() {
     assert.ok(scale > 0 && scale < zoom);
     assert.ok((40 - x) * scale > 0 && (240 - x) * scale < 280);
     assert.ok((y - 770) * scale > 0 && (y - 657.8) * scale < 160);
-    const [top, , bottom, left] = properties.get('--zv-caption-jump-inset')
+    const [top, , bottom, left] = properties.get('--zv-jump-cue-inset')
       .split(' ').map(Number.parseFloat);
     assert.ok(Math.abs(top - (792 - 770) / 792 * 100) < 0.001);
     assert.ok(Math.abs(bottom - 657.8 / 792 * 100) < 0.001);
     assert.ok(Math.abs(left - 40 / 612 * 100) < 0.001);
-    z._clearReaderCaptionJump(f.state, f.primary.win);
+    z._clearReaderJumpCue(f.state, f.primary.win);
     assert.equal(attributes.size, 0);
     assert.equal(properties.size, 0);
   });
@@ -1115,6 +1115,59 @@ async function main() {
       { x: 128, right: 149, y: 608, height: 8, text: '4.8' }];
     const region = z._readerCaptionRegion(caption, [caption], { painted, lines }, []);
     assert.deepEqual(Array.from(region), [40, 582, 290, 689]);
+  });
+
+  await check('graphic navigation still uses the caption anchor when viewport projection fails', async () => {
+    const f = fixture(async () => []);
+    const { pdfViewer } = f.primary.app;
+    pdfViewer.container = { clientWidth: 300, clientHeight: 400 };
+    pdfViewer.getPageView = () => ({ viewport: {
+      convertToViewportPoint: () => { throw new Error('Unavailable viewport transform'); },
+    } });
+    pdfViewer.scrollPageIntoView = dest => f.primary.calls.push(dest);
+    const moved = await z._goToReaderCaption(f.state, f.reader, f.primary.win,
+      { pageIndex: 1, kind: 'table', left: 60, top: 630, rect: [60, 610, 220, 630] });
+    assert.equal(moved, true);
+    assert.deepEqual(f.primary.calls, [
+      { pageNumber: 2, destArray: [null, { name: 'XYZ' }, 60, 630, null] },
+    ]);
+  });
+
+  await check('heading jumps cue printed text in the originating pane without delaying navigation', async () => {
+    const f = fixture(async () => []);
+    const { pdfDocument, pdfViewer } = f.secondary.app;
+    pdfDocument.getOutline = async () => [
+      { title: 'Model Setup and Evaluation', dest: [1, { name: 'XYZ' }, 40, 700, null] },
+    ];
+    const text = deferred();
+    pdfDocument.getPage = async () => ({ getTextContent: () => text.promise });
+    const properties = new Map(), attributes = new Map();
+    const div = { style: {
+      setProperty: (name, value) => properties.set(name, value),
+      removeProperty: name => properties.delete(name),
+    }, setAttribute: (name, value) => attributes.set(name, value),
+    removeAttribute: name => attributes.delete(name) };
+    pdfViewer.getPageView = () => ({
+      div, viewport: { width: 600, height: 800, viewBox: [0, 0, 600, 800],
+        convertToViewportPoint: (x, y) => [x, 800 - y] },
+    });
+    key(f, ']', {}, f.secondary); key(f, 's', {}, f.secondary);
+    await settle();
+    assert.deepEqual(f.secondary.calls, ['page=2']);
+    assert.equal(attributes.size, 0);
+    text.resolve({ items: [
+      run('III. Model Setup', 45, 685, 100), run('and Evaluation', 45, 672, 93),
+      run('and Evaluation', 335, 672, 95),
+    ] });
+    await settle();
+    assert.equal(attributes.get('data-zv-jump-cue'), '');
+    const [top, right, bottom, left] = properties.get('--zv-jump-cue-inset')
+      .split(' ').map(Number.parseFloat);
+    assert.ok(Math.abs(top - (800 - 695) / 8) < 0.001);
+    assert.ok(Math.abs(right - (600 - 145) / 6) < 0.001);
+    assert.ok(Math.abs(bottom - 669.8 / 8) < 0.001);
+    assert.equal(left, 7.5);
+    assert.deepEqual(f.primary.calls, []);
   });
 
   await check('heading, bookmark and annotation jumps route to the requested pane', async () => {

@@ -587,6 +587,7 @@ Pulsa `[` para ir al elemento anterior o `]` para ir al siguiente, seguido de la
 Pulsa `<space>fg` para buscar los pies de figura y los títulos de tabla.
 El salto resalta brevemente la figura o tabla junto con su pie o título cuando
 se pueden identificar ambos.
+Los saltos del índice también resaltan brevemente el encabezado.
 La anotación seleccionada se resalta en el visor de PDF y la barra lateral se desplaza a su tarjeta.
 
 | Tecla | Acción |

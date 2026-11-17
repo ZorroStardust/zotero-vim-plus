@@ -943,7 +943,7 @@ var ZoteroVim = {
     for (const [viewWin, handlers] of state._pdfViewHandlers.entries()) {
       if (wantedWins.includes(viewWin)) continue;
       this._clearOrderedReaderVisual?.(state, viewWin);
-      this._clearReaderCaptionJump?.(state, viewWin);
+      this._clearReaderJumpCue?.(state, viewWin);
       if (state._translationPopup?.pdfWin === viewWin) {
         this._closeTranslationPopup(state, false);
       }
@@ -1224,7 +1224,7 @@ var ZoteroVim = {
     if (state) state._readerSplitFocus = null;
     if (!state?._pdfViewHandlers) return;
     for (const [viewWin, handlers] of state._pdfViewHandlers.entries()) {
-      this._clearReaderCaptionJump?.(state, viewWin);
+      this._clearReaderJumpCue?.(state, viewWin);
       try { viewWin.removeEventListener('keydown', handlers.keyDown, true); } catch (_) {}
       try { viewWin.removeEventListener('keyup', handlers.keyUp, true); } catch (_) {}
       try { viewWin.removeEventListener('blur', handlers.blur, true); } catch (_) {}
@@ -1519,16 +1519,17 @@ var ZoteroVim = {
         '}',
         '.zv-flash-selection-rect { background-color: rgb(var(--zv-selection-rgb)); }',
         ':root[data-zv-flash-preview] .textLayer ::selection { background: transparent !important; }',
-        '.page[data-zv-caption-jump]::after {',
-        '  content: ""; position: absolute; inset: var(--zv-caption-jump-inset);',
+        // PDF.js reserves ::after for its loading indicator and hides it after rendering.
+        '.page[data-zv-jump-cue]::before {',
+        '  content: ""; display: block; position: absolute; inset: var(--zv-jump-cue-inset);',
         '  pointer-events: none; z-index: 8; border-radius: 7px;',
         '  background: rgba(68,196,185,.08); outline: 2px solid #208d86; outline-offset: 4px;',
         '  box-shadow: 0 0 0 6px rgba(247,255,254,.78), 0 0 15px rgba(26,119,114,.25);',
-        '  animation: zv-caption-jump-fade 1.4s ease-out both;',
+        '  animation: zv-jump-cue-fade 1.4s ease-out both;',
         '}',
-        '@keyframes zv-caption-jump-fade { 0%,55% { opacity: 1; } 100% { opacity: 0; } }',
+        '@keyframes zv-jump-cue-fade { 0%,55% { opacity: 1; } 100% { opacity: 0; } }',
         '@media (prefers-reduced-motion: reduce) {',
-        '  .page[data-zv-caption-jump]::after { animation: none; }',
+        '  .page[data-zv-jump-cue]::before { animation: none; }',
         '}',
         // Blinking cursor animation for visual mode.
         '@keyframes zv-cursor-blink {',

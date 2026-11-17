@@ -152,9 +152,12 @@ Los prefijos de conteo multiplican el paso — `3j` desplaza tres pasos,
 
 #### Abrir enlaces visibles
 
-Pulsa `f` para mostrar letras junto a los enlaces internos, las citas y los
-enlaces externos visibles en el panel del PDF. Escribe una etiqueta para abrir
-el enlace. Retroceso borra la última letra y Esc cancela.
+Pulsa `f` para mostrar letras junto a los enlaces, las citas, los DOI, los
+identificadores de arXiv y las URL HTTP(S) visibles en el panel del PDF.
+Escribe una etiqueta para abrir el enlace. Retroceso borra la última letra y Esc cancela.
+
+Si Zotero reconoce varias referencias en una cita, su etiqueta abre una lista
+para elegir la entrada exacta.
 
 #### Navegación por páginas
 

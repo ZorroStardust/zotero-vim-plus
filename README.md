@@ -241,10 +241,15 @@ separate from named marks and supports count prefixes (`3ctrl+o`).
 
 #### Follow visible PDF links
 
-Press `f` to label visible internal links, citations and external links in the
-current pane. Type a label to follow it, use Backspace to edit a partial label
-or press Esc to cancel. Internal links add a reading-history entry and briefly
-outline the destination. The command palette also offers **Open visible PDF links**.
+Press `f` to label visible internal links, citations, external links and plain
+DOIs, arXiv IDs and HTTP(S) URLs in the current pane. Type a label to follow it,
+use Backspace to edit a partial label or press Esc to cancel. Internal links add
+a reading-history entry and briefly outline the destination. The command
+palette also offers **Open visible PDF links**.
+
+When Zotero resolves a citation to several references, its hint opens a list
+of the available entries. Type an entry's label or select it with the arrow
+keys and Enter. Backspace returns to the page hints.
 
 #### Page navigation
 

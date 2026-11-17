@@ -1216,11 +1216,18 @@ async function main() {
     const pane = prepareLinkPane(f.secondary);
     const source = rect => ({ pageIndex: 0, rects: [rect] });
     const firstRef = { pageIndex: 4, rects: [[30, 30, 90, 55]] };
-    const citation = { type: 'citation', position: source([30, 650, 40, 661]),
-      references: [{ position: firstRef }, { position: { ...firstRef, pageIndex: 6 } }] };
+    const secondRef = { pageIndex: 4, rects: [[30, 62, 95, 85]] };
+    const citation = { type: 'citation', position: source([30, 650, 100, 661]),
+      references: [
+        { index: 16, text: '[16] First reference', position: firstRef },
+        { index: 17, text: '[17] Second reference', position: secondRef },
+        { index: 17, position: secondRef }, { index: 99, position: { pageIndex: 99 } },
+      ] };
     const external = { type: 'external-link', position: source([50, 705, 90, 720]),
       url: 'https://example.org/Case?foo=Bar#Here' };
-    pane.view._pdfPages = { 0: { overlays: [citation, external, external,
+    pane.view._pdfPages = { 0: { overlays: [
+      { type: 'internal-link', position: citation.position, destinationPosition: firstRef },
+      citation, external, external,
       { ...external, position: source([120, 680, 140, 698]) },
       { ...external, position: source([20, 15, 40, 35]) },
       { ...external, position: source([20, 620, 40, 640]), url: 'javascript:ignored' },
@@ -1245,12 +1252,56 @@ async function main() {
     assert.equal(f.state._readerLinkHints, null);
     key(f, 'f', {}, pane);
     ui = f.state._readerLinkHints;
-    key(f, ui.badges.find(b => b.target.position).label, {}, pane);
+    const group = ui.badges.find(b => b.target.references);
+    key(f, group.label, {}, pane);
+    assert.equal(ui.citationPicker.choices.length, 2);
+    assert.equal(ui.citationPicker.choices[1].el.children[1].textContent, '[17] Second reference');
+    assert.ok(ui.badges.every(badge => badge.el.hidden));
+    key(f, 'Enter', {}, pane);
+    assert.deepEqual(jumps, []);
+    key(f, 'Backspace', {}, pane);
+    assert.equal(ui.citationPicker, null);
+    assert.ok(ui.badges.every(badge => !badge.el.hidden));
+    key(f, group.label, {}, pane);
+    assert.equal(z._readerConsumesKey(f.state, 'arrowdown', pane.win), true);
+    key(f, 'ArrowDown', {}, pane);
+    key(f, 'ArrowDown', {}, pane);
+    key(f, 'Enter', {}, pane);
     await settle();
-    assert.deepEqual(jumps, [{ position: firstRef }]);
+    assert.deepEqual(jumps, [{ position: secondRef }]);
+    assert.equal(f.state._readerLinkHints, null);
     assert.equal(clones.at(-1).target, f.reader._iframeWindow);
     assert.equal(pane.history, 0, 'Zotero owns the history for native links');
     assert.equal(f.primary.history, 0);
+  });
+
+  await check('individual authored citation links and single references still jump directly', async () => {
+    const f = fixture();
+    const pane = prepareLinkPane(f.primary);
+    const first = { pageIndex: 3, rects: [[30, 45, 90, 60]] };
+    const second = { pageIndex: 3, rects: [[30, 80, 90, 97]] };
+    pane.view._pdfPages = { 0: { overlays: [
+      { type: 'citation', position: { pageIndex: 0, rects: [[20, 620, 90, 635]] },
+        references: [{ position: first }, { position: second }] },
+      { type: 'internal-link', position: { pageIndex: 0, rects: [[22, 620, 37, 635]] },
+        destinationPosition: first },
+      { type: 'citation', position: { pageIndex: 0, rects: [[30, 680, 60, 694]] },
+        references: [{ position: second }] },
+    ] } };
+    const jumps = [];
+    pane.view.navigate = payload => jumps.push(payload.position);
+    key(f, 'f');
+    let ui = f.state._readerLinkHints;
+    assert.equal(ui.badges.length, 3);
+    key(f, ui.badges[0].label);
+    await settle();
+    assert.deepEqual(jumps, [second]);
+    assert.equal(ui.citationPicker, undefined);
+    key(f, 'f');
+    ui = f.state._readerLinkHints;
+    key(f, ui.badges.find(badge => badge.target.position?.rects[0][1] === 45).label);
+    await settle();
+    assert.deepEqual(jumps, [second, first]);
   });
 
   await check('authored links keep their destinations and late discovery cannot restore closed hints', async () => {
@@ -1308,6 +1359,105 @@ async function main() {
     pane.win.innerHeight = 50; // The viewport moved before a scroll event retired the hints.
     for (const letter of last.label) key(f, letter);
     assert.deepEqual(urls, []);
+    assert.equal(f.state._readerLinkHints, null);
+  });
+
+  await check('text link recognition keeps source offsets, original URLs and identifier versions', () => {
+    const text = '😀 doi:10.1000/Part%3CInside%3E (10.1234/Case(A)). 10/AbCd '
+      + '2501.01234v2 hep-th/9901001v3 math.GT/0309136v1 '
+      + '(HTTPS://Example.org/Case(x)?Token=AbC#Part). '
+      + 'https://doi.org/10.1000/Alpha%28X%29?from=Reader#Section '
+      + 'https://arxiv.org/pdf/2412.01234v2.pdf?download=1 '
+      + 'ftp://example.org/10.1234/Hidden 10/20 CID:AB-12 2024.12345 2501.012345 '
+      + '2501.01234v2X hep-th/99010012';
+    const matches = Array.from(z._readerTextIdentifiers(text));
+    assert.deepEqual(matches.map(({ start, end, url }) => [text.slice(start, end), url]), [
+      ['10.1000/Part%3CInside%3E', 'https://doi.org/10.1000/Part%3CInside%3E'],
+      ['10.1234/Case(A)', 'https://doi.org/10.1234/Case(A)'],
+      ['10/AbCd', 'https://doi.org/10/AbCd'],
+      ['2501.01234v2', 'https://arxiv.org/abs/2501.01234v2'],
+      ['hep-th/9901001v3', 'https://arxiv.org/abs/hep-th/9901001v3'],
+      ['math.GT/0309136v1', 'https://arxiv.org/abs/math.GT/0309136v1'],
+      ['HTTPS://Example.org/Case(x)?Token=AbC#Part', 'HTTPS://Example.org/Case(x)?Token=AbC#Part'],
+      ['https://doi.org/10.1000/Alpha%28X%29?from=Reader#Section',
+        'https://doi.org/10.1000/Alpha%28X%29?from=Reader#Section'],
+      ['https://arxiv.org/pdf/2412.01234v2.pdf?download=1',
+        'https://arxiv.org/pdf/2412.01234v2.pdf?download=1'],
+    ]);
+    assert.equal(matches[0].start, text.indexOf('10.1000'));
+  });
+
+  await check('visible text joins styled spans and native links win only at the same location', () => {
+    const f = fixture();
+    const pane = prepareLinkPane(f.primary);
+    const { doc } = pane;
+    const page = pane.app.pdfViewer.getPageView(0).div;
+    const layer = doc.createElement('div');
+    page.appendChild(layer);
+    page.querySelector = selector => selector === '.textLayer' ? layer : null;
+    const box = (x, y, width, height) =>
+      ({ left: x, top: y, right: x + width, bottom: y + height, width, height });
+    layer.getBoundingClientRect = () => box(0, 0, 600, 800);
+    const span = (text, x, y) => {
+      const el = doc.createElement('span');
+      el.firstChildNode = { nodeType: 3, data: text, ownerDocument: doc, parentElement: el,
+        get isConnected() { return el.isConnected; } };
+      Object.defineProperty(el, 'firstChild', { value: el.firstChildNode });
+      el.getBoundingClientRect = () => box(x, y, text.length * 6, 14);
+      layer.appendChild(el);
+      return el;
+    };
+    const authoredText = 'https://example.org/Printed';
+    span(authoredText, 30, 30);
+    span(authoredText, 30, 60);
+    const prefix = 'Split https://Example.org/';
+    span(prefix, 30, 90);
+    span('https://Example.org/', 30 + 'Split '.length * 6, 90);
+    const splitTail = span('Case?Q=X#Part.', 30 + prefix.length * 6, 90);
+    span('https://', 30, 120);
+    span('other.example/column', 330, 120);
+    span('Score 10/20', 30, 140);
+    span('2501.01234v2', 30, 560);
+    layer.querySelectorAll = () => layer.children;
+    doc.createRange = () => {
+      let node, start, end;
+      return {
+        setStart(value, offset) { node = value; start = offset; },
+        setEnd(_value, offset) { end = offset; },
+        getClientRects() {
+          const rect = node.parentElement.getBoundingClientRect();
+          return [box(rect.left + start * 6, rect.top, (end - start) * 6, rect.height)];
+        },
+      };
+    };
+    const nativeURL = 'https://example.org/Native';
+    pane.view._pdfPages = { 0: { overlays: [
+      {
+        type: 'external-link', source: 'annotation', url: nativeURL,
+        position: { pageIndex: 0, rects: [[30, 756, 30 + authoredText.length * 6, 770]] },
+      },
+      {
+        type: 'external-link', source: 'parsed', url: 'https://Example.org/',
+        position: { pageIndex: 0, rects: [[66, 696, 30 + prefix.length * 6, 710]] },
+      },
+      {
+        type: 'external-link', source: 'parsed', url: 'https://doi.org/10%2F20',
+        position: { pageIndex: 0, rects: [[66, 646, 96, 660]] },
+      },
+    ] } };
+    const launched = [];
+    pane.view._onOpenLink = url => launched.push(url);
+    f.state._readerBodyText = true;
+    key(f, 'f');
+    const ui = f.state._readerLinkHints;
+    assert.deepEqual(Array.from(ui.badges, badge => badge.target.url),
+      [nativeURL, authoredText, 'https://Example.org/Case?Q=X#Part']);
+    const last = ui.badges.at(-1);
+    assert.equal(last.target.parts.length, 2);
+    assert.equal(last.target.parts[0].value.slice(last.target.parts[0].start), 'https://Example.org/');
+    splitTail.firstChild.data = 'Different text';
+    key(f, last.label);
+    assert.deepEqual(launched, []);
     assert.equal(f.state._readerLinkHints, null);
   });
 

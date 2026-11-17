@@ -260,6 +260,8 @@ Si la pestaña actual es un lector de PDF, abrir una nota desde esta superposici
 | `/` (con el esquema enfocado) | Abrir la misma búsqueda desde el árbol |
 | `Ctrl+h` (PDF, árbol abierto en este panel) | Enfocar el árbol del esquema |
 | `Ctrl+l` (con el esquema enfocado) | Volver al PDF sin cerrar el árbol |
+| `Ctrl+0` (con el esquema abierto en este panel) | Ajustar el PDF al ancho disponible |
+| `Ctrl+-` / `Ctrl+=` (con el esquema abierto en este panel) | Reducir / ampliar el PDF |
 | `j` / `k` | Mover la selección de esquema hacia abajo / arriba |
 | `Ctrl+d` / `Ctrl+u` | Movimiento rápido hacia abajo / arriba |
 | `l` | Expandir el nodo de esquema seleccionado |

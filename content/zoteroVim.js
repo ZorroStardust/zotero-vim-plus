@@ -1115,7 +1115,9 @@ var ZoteroVim = {
             // PDF window), so the keystroke never reaches the KeyboardManager.
             if (zv._nativeEditableFocused(reader)) return;
             const keyStr = zv._keyString(event);
-            if (zv._readerConsumesKey(state, keyStr, view._iframeWindow)) return;
+            const pdfWin = view._iframeWindow;
+            if (zv._readerOutlineZoomKey(event, state, pdfWin)
+                || zv._readerConsumesKey(state, keyStr, pdfWin)) return;
           } catch (_) {}
           return orig.call(view, event);
         };
@@ -1987,7 +1989,8 @@ var ZoteroVim = {
       return;
     }
 
-    const keyStr = this._keyString(event);
+    const outlineZoomKey = this._readerOutlineZoomKey(event, state, pdfWin);
+    const keyStr = outlineZoomKey || this._keyString(event);
     if (!keyStr) return;
 
     if (keyStr === 'escape' && (state.keyBuffer?.startsWith(' ')
@@ -2139,6 +2142,14 @@ var ZoteroVim = {
       const sp = Object.keys(bindings).filter(k => this._bindingMatchesPrefix(k, modePrefix, keyStr));
       const se = bindings[modePrefix + keyStr];
       if (sp.length === 0 && !se) {
+        if (outlineZoomKey) {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          const app = pdfWin.PDFViewerApplication;
+          if (outlineZoomKey === 'ctrl+0') app.pdfViewer.currentScaleValue = 'page-width';
+          else if (outlineZoomKey === 'ctrl+-') app.zoomOut();
+          else app.zoomIn();
+        }
         this._hideSpacekeys(state);
         return;
       }
@@ -2279,6 +2290,24 @@ var ZoteroVim = {
     if (event.altKey) parts.push('alt');
     parts.push(key.length === 1 ? key : key.toLowerCase());
     return parts.join('+');
+  },
+
+  /** Recognize Zotero's PDF zoom keys while the pane's outline owns keyboard input. */
+  _readerOutlineZoomKey(event, state, pdfWin) {
+    if (!(event.ctrlKey || event.metaKey) || event.altKey || event.isComposing
+        || event.key === 'Dead'
+        || state.mode !== 'normal' || !state.outlineExplorerOpen
+        || state._outlineExplorerPdfWin !== pdfWin || !state._outlineExplorerOverlay?.isConnected
+        || !pdfWin?.PDFViewerApplication?.pdfDocument || !pdfWin.PDFViewerApplication.pdfViewer) {
+      return '';
+    }
+    const { key, code, shiftKey } = event;
+    if (key === '+' || key === '＋' || code === 'NumpadAdd') return 'ctrl++';
+    if (key === '=' || key === '＝' || code === 'Equal') return shiftKey ? 'ctrl++' : 'ctrl+=';
+    if (!shiftKey && (key === '-' || key === '－' || code === 'Minus'
+        || code === 'NumpadSubtract')) return 'ctrl+-';
+    if (!shiftKey && (key === '0' || key === '０' || code === 'Digit0')) return 'ctrl+0';
+    return '';
   },
 
   /**

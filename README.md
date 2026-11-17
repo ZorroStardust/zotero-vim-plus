@@ -341,11 +341,13 @@ prefer Zotero's right-side note editor so you can read and edit side by side.
 
 | Key | Action |
 |-----|--------|
-| `<space>e` | Toggle custom outline explorer overlay |
+| `<space>e` | Toggle the outline sidebar in the current PDF pane |
 | `<space>fh` | Search all PDF outline headings directly |
 | `/` (outline focused) | Open the same heading search from the outline tree |
 | `Ctrl+h` (PDF, outline open in this pane) | Focus the outline tree |
 | `Ctrl+l` (outline focused) | Return focus to the PDF, keeping the tree open |
+| `Ctrl+0` (outline open in this pane) | Fit the PDF to the remaining width |
+| `Ctrl+-` / `Ctrl+=` (outline open in this pane) | Zoom out / zoom in |
 | `j` / `k` | Move outline selection down / up |
 | `Ctrl+d` / `Ctrl+u` | Fast move down / up |
 | `l` | Expand selected outline node |
@@ -355,6 +357,9 @@ prefer Zotero's right-side note editor so you can read and edit side by side.
 | Hint letters | Select the hinted outline item without jumping |
 | `Enter` | Jump to selected outline entry and return to Normal mode |
 | `Escape` | Close the outline explorer |
+
+The sidebar takes up space on the left of the current PDF pane. The document
+uses the remaining width, and other panes keep their width.
 
 When the outline explorer opens, it selects the chapter at the current PDF pane's
 reading position, expands that heading's parent path and scrolls it into view.
@@ -1017,7 +1022,7 @@ editors keeps its Zotero behavior).
 
 - [ ] Native reader sidebar integration:
    integrate with Zotero/PDF.js's built-in left sidebar directly. The custom
-   outline explorer overlay is available, but the native sidebar workflow is
+   outline sidebar is available, but the native sidebar workflow is
    still deferred because its focus/DOM behavior is less stable.
 
 ---
@@ -1165,9 +1170,9 @@ failures are reported to `zv-startup.log` in the profile directory with
 | `mainNavUp` | Move selection up (collections tree / item list) |
 | `mainNavFirst` | Jump to the first row |
 | `mainNavLast` | Jump to the last row |
-| `toggleReaderSidebarOutline` | Toggle the custom outline explorer overlay |
+| `toggleReaderSidebarOutline` | Toggle the outline sidebar |
 | `readerOutlinePick` | Search PDF outline headings (`<space>fh`) |
-| `focusReaderSidebar` | Focus or reopen the custom outline explorer overlay |
+| `focusReaderSidebar` | Focus or reopen the outline sidebar |
 | `toggleReaderSplitHorizontal` | Toggle reader horizontal split view |
 | `toggleReaderSplitVertical` | Toggle reader vertical split view |
 | `toggleReaderSpread` | Toggle single/two-page PDF view, remembering the last pairing |

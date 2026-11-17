@@ -1476,15 +1476,16 @@ Object.assign(ZoteroVim, {
     const H = 'http://www.w3.org/1999/xhtml';
     const h = (tag) => doc.createElementNS(H, tag);
     const root = doc.body || doc.documentElement;
+    const width = 'min(320px, 40vw)';
 
     const overlay = h('div');
     overlay.id = 'zv-outline-explorer';
     overlay.tabIndex = -1;
     overlay.style.cssText =
-      'position:fixed;top:0;left:0;bottom:0;width:320px;z-index:99998;' +
-      'background:rgba(24,24,37,0.96);color:#cdd6f4;border-right:1px solid #313244;' +
+      'position:fixed;top:0;left:0;bottom:0;box-sizing:border-box;width:' + width + ';' +
+      'z-index:99998;background:#181825;color:#cdd6f4;border-right:1px solid #313244;' +
       'outline:none!important;display:flex;flex-direction:column;' +
-      'box-shadow:12px 0 40px rgba(0,0,0,0.35);font:13px/1.35 monospace;';
+      'font:13px/1.35 monospace;';
 
     const header = h('div');
     header.style.cssText = 'padding:12px 14px;border-bottom:1px solid #313244;font-weight:bold;letter-spacing:0.04em;';
@@ -1494,7 +1495,8 @@ Object.assign(ZoteroVim, {
     list.style.cssText = 'flex:1;overflow:auto;padding:8px 0;';
 
     const status = h('div');
-    status.style.cssText = 'padding:6px 12px;border-top:1px solid #313244;color:#6c7086;font-size:11px;';
+    status.style.cssText = 'padding:6px 12px;border-top:1px solid #313244;' +
+      'color:#6c7086;font-size:11px;overflow-wrap:anywhere;';
     status.textContent =
       'j/k move  ·  Ctrl+d/u fast  ·  gg/G top/bottom  ·  R/M expand/collapse all  ·  ' +
       '/ search headings  ·  Ctrl+h/l focus  ·  Enter jump';
@@ -1530,12 +1532,41 @@ Object.assign(ZoteroVim, {
     doc.addEventListener('pointerdown', pointer, true);
     doc.addEventListener('mousedown', pointer, true);
     doc.addEventListener('focusin', focus, true);
+    const releaseWidth = this._reserveReaderOutlineWidth(pdfWin, width);
     state._outlineExplorerCleanup = () => {
       doc.removeEventListener('pointerdown', pointer, true);
       doc.removeEventListener('mousedown', pointer, true);
       doc.removeEventListener('focusin', focus, true);
+      releaseWidth?.();
     };
     this._setReaderOutlineExplorerFocus(state, false);
+  },
+
+  /**
+   * Inset this pane's PDF scroll container for the life of the tree. The
+   * iframe itself keeps its size, so notify its usual resize handlers to
+   * update fit zoom and page geometry when the inset is added or removed.
+   */
+  _reserveReaderOutlineWidth(pdfWin, width) {
+    const container = pdfWin.PDFViewerApplication?.pdfViewer?.container
+      || pdfWin.document.getElementById('viewerContainer');
+    if (!container?.isConnected) return null;
+    const style = container.style;
+    const previousLeft = style.getPropertyValue('left');
+    const priority = style.getPropertyPriority('left');
+    style.setProperty('left', width, priority);
+    const appliedLeft = style.getPropertyValue('left');
+    const resize = () => pdfWin.dispatchEvent(new pdfWin.Event('resize'));
+    resize();
+    return () => {
+      try {
+        if (style.getPropertyValue('left') !== appliedLeft
+            || style.getPropertyPriority('left') !== priority) return;
+        if (previousLeft) style.setProperty('left', previousLeft, priority);
+        else style.removeProperty('left');
+        if (!pdfWin.closed && container.isConnected) resize();
+      } catch (_) {} // The PDF window may have been destroyed.
+    };
   },
 
   /** Locate once per opening, expanding only the current chapter's parent path. */

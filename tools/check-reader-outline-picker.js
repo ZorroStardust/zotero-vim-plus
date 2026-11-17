@@ -287,6 +287,95 @@ async function main() {
     assert.deepEqual(f.secondary.calls, []);
   });
 
+  await check('the tree insets its own PDF until closed, including during heading search', async () => {
+    const f = fixture();
+    const resizeInsets = [];
+    const attachViewport = (pane, left = '', priority = '') => {
+      const container = pane.doc.createElementNS('', 'div');
+      pane.doc.body.appendChild(container);
+      Object.assign(container.style, {
+        getPropertyValue: () => left,
+        getPropertyPriority: () => priority,
+        setProperty(_property, value, importance) { left = value; priority = importance; },
+        removeProperty() { left = ''; priority = ''; },
+      });
+      pane.app.pdfViewer.container = container;
+      pane.win.Event = class { constructor(type) { this.type = type; } };
+      pane.win.dispatchEvent = event => {
+        assert.equal(event.type, 'resize');
+        resizeInsets.push({ pane, left });
+      };
+      return container.style;
+    };
+    const primaryStyle = attachViewport(f.primary);
+    const secondaryStyle = attachViewport(f.secondary, '2px', 'important');
+    for (const value of ' e') key(f, value, {}, f.secondary);
+    await settle();
+    const inset = secondaryStyle.getPropertyValue('left');
+    assert.equal(inset, 'min(320px, 40vw)');
+    assert.ok(f.state._outlineExplorerOverlay.style.cssText.includes('width:' + inset + ';'));
+    assert.equal(primaryStyle.getPropertyValue('left'), '');
+    key(f, '/', {}, f.secondary);
+    await settle();
+    assert.ok(f.state._outlinePicker);
+    assert.equal(secondaryStyle.getPropertyValue('left'), inset);
+    key(f, 'Escape', {}, f.secondary);
+    assert.equal(secondaryStyle.getPropertyValue('left'), inset);
+    key(f, 'Escape', {}, f.secondary);
+    assert.equal(secondaryStyle.getPropertyValue('left'), '2px');
+    assert.equal(secondaryStyle.getPropertyPriority('left'), 'important');
+    assert.deepEqual(resizeInsets, [{ pane: f.secondary, left: inset },
+      { pane: f.secondary, left: '2px' }]);
+  });
+
+  await check('native zoom keys work once in the outline pane with tree or PDF focus', async () => {
+    const f = fixture();
+    const { primary, secondary, state } = f;
+    const viewer = secondary.app.pdfViewer;
+    const zoomCalls = [];
+    secondary.app.zoomIn = () => zoomCalls.push('in');
+    secondary.app.zoomOut = () => zoomCalls.push('out');
+    primary.app.pdfViewer.currentScaleValue = 'auto';
+    for (const value of ' e') key(f, value, {}, secondary);
+    await settle();
+    const tree = state._outlineExplorerOverlay;
+    assert.equal(secondary.doc.activeElement, tree);
+    z._patchReaderKeyForwarding(f.reader, state);
+    const zoomKeys = [
+      ['0', 'Digit0', false, 'fit'],
+      ['０', 'Digit0', false, 'fit'],
+      ['-', 'Minus', false, 'out'],
+      ['-', 'NumpadSubtract', false, 'out'],
+      ['=', 'Equal', false, 'in'],
+      ['＝', 'Equal', false, 'in'],
+      ['+', 'Equal', true, 'in'],
+      ['=', 'Equal', true, 'in'],
+      ['+', 'NumpadAdd', false, 'in'],
+    ];
+    for (const focused of [true, false]) {
+      if (!focused) key(f, 'l', { ctrlKey: true }, secondary);
+      assert.equal(z._readerOutlineExplorerFocused(state, secondary.win), focused);
+      for (const [value, code, shiftKey, action] of zoomKeys) {
+        const options = { ctrlKey: true, code, shiftKey };
+        viewer.currentScaleValue = 'auto';
+        zoomCalls.length = 0;
+        secondary.view._onKeyDown({ key: value, ...options });
+        assert.equal(key(f, value, options, secondary).prevented, true);
+        assert.equal(viewer.currentScaleValue, action === 'fit' ? 'page-width' : 'auto');
+        assert.deepEqual(zoomCalls, action === 'fit' ? [] : [action]);
+      }
+    }
+    assert.deepEqual(secondary.forwarded, []);
+    assert.equal(state._outlineExplorerOverlay, tree);
+    const modifier = { ctrlKey: true, code: 'Equal' };
+    assert.equal(key(f, '=', modifier, primary).prevented, undefined);
+    assert.equal(primary.app.pdfViewer.currentScaleValue, 'auto');
+    z._closeReaderOutlineExplorer(state);
+    secondary.view._onKeyDown({ key: '=', ...modifier });
+    assert.deepEqual(secondary.forwarded, ['=']);
+    assert.equal(key(f, '=', modifier, secondary).prevented, undefined);
+  });
+
   await check('tree and picker agree on same-page chapters and newly opened trees use the new reading position', async () => {
     const f = fixture(async () => [{ title: 'Root', dest: [0, { name: 'Fit' }], items: [
       { title: 'Earlier', dest: [2, { name: 'XYZ' }, 0, 700, null], items: [

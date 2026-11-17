@@ -60,6 +60,7 @@ const ZV_DEFAULT_BINDINGS = {
   "normal:ctrl+o":  "navigateBack",
   "normal:ctrl+i":  "navigateForward",
   "normal:/":       "openSearch",
+  "normal:f":       "followReaderLink",
   "normal::":       "openCommandPalette",
   "normal:*":       "searchWordForward",
   "normal:#":       "searchWordBackward",

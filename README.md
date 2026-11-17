@@ -239,6 +239,13 @@ jumps (`gg`/`G`, outline entries, marks, links and annotations) add entries in
 the active split pane; routine `hjkl` motion deliberately does not. It is
 separate from named marks and supports count prefixes (`3ctrl+o`).
 
+#### Follow visible PDF links
+
+Press `f` to label visible internal links, citations and external links in the
+current pane. Type a label to follow it, use Backspace to edit a partial label
+or press Esc to cancel. Internal links add a reading-history entry and briefly
+outline the destination. The command palette also offers **Open visible PDF links**.
+
 #### Page navigation
 
 | Key | Action |

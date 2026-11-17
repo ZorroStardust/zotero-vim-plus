@@ -57,6 +57,7 @@ var ZoteroVim = {
     'normal:ctrl+o':  'navigateBack',
     'normal:ctrl+i':  'navigateForward',
     'normal:/':       'openSearch',
+    'normal:f':       'followReaderLink',
     'normal::':       'openCommandPalette',
     'normal:*':       'searchWordForward',
     'normal:#':       'searchWordBackward',
@@ -807,6 +808,7 @@ var ZoteroVim = {
     state.cleanup = () => {
       this._closeShortcutHelp?.(state, false);
       this._closeReaderFlash?.(state, false);
+      this._closeReaderLinkHints?.(state);
       this._clearOrderedReaderVisual?.(state);
       this._cancelSpacekeys(state);
       // Cancel any insert session that is still resolving an annotation item.
@@ -931,6 +933,9 @@ var ZoteroVim = {
     if (state._readerFlash && !this._readerFlashCurrent(state)) {
       this._closeReaderFlash(state, false);
     }
+    if (state._readerLinkHints && !this._readerLinkHintsCurrent(state, state._readerLinkHints)) {
+      this._closeReaderLinkHints(state);
+    }
 
     const primaryWin = reader?._internalReader?._primaryView?._iframeWindow;
     const secondaryWin = reader?._internalReader?._secondaryView?._iframeWindow;
@@ -975,6 +980,7 @@ var ZoteroVim = {
         keyUp: (e) => this._onKeyUp(e, state, viewWin),
         blur: event => {
           this._stopSmoothHoldScroll(state, viewWin);
+          if (event?.target === viewWin) this._closeReaderLinkHints?.(state, viewWin);
           if (event?.target === viewWin && state.activePdfWin === viewWin) {
             state._readerJumpRequest = null;
             if (this._isReaderHintPrefix(state.mode + ':', state.keyBuffer)) {
@@ -987,6 +993,7 @@ var ZoteroVim = {
           }
         },
         pointerdown: event => {
+          this._closeReaderLinkHints?.(state);
           if (event.button === 0) state._readerJumpRequest = null;
           if (event.button === 0 && !state._readerFlash && !state._translationPopup
               && event.target?.closest?.('.page')) this._clearOrderedReaderVisual(state, viewWin);
@@ -1006,6 +1013,7 @@ var ZoteroVim = {
           } catch (_) {}
         },
         scroll: () => {
+          this._closeReaderLinkHints?.(state, viewWin);
           this._refreshReaderFlash?.(state, viewWin);
           if (state.hintMode) {
             this._repositionHintBadges(state, viewWin);
@@ -1016,6 +1024,7 @@ var ZoteroVim = {
           this._showReaderProgress(state, viewWin);
         },
         resize: () => {
+          this._closeReaderLinkHints?.(state, viewWin);
           this._refreshReaderFlash?.(state, viewWin);
           if (state.hintMode) {
             this._repositionHintBadges(state, viewWin);
@@ -1165,7 +1174,8 @@ var ZoteroVim = {
             if (zv._shortcutHelpForWindow?.(reader._window
                 || reader._iframe?.ownerDocument?.defaultView)) return true;
             if (state._translationPopup?.pdfWin === view._iframeWindow
-                || state._readerFlash?.pdfWin === view._iframeWindow) return true;
+                || state._readerFlash?.pdfWin === view._iframeWindow
+                || state._readerLinkHints?.pdfWin === view._iframeWindow) return true;
             if (state._outlinePicker?.pdfWin === view._iframeWindow
                 || zv._readerOutlineExplorerFocused(state, view._iframeWindow)) return true;
             const input = state._commentOverlayInput;
@@ -1566,7 +1576,10 @@ var ZoteroVim = {
 
   _setMode(state, mode) {
     this._hideSpacekeys(state);
-    if (mode !== state.mode) this._closeReaderFlash?.(state, false);
+    if (mode !== state.mode) {
+      this._closeReaderFlash?.(state, false);
+      this._closeReaderLinkHints?.(state);
+    }
     if (mode !== 'visual') this._clearOrderedReaderVisual?.(state);
     if (state._outlinePicker && mode !== state.mode) {
       this._closeReaderOutlinePicker(state, false);
@@ -1844,7 +1857,11 @@ var ZoteroVim = {
     state.activePdfWin = pdfWin || state.activePdfWin;
 
     // Leave native controls in reader.html in charge of their own keys.
-    if (this._nativeEditableFocused(reader)) return;
+    if (this._nativeEditableFocused(reader)) {
+      this._closeReaderLinkHints?.(state);
+      return;
+    }
+    if (this._onReaderLinkHintKeyDown?.(event, state, pdfWin)) return;
 
     this._onReaderFocusCueEvent?.(state, { kind: 'pdf', win: pdfWin }, event);
 
@@ -2278,6 +2295,7 @@ var ZoteroVim = {
         || this._isReaderHintPrefix(state.mode + ':', state.keyBuffer))) return true;
     if (state._outlinePicker && (!pdfWin || state._outlinePicker.pdfWin === pdfWin)) return true;
     if (state._readerFlash && (!pdfWin || state._readerFlash.pdfWin === pdfWin)) return true;
+    if (this._readerLinkHintOwnsKey?.(state, keyStr, pdfWin)) return true;
     if (state.outlineExplorerOpen && this._readerOutlineExplorerFocused(state, pdfWin)) return true;
     if (state._translationPopup) return true;
     if (state.mode === 'insert') {
@@ -2335,6 +2353,7 @@ var ZoteroVim = {
   _executeAction(action, reader, state, pdfWin, count = 0) {
     try {
       state._readerJumpRequest = null;
+      this._closeReaderLinkHints?.(state);
       Zotero.debug('[ZoteroVim] Action: ' + action + ' (mode:' + state.mode + ', count:' + count + ')');
 
       if (action === 'showShortcutHelp') {
@@ -2557,6 +2576,9 @@ var ZoteroVim = {
 
         case 'toggleReaderBodyText':
           this._toggleReaderBodyText(state, pdfWin);
+          break;
+        case 'followReaderLink':
+          void this._openReaderLinkHints(state, reader, pdfWin);
           break;
 
         case 'enterVisual':

@@ -314,7 +314,7 @@ Object.assign(ZoteroVim, {
       if (viewer?.pagesCount) {
         if (this.isModeEnabled('cursor')) actions.push('flashCursor');
         if (this.isModeEnabled('visual')) actions.push('flashVisual');
-        actions.push('toggleReaderBodyText', 'readerOutlinePick', 'readerCaptionPick',
+        actions.push('followReaderLink', 'toggleReaderBodyText', 'readerOutlinePick', 'readerCaptionPick',
           'toggleReaderSidebarOutline', 'toggleMarksExplorer',
           'prevHeading', 'nextHeading', 'prevFigure', 'nextFigure', 'prevTable', 'nextTable');
         if ([0, 1, 2].includes(viewer.spreadMode)) {

@@ -21,7 +21,8 @@ const context = vm.createContext({
   } },
   setTimeout: () => 1, clearTimeout() {},
 });
-for (const file of ['zoteroVim.js', 'zoteroVimReader.js', 'zoteroVimMain.js']) {
+for (const file of ['zoteroVim.js', 'zoteroVimReader.js', 'zoteroVimMain.js',
+  'zoteroVimFlash.js', 'zoteroVimLinks.js']) {
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../content', file), 'utf8'), context);
 }
 const z = context.ZoteroVim;
@@ -167,6 +168,21 @@ function key(f, value, modifiers = {}, pane = f.primary) {
 function input(popup, value) {
   popup.input.value = value;
   popup.input.emit('input');
+}
+
+function prepareLinkPane(pane) {
+  const { doc, win, app } = pane;
+  doc.createElement = tag => doc.createElementNS('', tag);
+  const div = doc.createElement('div');
+  div.getBoundingClientRect = () => ({ left: 0, top: 0, right: 600, bottom: 800 });
+  doc.body.appendChild(div);
+  win.innerWidth = 600;
+  win.innerHeight = 480;
+  app.pdfViewer._getVisiblePages = () => ({ views: [{ id: 1 }] });
+  app.pdfViewer.getPageView = () => ({
+    div, viewport: { width: 600, height: 800, convertToViewportPoint: (x, y) => [x, 800 - y] },
+  });
+  return pane;
 }
 
 let passed = 0;
@@ -1195,7 +1211,107 @@ async function main() {
     assert.deepEqual(f.primary.calls, []);
   });
 
-  console.log('Reader outline and caption checks passed (' + passed + ' cases).');
+  await check('link hints retain Zotero citations and external URLs in the active split', async () => {
+    const f = fixture();
+    const pane = prepareLinkPane(f.secondary);
+    const source = rect => ({ pageIndex: 0, rects: [rect] });
+    const firstRef = { pageIndex: 4, rects: [[30, 30, 90, 55]] };
+    const citation = { type: 'citation', position: source([30, 650, 40, 661]),
+      references: [{ position: firstRef }, { position: { ...firstRef, pageIndex: 6 } }] };
+    const external = { type: 'external-link', position: source([50, 705, 90, 720]),
+      url: 'https://example.org/Case?foo=Bar#Here' };
+    pane.view._pdfPages = { 0: { overlays: [citation, external, external,
+      { ...external, position: source([120, 680, 140, 698]) },
+      { ...external, position: source([20, 15, 40, 35]) },
+      { ...external, position: source([20, 620, 40, 640]), url: 'javascript:ignored' },
+    ] } };
+    const externalCalls = [], jumps = [];
+    pane.view._onOpenLink = url => externalCalls.push(url);
+    pane.view.navigate = position => jumps.push(position);
+
+    assert.equal(key(f, 'f', {}, pane).prevented, true);
+    let ui = f.state._readerLinkHints;
+    assert.equal(ui.pdfWin, pane.win);
+    assert.equal(ui.badges.length, 3);
+    assert.equal(f.primary.doc.body.children.length, 0);
+    assert.equal(z._readerConsumesKey(f.state, 'a', pane.win), true);
+    assert.equal(z._readerConsumesKey(f.state, 'a', f.primary.win), false);
+    const label = ui.badges[0].label.toLowerCase();
+    key(f, 'Enter', {}, pane);
+    key(f, label, { repeat: true }, pane);
+    assert.deepEqual(externalCalls, []);
+    key(f, label, {}, pane);
+    assert.deepEqual(externalCalls, [external.url]);
+    assert.equal(f.state._readerLinkHints, null);
+    key(f, 'f', {}, pane);
+    ui = f.state._readerLinkHints;
+    key(f, ui.badges.find(b => b.target.position).label, {}, pane);
+    await settle();
+    assert.deepEqual(jumps, [{ position: firstRef }]);
+    assert.equal(clones.at(-1).target, f.reader._iframeWindow);
+    assert.equal(pane.history, 0, 'Zotero owns the history for native links');
+    assert.equal(f.primary.history, 0);
+  });
+
+  await check('authored links keep their destinations and late discovery cannot restore closed hints', async () => {
+    const f = fixture();
+    const pane = prepareLinkPane(f.primary);
+    const pending = deferred();
+    const dest = [3, { name: 'XYZ' }, 40, 740, null];
+    pane.app.pdfDocument.getPage = async () => ({ getTextContent() {},
+      getAnnotations: options => {
+        assert.equal(options.intent, 'display');
+        return pending.promise;
+      } });
+    pane.app.pdfLinkService.goToDestination = value => pane.calls.push(value);
+    key(f, 'f');
+    key(f, 'Escape');
+    pending.resolve([
+      { subtype: 'Link', rect: [80, 705, 110, 720], dest },
+      { subtype: 'Link', rect: [80, 650, 120, 661], unsafeUrl: 'file:///tmp/test' },
+      { subtype: 'Link', rect: [140, 705, 180, 720], url: 'https://example.org/hidden', hidden: true },
+    ]);
+    await settle();
+    assert.equal(f.state._readerLinkHints, null);
+    assert.deepEqual(pane.calls, []);
+    key(f, 'f');
+    await settle();
+    const [badge] = f.state._readerLinkHints.badges;
+    assert.equal(f.state._readerLinkHints.badges.length, 1);
+    key(f, badge.label.toLowerCase());
+    await settle();
+    assert.deepEqual(pane.calls, [dest]);
+    assert.equal(clones.at(-1).target, pane.win);
+    assert.equal(pane.history, 1);
+  });
+
+  await check('multi-letter link labels support Backspace and stale sources cannot open', () => {
+    const f = fixture();
+    const pane = prepareLinkPane(f.primary);
+    pane.view._pdfPages = { 0: { overlays: Array.from({ length: 31 }, (_, i) => ({
+      type: 'external-link', url: 'https://example.org/' + i,
+      position: { pageIndex: 0, rects: [[20 + i * 17, 690, 30 + i * 17, 703]] },
+    })) } };
+    const urls = [];
+    pane.view._onOpenLink = url => urls.push(url);
+    key(f, 'f');
+    const ui = f.state._readerLinkHints;
+    const last = ui.badges.at(-1);
+    assert.equal(ui.badges.length, 31);
+    assert.equal(last.label.length, 2);
+    key(f, last.label[0]);
+    assert.equal(ui.prefix, last.label[0]);
+    assert.ok(ui.badges[0].el.hidden);
+    key(f, 'Backspace');
+    assert.equal(ui.prefix, '');
+    assert.equal(ui.badges[0].el.hidden, false);
+    pane.win.innerHeight = 50; // The viewport moved before a scroll event retired the hints.
+    for (const letter of last.label) key(f, letter);
+    assert.deepEqual(urls, []);
+    assert.equal(f.state._readerLinkHints, null);
+  });
+
+  console.log('Reader outline, caption and link checks passed (' + passed + ' cases).');
 }
 
 main().catch(error => { console.error(error); process.exitCode = 1; });

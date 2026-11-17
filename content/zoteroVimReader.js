@@ -326,14 +326,7 @@ Object.assign(ZoteroVim, {
       if (cues.get(pdfWin) !== pending || pdfWin.closed
           || pdfWin.PDFViewerApplication?.pdfDocument !== pdfDoc) return;
       const page = viewer.getPageView(position.pageIndex);
-      const box = page?.viewport?.viewBox;
-      if (!region && box?.length === 4) {
-        const left = Number.isFinite(position.left) ? position.left : box[0] + 20;
-        const top = Number.isFinite(position.top) ? position.top - 8 : box[3] - 18;
-        const x = Math.max(box[0] + 8, Math.min(left, box[2] - 30));
-        const y = Math.max(box[1] + 23, Math.min(top, box[3] - 8));
-        region = [x, y - 13, Math.min(x + 120, box[2] - 8), y];
-      }
+      region ||= this._readerJumpAnchorRect(page, position);
       if (region) this._showReaderJumpCue(state, pdfWin, page, region);
     } catch (e) {
       Zotero.debug('[ZoteroVim] cue outline heading: ' + e);
@@ -1158,6 +1151,16 @@ Object.assign(ZoteroVim, {
     const [x1, y1] = viewport.convertToViewportPoint(rect[0], rect[1]);
     const [x2, y2] = viewport.convertToViewportPoint(rect[2], rect[3]);
     return [Math.min(x1, x2), Math.min(y1, y2), Math.max(x1, x2), Math.max(y1, y2)];
+  },
+
+  _readerJumpAnchorRect(page, position) {
+    const box = page?.viewport?.viewBox;
+    if (box?.length !== 4) return null;
+    const left = Number.isFinite(position.left) ? position.left : box[0] + 20;
+    const top = Number.isFinite(position.top) ? position.top - 8 : box[3] - 18;
+    const x = Math.max(box[0] + 8, Math.min(left, box[2] - 30));
+    const y = Math.max(box[1] + 23, Math.min(top, box[3] - 8));
+    return [x, y - 13, Math.min(x + 120, box[2] - 8), y];
   },
 
   /** A brief, non-interactive outline follows the PDF page in its own pane. */

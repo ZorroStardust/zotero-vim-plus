@@ -150,6 +150,12 @@ Cursor ──v──▶ Visual ──v/Escape──▶ Normal
 Los prefijos de conteo multiplican el paso — `3j` desplaza tres pasos,
 `2ctrl+f` dos páginas completas, y así sucesivamente.
 
+#### Abrir enlaces visibles
+
+Pulsa `f` para mostrar letras junto a los enlaces internos, las citas y los
+enlaces externos visibles en el panel del PDF. Escribe una etiqueta para abrir
+el enlace. Retroceso borra la última letra y Esc cancela.
+
 #### Navegación por páginas
 
 | Tecla | Acción |

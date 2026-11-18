@@ -805,8 +805,14 @@ async function checkAnnotationStyleSelection() {
   context.Zotero.Items = { get: () => ({ getAnnotations: () => [watermark, mark, box] }) };
   context.Zotero.DB = { executeTransaction: async fn => fn() };
   try {
+    await z._executeAction('highlightYellow', reader, state, {});
+    assert.deepEqual(saved.at(-1), ['MARK', 'highlight', z.COLORS.yellow]);
+    await z._executeAction('underlineYellow', reader, state, {});
+    assert.deepEqual(saved.at(-1), ['MARK', 'underline', z.COLORS.yellow]);
+    await z._executeAction('highlightYellow', reader, state, {});
+    assert.deepEqual(saved.at(-1), ['MARK', 'highlight', z.COLORS.yellow]);
     await z._executeAction('underlineMagenta', reader, state, {});
-    assert.deepEqual(saved, [['MARK', 'underline', z.COLORS.magenta]]);
+    assert.deepEqual(saved.at(-1), ['MARK', 'underline', z.COLORS.magenta]);
     assert.equal(mark.annotationComment, 'Keep me');
     assert.equal(state.lastReaderChange.action, 'underlineMagenta');
     await z._executeAction('highlightGray', reader, state, {});
@@ -814,8 +820,11 @@ async function checkAnnotationStyleSelection() {
 
     native.selectedAnnotationIDs = ['BOX'];
     await z._executeAction('highlightOrange', reader, state, {});
-    assert.deepEqual(saved.at(-1), ['BOX', 'text', z.COLORS.orange]);
     await z._executeAction('underlineOrange', reader, state, {});
+    assert.equal(box.annotationColor, z.COLORS.red);
+    assert.equal(saved.length, 5);
+    await z._executeAction('recolorOrange', reader, state, {});
+    assert.deepEqual(saved.at(-1), ['BOX', 'text', z.COLORS.orange]);
     native.selectedAnnotationIDs = [];
     await z._executeAction('highlightGray', reader, state, {});
     native.selectedAnnotationIDs = ['MARK', 'BOX'];
@@ -823,7 +832,7 @@ async function checkAnnotationStyleSelection() {
     native.selectedAnnotationIDs = ['MARK'];
     mark.annotationIsExternal = true;
     await z._executeAction('highlightOrange', reader, state, {});
-    assert.equal(saved.length, 3);
+    assert.equal(saved.length, 6);
   } finally {
     Object.assign(context.Zotero, { Items, DB });
   }

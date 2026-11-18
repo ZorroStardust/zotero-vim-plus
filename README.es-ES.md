@@ -593,7 +593,7 @@ mientras escribes sin que el cursor salga del campo de búsqueda.
 | `Zp` | Filtrar barra lateral → Solo anotaciones moradas |
 | `Za` | Borrar filtro de color (mostrar todas las anotaciones) |
 
-> `z` abre la paleta de la anotación seleccionada. `Z` inicia un filtro de la barra lateral.
+> `z` muestra los atajos de resaltado y subrayado. `Z` inicia un filtro de la barra lateral.
 
 #### Navegación y edición de anotaciones
 
@@ -621,11 +621,11 @@ La anotación seleccionada se resalta en el visor de PDF y la barra lateral se d
 | `y` | Copiar el **texto resaltado** de la anotación al portapapeles |
 | `yy` | Copiar el **texto del comentario** de la anotación al portapapeles |
 | `dd` | Eliminar la anotación seleccionada |
-| `z` | Mostrar las opciones de color y estilo de la anotación seleccionada |
+| `z` | Mostrar la paleta de resaltado y subrayado |
 
 Para un resaltado o subrayado seleccionado, usa las [combinaciones de color](#creación-de-anotaciones)
-para cambiar su estilo y color. Los cuadros de texto usan las teclas en minúscula
-para cambiar de color. Si no hay una anotación seleccionada, `zb` desplaza la página al final de la vista.
+para ajustar la anotación. `zy` aplica resaltado amarillo y `zY` aplica subrayado amarillo.
+Si no hay una anotación seleccionada, `zb` desplaza la página al final de la vista.
 
 > **Consejo:** `y` vs `yy` — el plugin espera hasta 800 ms para el segundo `y` antes de ejecutar la acción de `y` único. Escribir `yy` rápidamente siempre gana.
 

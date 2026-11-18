@@ -746,7 +746,7 @@ search.
 | `Zp` | Filter sidebar → Purple annotations only |
 | `Za` | Clear colour filter (show all annotations) |
 
-> `z` opens the palette for the selected annotation. `Z` starts a sidebar filter chord.
+> `z` shows the highlight and underline shortcuts. `Z` starts a sidebar filter chord.
 
 #### Annotation navigation and editing
 
@@ -775,13 +775,12 @@ Selected annotations are highlighted in the PDF and scrolled to in the sidebar.
 | `y` | Copy the annotation's **highlighted text** to the clipboard |
 | `yy` | Copy the annotation's **comment text** to the clipboard |
 | `dd` | Delete the selected annotation |
-| `z` | Show the selected annotation's colour and style options |
+| `z` | Show the highlight and underline palette |
 | `.` | Repeat the last annotation change (highlight, underline, note, delete or recolour) |
 
-For a selected highlight or underline, use the [colour pairs below](#creating-annotations)
-to change its colour and style in place. A selected text box offers the
-lowercase colour keys for recolouring. With no selection, `zb` positions the
-page at the bottom of the viewport.
+Use the [colour pairs below](#creating-annotations) to style a selected highlight
+or underline in place. For example, `zy` sets yellow highlight and `zY` sets yellow
+underline. With no selection, `zb` positions the page at the bottom of the viewport.
 
 > **Tip:** `y` vs `yy` — the plugin waits up to 800 ms for the second `y`
 > before firing the single-`y` action. Typing `yy` quickly always wins.

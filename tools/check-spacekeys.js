@@ -225,25 +225,43 @@ check('Visual z uses effective bindings and cancels without exiting Visual', () 
   assert.deepEqual(f.actions, []);
 });
 
-check('Normal z offers appropriate actions and cancels if the selection changes', () => {
+check('Normal z uses the same highlight/underline palette with or without an annotation', () => {
   const f = fixture();
-  let selected = { key: 'MARKUP', annotationType: 'underline' };
+  f.prefs['readerBindings.revision'] = 1;
+  f.prefs.bindings = JSON.stringify({
+    'normal:zy': 'recolorYellow', 'normal:zr': 'recolorRed', 'normal:zg': 'recolorGreen',
+    'normal:zb': 'recolorBlue', 'normal:zp': 'recolorPurple', 'normal:x': 'recolorGreen',
+  });
+  f.z._migrateReaderBindings();
+  assert.deepEqual(JSON.parse(f.prefs.bindings), { 'normal:x': 'recolorGreen' });
+  let selected = null;
   f.z._annotationStyleTarget = () => selected;
   f.pdfKey('z'); f.advance(200);
-  assert.deepEqual(Array.from(f.state._spacekeys.rows, row => row.key),
+  const keys = () => Array.from(f.state._spacekeys.rows, row => row.key);
+  const base = keys();
+  assert.deepEqual(base,
     ['b/B', 'g/G', 'm/M', 'o/O', 'p/P', 'r/R', 's/S', 'y/Y']);
+  f.pdfKey('Escape');
+  selected = { key: 'MARKUP', annotationType: 'highlight' };
+  f.pdfKey('z'); f.advance(200);
+  assert.deepEqual(keys(), base);
   selected = { key: 'BOX', annotationType: 'text' };
   f.pdfKey('B');
   assert.equal(f.state._spacekeys, null);
   assert.deepEqual(f.actions, []);
 
   f.pdfKey('z'); f.advance(200);
-  assert.deepEqual(Array.from(f.state._spacekeys.rows, row => row.key),
-    ['b', 'g', 'm', 'o', 'p', 'r', 's', 'y']);
-  assert.match(text(f.state._spacekeys.el), /改色/);
-  assert(!text(f.state._spacekeys.el).includes('下划线'));
-  f.pdfKey('o');
-  assert.deepEqual(f.actions, ['highlightOrange']);
+  assert.deepEqual(keys(), base);
+  assert.match(text(f.state._spacekeys.el), /高亮 \/ 下划线/);
+  f.pdfKey('Escape');
+  selected = { key: 'MARKUP', annotationType: 'underline' };
+  f.pdfKey('z'); f.pdfKey('y');
+  f.pdfKey('z'); f.pdfKey('Y');
+  assert.deepEqual(f.actions, ['highlightYellow', 'underlineYellow']);
+
+  f.prefs.bindings = JSON.stringify({ 'normal:zy': 'recolorYellow' });
+  f.z._migrateReaderBindings();
+  assert.equal(f.z.getBindings()['normal:zy'], 'recolorYellow');
 });
 
 check('reader hint prefixes switch in place once the popup is visible', () => {
@@ -318,9 +336,11 @@ check('leader waits 10 seconds, ordinary prefixes keep their original timeout', 
   f.pdfKey(' '); f.advance(9999);
   assert.equal(f.state.keyBuffer, ' ');
   f.advance(1); assert.equal(f.state.keyBuffer, ''); assert.equal(f.state._spacekeys, null);
-  f.pdfKey('z'); f.advance(1200); assert.equal(f.state.keyBuffer, '');
+  f.pdfKey('g'); f.advance(1200); assert.equal(f.state.keyBuffer, '');
   f.prefs['spacekeys.timeout'] = 3000;
   f.pdfKey(' '); f.advance(3000); assert.equal(f.state.keyBuffer, '');
+  f.pdfKey('z'); f.advance(2999); assert.equal(f.state.keyBuffer, 'z');
+  f.advance(1); assert.equal(f.state.keyBuffer, '');
 });
 
 check('abandoning a Space chord starts smooth scrolling on the first keydown', () => {

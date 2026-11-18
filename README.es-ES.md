@@ -557,6 +557,9 @@ lector), sobre lo que tenga el foco:
 | Tecla | Acción |
 |-----|--------|
 | `/` | Abrir la barra de búsqueda de PDF |
+| `Ctrl+j` | Activar o desactivar **Resaltar todo** |
+| `Ctrl+k` | Activar o desactivar **Distinguir mayúsculas y minúsculas** |
+| `Ctrl+l` | Activar o desactivar **Palabras completas** |
 | `n` | Saltar al siguiente resultado de búsqueda |
 | `N` | Saltar al resultado de búsqueda anterior |
 | `Escape` | Borrar / cerrar búsqueda |
@@ -569,6 +572,9 @@ Presiona `/` de nuevo para reabrir la barra con tu consulta anterior
 seleccionada. `Escape` cierra la barra de búsqueda y borra los resaltados.
 Presionar `n` / `N` sin una búsqueda activa muestra una pista de buscar
 primero.
+
+Cada opción de búsqueda muestra su atajo debajo. Puedes cambiar las opciones
+mientras escribes sin que el cursor salga del campo de búsqueda.
 
 #### Filtro lateral por color
 

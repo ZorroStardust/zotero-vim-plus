@@ -703,8 +703,9 @@ whatever has focus:
 | Key | Action |
 |-----|--------|
 | `/` | Open the PDF find bar |
-| `Ctrl+h` / `Ctrl+l` | Select the previous / next find option while keeping the caret in the query |
-| `Space` (with an option selected) | Toggle the option and apply it to the search |
+| `Ctrl+j` | Toggle **Highlight all** |
+| `Ctrl+k` | Toggle **Match case** |
+| `Ctrl+l` | Toggle **Whole words** |
 | `*` / `#` | Search the word under the caret forward / backward |
 | `n` | Jump to the next search match |
 | `N` | Jump to the previous search match |
@@ -718,11 +719,8 @@ previous query selected. `Escape` closes the find bar and clears the
 highlights. Pressing `n` / `N` without an active search shows a hint to
 search first.
 
-`/` selects **Highlight all** by default. In the search input, `Ctrl+h` and
-`Ctrl+l` cycle through **Highlight all**, **Match case** and **Whole words**.
-`Space` applies the selected option and keeps its outline visible until you
-type or leave the search input. The caret stays in the query, and the next
-space is entered as text.
+The shortcut is displayed beneath each find option. You can toggle the options
+while typing, with the caret staying in the query.
 
 In Cursor mode, `*` / `#` use the word under the text caret. In Normal mode,
 where no caret is visible, they use the word nearest the centre of the PDF

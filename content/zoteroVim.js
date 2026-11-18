@@ -2647,7 +2647,7 @@ var ZoteroVim = {
           }
           break;
 
-        case 'openSearch':      this._openSearch(reader, state);            break;
+        case 'openSearch':      this._openSearch(reader);                   break;
         case 'searchWordForward':
           this._searchWordUnderCursor(state, reader, pdfWin, false);
           break;

@@ -7242,22 +7242,68 @@ Object.assign(ZoteroVim, {
   },
 
   /** Apply style to the same Zotero item so links, tags and comments keep their identity. */
-  async _styleAnnotation(state, target, color, type) {
+  async _styleAnnotation(state, reader, target, color, type) {
     try {
+      let typeChanged = false;
       await Zotero.DB.executeTransaction(async () => {
         if (target.deleted || target.isEditable?.() === false) {
           throw new Error(this._isZhLocale() ? '标注已不可编辑' : 'Annotation is no longer editable');
         }
-        if (type && this._canConvertAnnotation(target)) target.annotationType = type;
+        if (type && this._canConvertAnnotation(target)) {
+          typeChanged = target.annotationType !== type;
+          target.annotationType = type;
+        }
         target.annotationColor = color;
         await target.save();
       });
+
+      if (typeChanged) await this._refreshAnnotationType(reader, target);
 
       const colorName = Object.entries(this.COLORS).find(([, value]) => value === color)?.[0];
       this._showStatus(state, '✓ → ' + colorName, 1200);
     } catch (e) {
       Zotero.debug('[ZoteroVim] _styleAnnotation error: ' + e);
       this._showStatus(state, '✗ ' + (e.message || String(e)).slice(0, 45), 3000);
+    }
+  },
+
+  /**
+   * Repaint a saved type change in every open view of this attachment.
+   * Zotero's view diff omits annotation type, so same-colour conversions can
+   * leave the PDF painted with the old style until another event redraws it.
+   */
+  async _refreshAnnotationType(reader, target) {
+    const readers = new Set([reader]);
+    for (const state of this._readerState.values()) {
+      if (state.reader?.itemID === reader.itemID) readers.add(state.reader);
+    }
+    for (const owner of readers) {
+      try {
+        if (!owner._internalReader) continue;
+        // Publish the saved item before repainting. Notifier delivery alone may
+        // still be converting it to reader JSON when the transaction resolves.
+        await owner.setAnnotations([target]);
+        const position = JSON.parse(target.annotationPosition);
+        if (!Number.isInteger(position.pageIndex) || position.pageIndex < 0) continue;
+        const pageIndexes = [position.pageIndex];
+        if (position.nextPageRects?.length) pageIndexes.push(position.pageIndex + 1);
+        const internal = owner._internalReader;
+        const views = new Set([internal?._primaryView, internal?._secondaryView,
+          internal?._getActiveView?.(true), internal?._getActiveView?.(false)]);
+        const pages = Components.utils.cloneInto(pageIndexes, owner._iframeWindow);
+        for (const view of views) {
+          if (!view?._iframeWindow) continue;
+          try {
+            if (typeof view._render === 'function') view._render(pages);
+            else view._renderAnnotations?.();
+            view._pdfThumbnails?.render(pages, true);
+          } catch (e) {
+            Zotero.debug('[ZoteroVim] repaint annotation type: ' + e);
+          }
+        }
+      } catch (e) {
+        Zotero.debug('[ZoteroVim] refresh annotation type: ' + e);
+      }
     }
   },
 

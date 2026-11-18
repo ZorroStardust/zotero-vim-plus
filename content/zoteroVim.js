@@ -2530,7 +2530,7 @@ var ZoteroVim = {
           return;
         }
         state.lastReaderChange = { action, count };
-        return this._styleAnnotation(state, target, color,
+        return this._styleAnnotation(state, reader, target, color,
           convertible && type !== 'recolor' ? type : null);
       }
 

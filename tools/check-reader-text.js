@@ -791,14 +791,15 @@ async function checkPdfAnnotationSelection() {
 async function checkAnnotationStyleSelection() {
   const watermark = { key: 'OLD', annotationType: 'highlight' };
   const mark = { key: 'MARK', annotationType: 'highlight', annotationColor: z.COLORS.yellow,
-    annotationComment: 'Keep me' };
+    annotationComment: 'Keep me', annotationPosition: '{"pageIndex":0}' };
   const box = { key: 'BOX', annotationType: 'text', annotationColor: z.COLORS.red };
   const saved = [];
   for (const item of [watermark, mark, box]) {
     item.save = async () => saved.push([item.key, item.annotationType, item.annotationColor]);
   }
   const native = { selectedAnnotationIDs: ['MARK'] };
-  const reader = { itemID: 11, _internalReader: { _state: native } };
+  const reader = { itemID: 11, _internalReader: { _state: native },
+    _iframeWindow: {}, setAnnotations: async () => {} };
   const state = { mode: 'normal', lastAnnotationKey: 'OLD' };
   const { Items, DB } = context.Zotero;
   context.Zotero.Items = { get: () => ({ getAnnotations: () => [watermark, mark, box] }) };
@@ -828,11 +829,77 @@ async function checkAnnotationStyleSelection() {
   }
 }
 
+async function checkAnnotationTypeRepaint() {
+  const saved = [], paints = [], thumbnails = [], clones = [];
+  let published = null;
+  const item = { key: 'MARK', annotationType: 'highlight', annotationColor: z.COLORS.yellow,
+    annotationPosition: JSON.stringify({ pageIndex: 3, rects: [[1, 2, 3, 4]],
+      nextPageRects: [[5, 6, 7, 8]] }), save: async () => saved.push(item.annotationType) };
+  const view = name => ({ _iframeWindow: { name },
+    _render: pages => {
+      assert.equal(published, item.annotationType, 'publish the committed type before painting');
+      paints.push([name, Array.from(pages), published]);
+    },
+    _pdfThumbnails: { render: (pages, onlyRendered) => {
+      assert.equal(onlyRendered, true);
+      thumbnails.push([name, Array.from(pages)]);
+    } },
+  });
+  const primary = view('primary'), secondary = view('secondary'), another = view('another');
+  const reader = { itemID: 11, _iframeWindow: { name: 'reader' }, _internalReader: {
+    _primaryView: primary, _secondaryView: secondary,
+    _getActiveView: isPrimary => isPrimary ? primary : secondary,
+  }, setAnnotations: async items => { published = items[0].annotationType; } };
+  const secondReader = { ...reader, _iframeWindow: { name: 'another-reader' },
+    _internalReader: { _primaryView: another } };
+  const { DB } = context.Zotero;
+  const { cloneInto } = context.Components.utils;
+  const state = {};
+  context.Zotero.DB = { executeTransaction: async fn => fn() };
+  context.Components.utils.cloneInto = (pages, win) => {
+    clones.push(win.name);
+    return Array.from(pages);
+  };
+  z._readerState.set('repaint-other', { reader: secondReader });
+  z._readerState.set('repaint-unrelated', { reader: { itemID: 12,
+    setAnnotations() { throw Error('unrelated attachment'); } } });
+  try {
+    await z._styleAnnotation(state, reader, item, z.COLORS.yellow, 'underline');
+    assert.deepEqual(saved, ['underline']);
+    assert.deepEqual(paints, [
+      ['primary', [3, 4], 'underline'], ['secondary', [3, 4], 'underline'],
+      ['another', [3, 4], 'underline'],
+    ]);
+    assert.deepEqual(clones, ['reader', 'another-reader']);
+    assert.equal(thumbnails.length, 3);
+
+    await z._styleAnnotation(state, reader, item, z.COLORS.orange, 'underline');
+    assert.equal(paints.length, 3, 'colour-only changes use Zotero notification rendering');
+    await z._styleAnnotation(state, reader, item, z.COLORS.orange, 'highlight');
+    assert.deepEqual(paints.slice(3), [
+      ['primary', [3, 4], 'highlight'], ['secondary', [3, 4], 'highlight'],
+      ['another', [3, 4], 'highlight'],
+    ]);
+
+    context.Zotero.DB.executeTransaction = async () => { throw Error('failed save'); };
+    await z._styleAnnotation(state, reader, item, z.COLORS.orange, 'underline');
+    assert.equal(paints.length, 6, 'failed writes must not publish or repaint');
+  } finally {
+    context.Zotero.DB = DB;
+    context.Components.utils.cloneInto = cloneInto;
+    z._readerState.delete('repaint-other');
+    z._readerState.delete('repaint-unrelated');
+  }
+}
+
 checkPdfAnnotationSelection().then(async () => {
   pass++;
   console.log('  ok  Copy and PDF annotations use the projected ranges and their actual pages');
   await checkAnnotationStyleSelection();
   pass++;
   console.log('  ok  Annotation styles update a single editable native selection in place');
+  await checkAnnotationTypeRepaint();
+  pass++;
+  console.log('  ok  Same-colour type conversions repaint committed pages in every reader pane');
   console.log('Reader text checks passed (' + pass + ' cases).');
 }).catch(error => { console.error(error); process.exitCode = 1; });

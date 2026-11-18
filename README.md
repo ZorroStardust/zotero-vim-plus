@@ -751,7 +751,7 @@ search.
 #### Annotation navigation and editing
 
 Press `[` for previous or `]` for next, then choose a target. The available
-keys appear in the shortcut hints.
+keys appear in the shortcut hints. An unfinished chord expires without a jump.
 
 | Previous / next | Target |
 |---|---|

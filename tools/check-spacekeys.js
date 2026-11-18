@@ -66,6 +66,7 @@ function fixture(smooth = false) {
   const z = context.ZoteroVim;
   const prefs = {};
   z.getPref = (key, fallback) => prefs[key] ?? fallback;
+  z.setPref = (key, value) => { prefs[key] = value; };
   z._isStandaloneNoteTabSelected = () => false;
   z._isMainNoteTextEditing = () => false;
   z._isMainTextEditing = () => false;
@@ -269,6 +270,35 @@ check('reader hint prefixes switch in place once the popup is visible', () => {
   assert.equal(f.timers.size, 0);
   f.pdfKey('[');
   assert.equal(f.state._spacekeys.el, null);
+});
+
+check('legacy bracket bindings wait for a suffix and expire without jumping', () => {
+  const f = fixture();
+  f.prefs.bindings = JSON.stringify({
+    'normal:[': 'prevAnnotation', 'normal:]': 'nextAnnotation',
+    'normal:[t': null, 'normal:x': 'prevAnnotation',
+  });
+  f.z._migrateReaderBindings();
+  assert.deepEqual(JSON.parse(f.prefs.bindings), { 'normal:[t': null, 'normal:x': 'prevAnnotation' });
+  for (const [bracket, action] of [['[', 'prevAnnotation'], [']', 'nextAnnotation']]) {
+    f.pdfKey('2'); f.pdfKey(bracket);
+    f.advance(1000);
+    assert.equal(f.state.keyBuffer, bracket);
+    assert.ok(f.state._spacekeys.el);
+    assert.deepEqual(f.actions, []);
+    f.advance(9000);
+    assert.equal(f.state.keyBuffer, '');
+    assert.equal(f.state.countBuffer, '');
+    assert.equal(f.state._spacekeys, null);
+    assert.deepEqual(f.actions, []);
+    f.pdfKey(bracket); f.advance(1000); f.pdfKey('a');
+    assert.equal(f.actions.pop(), action);
+  }
+
+  const custom = fixture();
+  custom.prefs.bindings = JSON.stringify({ 'normal:[': 'prevHeading', 'normal:]': null });
+  custom.z._migrateReaderBindings();
+  assert.deepEqual(JSON.parse(custom.prefs.bindings), { 'normal:[': 'prevHeading', 'normal:]': null });
 });
 
 check('fast typing never flashes later; Escape and invalid prefixes clean up', () => {

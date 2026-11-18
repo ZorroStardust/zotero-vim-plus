@@ -598,6 +598,7 @@ mientras escribes sin que el cursor salga del campo de búsqueda.
 #### Navegación y edición de anotaciones
 
 Pulsa `[` para ir al elemento anterior o `]` para ir al siguiente, seguido de la letra de la categoría.
+Si se agota el tiempo sin completar la combinación, se cancela el salto.
 
 | Anterior / siguiente | Destino |
 |---|---|

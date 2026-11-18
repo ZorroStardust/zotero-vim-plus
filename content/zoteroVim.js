@@ -286,6 +286,7 @@ var ZoteroVim = {
     this.version = version;
     this.rootURI = rootURI;
     this._migrateShortcutHelpBinding?.();
+    this._migrateReaderBindings();
     this._registerPrefsPane();
     this._registerReaderListeners();
     Zotero.debug('[ZoteroVim] Initialized v' + version + ' on Zotero ' + (Zotero.version || '?'));
@@ -393,6 +394,32 @@ var ZoteroVim = {
       }
     } catch (_) {}
     return bindings;
+  },
+
+  /** Drop stored overrides that exactly match defaults replaced in newer releases. */
+  _migrateReaderBindings() {
+    const migrations = [
+      { 'normal:[': 'prevAnnotation', 'normal:]': 'nextAnnotation' },
+    ];
+    const revision = this.getPref('readerBindings.revision', 0);
+    if (revision >= migrations.length) return;
+    try {
+      const saved = JSON.parse(this.getPref('bindings', '') || '{}');
+      if (saved && typeof saved === 'object' && !Array.isArray(saved)) {
+        let changed = false;
+        for (const defaults of migrations.slice(revision)) {
+          for (const [key, action] of Object.entries(defaults)) {
+            if (saved[key] !== action) continue;
+            delete saved[key];
+            changed = true;
+          }
+        }
+        if (changed) this.setPref('bindings', Object.keys(saved).length ? JSON.stringify(saved) : '');
+      }
+      this.setPref('readerBindings.revision', migrations.length);
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] reader binding migration: ' + e);
+    }
   },
 
   getScrollStep() { return this.getPref('scrollStep', 60); },

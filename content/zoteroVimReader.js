@@ -4009,50 +4009,27 @@ Object.assign(ZoteroVim, {
    * prefix span (typed part) and a bold rest span (still to be typed).
    */
   _createHintBadge(doc, label, textNode, offset, targetRect = null) {
-    let badgeLeft = targetRect?.left, badgeTop = targetRect?.top, badgeHeight = targetRect?.height;
-    if (!targetRect) {
-      try {
-        const r = doc.createRange();
-        r.setStart(textNode, offset);
-        r.setEnd(textNode, Math.min(offset + 1, textNode.length));
-        const rects = r.getClientRects();
-        if (rects.length > 0) {
-          badgeLeft = rects[0].left;
-          badgeTop = rects[0].top;
-          badgeHeight = rects[0].height;
-        }
-      } catch (_) {}
-    }
-    if (badgeLeft === undefined) {
-      const pr = textNode.parentElement?.getBoundingClientRect?.();
-      if (!pr) return null;
-      badgeLeft = pr.left;
-      badgeTop = pr.top;
-      badgeHeight = pr.height;
-    }
+    const rect = (textNode && this._hintTextRect(doc, textNode, offset)) || targetRect;
+    if (!rect) return null;
 
     const badge = doc.createElement('div');
     badge.setAttribute('data-zv-hint', label);
     const prefix = doc.createElement('span');
     prefix.setAttribute('data-zv-hint-part', 'prefix');
     prefix.textContent = '';
-    prefix.style.cssText = 'color:#8f7d1c;';
+    prefix.style.color = '#8f7d1c';
     const rest = doc.createElement('span');
     rest.setAttribute('data-zv-hint-part', 'rest');
     rest.textContent = label;
-    rest.style.cssText = 'color:#000;font-weight:bold;';
     badge.appendChild(prefix);
     badge.appendChild(rest);
     badge.style.cssText =
-      'position:fixed;' +
-      'left:' + Math.max(0, Math.round(badgeLeft) - 2) + 'px;' +
-      'top:' + Math.round(badgeTop) + 'px;' +
-      'background:#FFD400;' +
-      'font:bold 11px/1.4 monospace;' +
-      'padding:0 3px;border-radius:2px;' +
+      'position:fixed;left:0;top:0;' +
+      'background:#FFD400;color:#000;' +
+      'font:bold 10px/1.2 monospace;white-space:nowrap;' +
+      'padding:1px 3px;border-radius:2px;' +
       'z-index:99999;pointer-events:none;' +
-      'border:1px solid #b8960c;' +
-      'box-shadow:0 1px 3px rgba(0,0,0,.4);';
+      'border:1px solid #b8960c;';
     doc.body.appendChild(badge);
     return {
       label,
@@ -4061,54 +4038,95 @@ Object.assign(ZoteroVim, {
       el: badge,
       prefixEl: prefix,
       restEl: rest,
-      left: badgeLeft,
-      top: badgeTop,
-      height: badgeHeight || 12,
+      left: rect.left,
+      top: rect.top,
+      height: rect.height || 12,
+      width: rect.width || 1,
     };
   },
 
-  /**
-   * Position every badge at the top-left of its character.  Only badges that
-   * truly overlap (same visual line AND horizontal intersection) are nudged
-   * down, and the cascade resets on every line, so badges stay glued to
-   * their words.  Layout covers ALL badges — positions must never depend on
-   * which badges are currently visible, otherwise filtering would make the
-   * remaining badges drift.
-   */
+  _hintTextRect(doc, textNode, offset) {
+    try {
+      const range = doc.createRange();
+      const start = Math.min(offset, textNode.length);
+      range.setStart(textNode, start);
+      range.setEnd(textNode, Math.min(start + 1, textNode.length));
+      const rect = range.getBoundingClientRect?.() || range.getClientRects()[0];
+      if (rect?.height > 0) return rect;
+    } catch (_) {}
+    return textNode?.parentElement?.getBoundingClientRect?.();
+  },
+
+  /** Anchor links above the source and text hints at the first glyph's top edge. */
   _layoutHintBadges(doc, badges, measure = true) {
-    let lineTop = null;
-    let prevRight = -Infinity;
-    let prevBottom = -Infinity;
-    for (const b of badges) {
-      let { left, top, height } = b;
-      if (measure) {
-        try {
-          const r = doc.createRange();
-          r.setStart(b.textNode, b.offset);
-          r.setEnd(b.textNode, Math.min(b.offset + 1, b.textNode.length));
-          const rects = r.getClientRects();
-          if (rects.length > 0) {
-            left = rects[0].left;
-            top = rects[0].top;
-            height = rects[0].height;
-          }
-        } catch (_) {}
+    const width = doc.defaultView?.innerWidth || doc.documentElement?.clientWidth;
+    const height = doc.defaultView?.innerHeight || doc.documentElement?.clientHeight;
+    if (!width || !height) return;
+    const targets = badges.map(badge => ({ badge,
+      rect: (measure && this._hintTextRect(doc, badge.textNode, badge.offset)) || badge,
+      size: badge.el.getBoundingClientRect?.(),
+    }));
+    const placed = [];
+    for (const { badge, rect, size } of targets) {
+      if (rect.left >= width || rect.left + rect.width <= 0
+          || rect.top >= height || rect.top + rect.height <= 0) {
+        badge.el.style.visibility = 'hidden';
+        continue;
       }
-      const badgeH = Math.max(16, height + 6);
-      const badgeW = Math.max(12, b.label.length * 7 + 8);
-      if (lineTop === null || Math.abs(top - lineTop) > 6) {
-        lineTop = top;
-        prevRight = -Infinity;
-        prevBottom = -Infinity;
-      }
-      if (left < prevRight && top < prevBottom) {
-        top = prevBottom + 2;
-      }
-      b.el.style.left = Math.max(0, Math.round(left) - 2) + 'px';
-      b.el.style.top = Math.round(top) + 'px';
-      prevRight = Math.max(prevRight, left + badgeW);
-      prevBottom = Math.max(prevBottom, top + badgeH);
+      badge.badgeWidth = size?.width || badge.badgeWidth || badge.label.length * 6 + 8;
+      badge.badgeHeight = size?.height || badge.badgeHeight || 16;
+      const above = !badge.textNode;
+      const top = above ? rect.top - badge.badgeHeight - 2 : rect.top;
+      const slot = this._findHintBadgeSlot(rect.left, top, badge.badgeWidth, badge.badgeHeight,
+        width, height, above ? [...placed, rect] : placed);
+      badge.el.style.visibility = slot ? '' : 'hidden';
+      if (!slot) continue;
+      badge.el.style.left = slot.left + 'px';
+      badge.el.style.top = slot.top + 'px';
+      placed.push(slot);
     }
+  },
+
+  // Placement adapted from Zotero Neo. Prefer a nearby slot on the same line.
+  _findHintBadgeSlot(leftAnchor, topAnchor, width, height, viewWidth, viewHeight, placed) {
+    if (width > viewWidth || height > viewHeight) return null;
+    const gap = 2;
+    const preferredLeft = Math.max(0, Math.min(leftAnchor, viewWidth - width));
+    const preferredTop = Math.max(0, Math.min(topAnchor, viewHeight - height));
+    const clear = placed.every(rect => preferredLeft >= rect.left + rect.width + gap
+      || preferredLeft + width + gap <= rect.left || preferredTop >= rect.top + rect.height + gap
+      || preferredTop + height + gap <= rect.top);
+    if (clear) return { left: preferredLeft, top: preferredTop, width, height };
+
+    const columns = new Set([preferredLeft, 0, viewWidth - width]);
+    for (const rect of placed) {
+      columns.add(rect.left + rect.width + gap);
+      columns.add(rect.left - width - gap);
+    }
+    const candidates = [...columns].filter(left => left >= 0 && left + width <= viewWidth)
+      .sort((a, b) => Math.abs(a - preferredLeft) - Math.abs(b - preferredLeft));
+    const obstacles = [...placed].sort((a, b) => a.top - b.top);
+    let best = null, bestDistance = Infinity;
+    for (const left of candidates) {
+      const horizontalDistance = Math.abs(left - preferredLeft);
+      if (horizontalDistance >= bestDistance) break;
+      let start = 0;
+      const consider = end => {
+        if (end - start < height) return;
+        const top = Math.max(start, Math.min(preferredTop, end - height));
+        const distance = horizontalDistance + 2 * Math.abs(top - preferredTop);
+        if (distance >= bestDistance) return;
+        best = { left, top, width, height };
+        bestDistance = distance;
+      };
+      for (const rect of obstacles) {
+        if (left >= rect.left + rect.width + gap || left + width + gap <= rect.left) continue;
+        consider(Math.min(viewHeight, rect.top - gap));
+        start = Math.max(start, rect.top + rect.height + gap);
+      }
+      consider(viewHeight);
+    }
+    return best;
   },
 
   /**

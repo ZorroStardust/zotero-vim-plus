@@ -7,10 +7,13 @@ const path = require('node:path');
 const vm = require('node:vm');
 const clones = [];
 const notices = [];
+const clipboard = [];
 const context = vm.createContext({
   Zotero: { debug() {}, locale: 'en-US' },
   Services: { focus: {}, prefs: { getPrefType: () => 0 } },
-  Components: { utils: {
+  Components: { classes: { '@mozilla.org/widget/clipboardhelper;1': {
+    getService: () => ({ copyString: text => clipboard.push(text) }),
+  } }, interfaces: {}, utils: {
     unwrap: value => value, exportFunction: fn => fn,
     waiveXrays: value => value.content,
     cloneInto(value, target) {
@@ -1300,16 +1303,19 @@ async function main() {
     assert.deepEqual(f.primary.calls, []);
   });
 
-  await check('link hints retain Zotero citations and external URLs in the active split', async () => {
+  await check('link previews open, copy and select references in the active split', async () => {
     const f = fixture();
     const pane = prepareLinkPane(f.secondary);
     const source = rect => ({ pageIndex: 0, rects: [rect] });
     const firstRef = { pageIndex: 4, rects: [[30, 30, 90, 55]] };
     const secondRef = { pageIndex: 4, rects: [[30, 62, 95, 85]] };
+    const thirdRef = { pageIndex: 4, rects: [[30, 90, 95, 110]] };
+    const longRef = '[18] Third reference ' + 'Long title '.repeat(29).trim();
     const citation = { type: 'citation', position: source([30, 650, 100, 661]),
       references: [
         { index: 16, text: '[16] First reference', position: firstRef },
         { index: 17, text: '[17] Second reference', position: secondRef },
+        { index: 18, text: longRef, position: thirdRef },
         { index: 17, position: secondRef }, { index: 99, position: { pageIndex: 99 } },
       ] };
     const external = { type: 'external-link', position: source([50, 705, 90, 720]),
@@ -1337,24 +1343,63 @@ async function main() {
     key(f, label, { repeat: true }, pane);
     assert.deepEqual(externalCalls, []);
     key(f, label, {}, pane);
+    assert.deepEqual(externalCalls, []);
+    assert.equal(ui.linkPreview.choices[0].text, external.url);
+    key(f, 'y', {}, pane);
+    assert.equal(clipboard.at(-1), external.url);
+    key(f, 'Enter', {}, pane);
     assert.deepEqual(externalCalls, [external.url]);
     assert.equal(f.state._readerLinkHints, null);
     key(f, 'f', {}, pane);
     ui = f.state._readerLinkHints;
     const group = ui.badges.find(b => b.target.references);
     key(f, group.label, {}, pane);
-    assert.equal(ui.citationPicker.choices.length, 2);
-    assert.equal(ui.citationPicker.choices[1].el.children[1].textContent, '[17] Second reference');
+    const preview = ui.linkPreview;
+    assert.equal(preview.choices.length, 3);
+    assert.equal(preview.choices[1].el.children[1].textContent, '[17] Second reference');
     assert.ok(ui.badges.every(badge => badge.el.hidden));
     key(f, 'Enter', {}, pane);
     assert.deepEqual(jumps, []);
     key(f, 'Backspace', {}, pane);
-    assert.equal(ui.citationPicker, null);
+    assert.equal(ui.linkPreview, null);
     assert.ok(ui.badges.every(badge => !badge.el.hidden));
     key(f, group.label, {}, pane);
     assert.equal(z._readerConsumesKey(f.state, 'arrowdown', pane.win), true);
-    key(f, 'ArrowDown', {}, pane);
-    key(f, 'ArrowDown', {}, pane);
+    assert.ok(z._readerLinkHintOwnsKey(f.state, 'ctrl+j', pane.win));
+    assert.ok(z._readerLinkHintOwnsKey(f.state, 'ctrl+k', pane.win));
+    assert.match(ui.linkPreview.footer.textContent, /Ctrl\+j\/k/);
+    key(f, 'y', {}, pane);
+    key(f, 'y', { repeat: true }, pane);
+    assert.equal(clipboard.at(-1), external.url);
+    key(f, ui.linkPreview.choices[2].label, {}, pane);
+    assert.equal(clipboard.at(-1), longRef);
+    key(f, 'y', {}, pane);
+    key(f, 'y', {}, pane);
+    assert.equal(clipboard.at(-1), '[16] First reference\n[17] Second reference\n' + longRef);
+    key(f, 'j', { ctrlKey: true }, pane);
+    assert.equal(ui.linkPreview.selected, ui.linkPreview.choices[0]);
+    key(f, ' ', {}, pane);
+    key(f, 'j', { ctrlKey: true, repeat: true }, pane);
+    key(f, '\n', { ctrlKey: true }, pane);
+    assert.equal(ui.linkPreview.selected, ui.linkPreview.choices[2]);
+    key(f, ' ', {}, pane);
+    assert.match(ui.linkPreview.footer.textContent, /y copy marked \(2\).*Esc clear marks/);
+    const copyCount = clipboard.length;
+    key(f, 'y', {}, pane);
+    assert.equal(clipboard.length, copyCount + 1);
+    assert.equal(clipboard.at(-1), '[16] First reference\n' + longRef);
+    assert.equal(ui.linkPreview.marked.size, 2);
+    assert.deepEqual(jumps, []);
+    const markedPreview = ui.linkPreview;
+    key(f, 'Escape', {}, pane);
+    assert.equal(ui.linkPreview, markedPreview);
+    assert.equal(ui.linkPreview.marked.size, 0);
+    assert.ok(ui.linkPreview.choices.every(choice => !choice.el.style.boxShadow));
+    assert.match(ui.linkPreview.footer.textContent, /Esc close/);
+    key(f, 'Escape', { repeat: true }, pane);
+    assert.equal(ui.linkPreview, markedPreview);
+    key(f, 'k', { ctrlKey: true }, pane);
+    assert.equal(ui.linkPreview.selected, ui.linkPreview.choices[1]);
     key(f, 'Enter', {}, pane);
     await settle();
     assert.deepEqual(jumps, [{ position: secondRef }]);
@@ -1362,35 +1407,110 @@ async function main() {
     assert.equal(clones.at(-1).target, f.reader._iframeWindow);
     assert.equal(pane.history, 0, 'Zotero owns the history for native links');
     assert.equal(f.primary.history, 0);
+    key(f, 'f', {}, pane);
+    ui = f.state._readerLinkHints;
+    key(f, ui.badges.find(badge => badge.target.references).label, {}, pane);
+    const closePreview = ui.linkPreview;
+    key(f, ' ', {}, pane);
+    key(f, 'Escape', {}, pane);
+    assert.equal(ui.linkPreview, closePreview);
+    key(f, 'Escape', {}, pane);
+    assert.equal(f.state._readerLinkHints, null);
+    assert.equal(closePreview.el.isConnected, false);
   });
 
-  await check('individual authored citation links and single references still jump directly', async () => {
+  await check('single references are previewed and figure links still jump directly', async () => {
     const f = fixture();
     const pane = prepareLinkPane(f.primary);
     const first = { pageIndex: 3, rects: [[30, 45, 90, 60]] };
     const second = { pageIndex: 3, rects: [[30, 80, 90, 97]] };
+    const figure = { pageIndex: 5, rects: [[30, 100, 90, 140]] };
     pane.view._pdfPages = { 0: { overlays: [
       { type: 'citation', position: { pageIndex: 0, rects: [[20, 620, 90, 635]] },
         references: [{ position: first }, { position: second }] },
       { type: 'internal-link', position: { pageIndex: 0, rects: [[22, 620, 37, 635]] },
         destinationPosition: first },
       { type: 'citation', position: { pageIndex: 0, rects: [[30, 680, 60, 694]] },
-        references: [{ position: second }] },
+        references: [{ position: second, index: 7, chars: [
+          { c: 'Smith', spaceAfter: true }, { c: '2024.', lineBreakAfter: true },
+          { c: 'x', ignorable: true }, { c: 'Paper.' },
+        ] }] },
+      { type: 'internal-link', position: { pageIndex: 0, rects: [[130, 680, 160, 694]] },
+        destinationPosition: figure },
     ] } };
     const jumps = [];
     pane.view.navigate = payload => jumps.push(payload.position);
     key(f, 'f');
     let ui = f.state._readerLinkHints;
-    assert.equal(ui.badges.length, 3);
+    assert.equal(ui.badges.length, 4);
     key(f, ui.badges[0].label);
+    assert.deepEqual(jumps, []);
+    key(f, 'y');
+    assert.equal(clipboard.at(-1), '[7] Smith 2024. Paper.');
+    key(f, 'Enter');
     await settle();
     assert.deepEqual(jumps, [second]);
-    assert.equal(ui.citationPicker, undefined);
     key(f, 'f');
     ui = f.state._readerLinkHints;
     key(f, ui.badges.find(badge => badge.target.position?.rects[0][1] === 45).label);
+    assert.equal(ui.linkPreview.choices.length, 1);
+    key(f, 'Enter');
     await settle();
     assert.deepEqual(jumps, [second, first]);
+    key(f, 'f');
+    ui = f.state._readerLinkHints;
+    key(f, ui.badges.find(badge => badge.target.position?.pageIndex === 5).label);
+    await settle();
+    assert.equal(ui.linkPreview, undefined);
+    assert.deepEqual(jumps, [second, first, figure]);
+  });
+
+  await check('hint placement uses target geometry and avoids text, neighbours and view edges', () => {
+    const { doc } = prepareLinkPane(fixture().primary);
+    const rect = (left, top, width = 25, height = 12) => ({ left, top, width, height });
+    const anchors = [rect(40, 50), rect(47, 50), rect(594, 0, 5)];
+    const boxes = anchors.map((anchor, i) => {
+      const badge = z._createHintBadge(doc, 'AB'[i % 2], null, 0, anchor);
+      badge.el.getBoundingClientRect = () => ({ width: 22, height: 14 });
+      return badge;
+    });
+    z._layoutHintBadges(doc, boxes, false);
+    const slots = boxes.map(badge => rect(parseFloat(badge.el.style.left),
+      parseFloat(badge.el.style.top), 22, 14));
+    const overlap = (a, b) => a.left < b.left + b.width && b.left < a.left + a.width
+      && a.top < b.top + b.height && b.top < a.top + a.height;
+    assert.equal(slots[0].top, 34);
+    assert.equal(slots[1].top, slots[0].top, 'nearby links should keep the same line');
+    assert.ok(Math.abs(slots[1].left - anchors[1].left) < slots[1].width);
+    for (const [i, slot] of slots.entries()) {
+      assert.ok(slot.left >= 0 && slot.left + slot.width <= 600);
+      assert.ok(slot.top >= 0 && slot.top + slot.height <= 480);
+      assert.ok(!anchors.some(anchor => overlap(anchor, slot)));
+      assert.ok(!slots.slice(0, i).some(earlier => overlap(earlier, slot)));
+    }
+  });
+
+  await check('text hints use the first glyph rather than the whole match box', () => {
+    const { doc } = prepareLinkPane(fixture().primary);
+    let glyphTop = 200;
+    const node = { length: 9 };
+    doc.createRange = () => ({
+      setStart(textNode, offset) {
+        assert.equal(textNode, node);
+        assert.equal(offset, 2);
+      },
+      setEnd(_node, offset) { assert.equal(offset, 3); },
+      getBoundingClientRect: () => ({ left: 88, top: glyphTop, width: 8, height: 32 }),
+    });
+    const badge = z._createHintBadge(doc, 'A', node, 2,
+      { left: 70, top: 180, width: 90, height: 65 });
+    badge.el.getBoundingClientRect = () => ({ width: 15, height: 16 });
+    z._layoutHintBadges(doc, [badge], false);
+    assert.equal(badge.el.style.left, '88px');
+    assert.equal(badge.el.style.top, '200px');
+    glyphTop -= 40;
+    z._layoutHintBadges(doc, [badge]);
+    assert.equal(badge.el.style.top, '160px');
   });
 
   await check('authored links keep their destinations and late discovery cannot restore closed hints', async () => {

@@ -154,10 +154,16 @@ Los prefijos de conteo multiplican el paso — `3j` desplaza tres pasos,
 
 Pulsa `f` para mostrar letras junto a los enlaces, las citas, los DOI, los
 identificadores de arXiv y las URL HTTP(S) visibles en el panel del PDF.
-Escribe una etiqueta para abrir el enlace. Retroceso borra la última letra y Esc cancela.
+Las etiquetas aparecen encima del texto. Escribe una etiqueta para saltar a una
+figura, tabla, ecuación u otro destino interno. Las referencias y los enlaces
+externos muestran una vista previa en la esquina inferior derecha.
 
-Si Zotero reconoce varias referencias en una cita, su etiqueta abre una lista
-para elegir la entrada exacta.
+En la vista previa, `Ctrl+j` y `Ctrl+k` mueven la selección hacia abajo y arriba.
+`Enter` abre la única entrada o la seleccionada. La etiqueta de una referencia
+salta a esa entrada. `y` copia la entrada única o las referencias marcadas con
+`Espacio`. Si la lista está sin marcas, `y` seguido de una etiqueta copia esa
+referencia y `yy` copia la lista completa. `Esc` quita las marcas y, si no hay
+marcas, cierra la vista previa. `Retroceso` vuelve a las etiquetas.
 
 #### Navegación por páginas
 

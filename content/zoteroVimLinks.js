@@ -74,15 +74,13 @@ Object.assign(ZoteroVim, {
       const key = this._readerLinkPositionKey(position);
       if (seen.has(key)) continue;
       seen.add(key);
-      const number = /^\d+$/u.test(reference.index) ? String(reference.index) : '';
-      let excerpt = typeof reference.text === 'string' ? reference.text.replace(/\s+/gu, ' ').trim()
-        : Array.from(reference.chars || []).slice(0, 240)
-          .map(char => (char?.c || '') + (char?.spaceAfter ? ' ' : '')).join('').trim();
-      if (number && (excerpt.startsWith('[' + number + ']') || excerpt.startsWith(number + '.'))) {
-        excerpt = excerpt.slice(excerpt.startsWith('[') ? number.length + 2 : number.length + 1).trim();
+      const raw = reference.text || Array.from(reference.chars || [], char => char?.ignorable
+        ? '' : (char?.c || '') + (char?.spaceAfter || char?.lineBreakAfter ? ' ' : '')).join('');
+      let text = String(raw).replace(/\s+/gu, ' ').trim();
+      if (text && /^\d+$/u.test(reference.index) && !/^(?:\[\d+\]|\d+\.)/u.test(text)) {
+        text = '[' + reference.index + '] ' + text;
       }
-      if (excerpt.length > 240) excerpt = excerpt.slice(0, 240).trimEnd() + '…';
-      references.push({ position, number, excerpt });
+      references.push({ position, text });
     }
     return references;
   },
@@ -100,17 +98,17 @@ Object.assign(ZoteroVim, {
         if (url) result.push({ source, url, parsed: overlay.source === 'parsed' });
       } else if (overlay.type === 'citation') {
         const references = this._readerCitationReferences(overlay, ui.pdfDoc.numPages);
-        if (references.length > 1) result.push({ source, references });
-        else if (references.length) result.push({ source, position: references[0].position });
+        if (references.length) result.push({ source, references });
       } else if (overlay.type === 'internal-link') {
         const position = this._readerLinkPosition(overlay.destinationPosition, ui.pdfDoc.numPages);
         if (position) result.push({ source, position });
       }
     }
     const groups = result.filter(target => target.references);
+    const references = groups.flatMap(target => target.references);
     // Replace a PDF's whole-group link when Zotero knows its individual references.
     // A narrower authored link on one of the numbers still has its own target.
-    return result.filter(target => !target.position || !groups.some(group => {
+    const coversCitation = target => groups.some(group => {
       if (!group.references.some(ref => ref.position.pageIndex === target.position.pageIndex)) return false;
       const [left, bottom, right, top] = target.source.rects.reduce(this._readerUnionRects);
       return group.source.rects.every(([x1, y1, x2, y2]) => {
@@ -118,7 +116,29 @@ Object.assign(ZoteroVim, {
         const height = Math.max(0, Math.min(top, y2) - Math.max(bottom, y1));
         return x2 > x1 && y2 > y1 && width * height >= (x2 - x1) * (y2 - y1) * 0.8;
       });
-    }));
+    });
+    const other = result.filter(target => !target.references
+      && (!target.position || !coversCitation(target)));
+    for (const target of other) {
+      if (!target.position) continue;
+      const destOverlays = ui.view._pdfPages?.[target.position.pageIndex]?.overlays || [];
+      const nearby = Array.from(destOverlays)
+        .filter(overlay => overlay.type === 'reference')
+        .flatMap(overlay => this._readerCitationReferences(overlay, ui.pdfDoc.numPages));
+      const ref = this._readerReferenceAt(target.position, [...references, ...nearby]);
+      if (ref) target.references = [ref];
+    }
+    return [...groups, ...other];
+  },
+
+  /** Match authored destinations to bibliography entries that Zotero has already resolved. */
+  _readerReferenceAt(position, references) {
+    const samePage = references.filter(ref => ref.position.pageIndex === position.pageIndex);
+    const key = this._readerLinkPositionKey(position);
+    return samePage.find(ref => this._readerLinkPositionKey(ref.position) === key)
+      || samePage.find(ref => position.rects.some(([x1, y1, x2, y2]) =>
+        ref.position.rects.some(([left, bottom, right, top]) =>
+          x1 < right && x2 > left && y1 < top && y2 > bottom)));
   },
 
   /** Older views or pages whose overlay data is still loading can use authored PDF links. */
@@ -136,7 +156,9 @@ Object.assign(ZoteroVim, {
       if (!source) continue;
       const dest = annotation.dest;
       if ((typeof dest === 'string' && dest) || (Array.isArray(dest) && dest.length >= 2)) {
-        result.push({ source, dest });
+        // Explicit bibliography destinations can still be previewed before Zotero parses the page.
+        const reference = typeof dest === 'string' && /^(?:cite[.:_-]|bib(?:[.:_-]|\d))/iu.test(dest);
+        result.push({ source, dest, text: reference ? dest : '' });
       } else {
         const url = this._readerLinkURL(annotation.url);
         if (url) result.push({ source, url });
@@ -231,7 +253,7 @@ Object.assign(ZoteroVim, {
             node: span.node, span: span.span, value: span.value,
             start: Math.max(0, start - span.start), end: Math.min(span.end, end) - span.start,
           }));
-          if (parts.length) yield { pageIndex, url, layer, parts };
+          if (parts.length) yield { pageIndex, url, layer, parts, text: text.slice(start, end) };
         }
       }
     }
@@ -340,17 +362,14 @@ Object.assign(ZoteroVim, {
       const labels = this._flashLabels(positioned.length, new Set());
       for (const [i, item] of positioned.entries()) {
         const rect = item.rects[0];
-        const badge = this._createHintBadge(ui.doc, labels[i], null, 0, {
-          left: Math.max(rect.left, viewport.left), top: Math.max(rect.top, viewport.top),
-          height: rect.height,
-        });
+        const badge = this._createHintBadge(ui.doc, labels[i], null, 0, rect);
         badge.target = item.target;
         badge.el.setAttribute('data-zv-link-hint', '');
-        if (item.target.references) badge.restEl.textContent += ' ›';
+        if (this._readerLinkHasPreview(item.target)) badge.restEl.textContent += ' ›';
         ui.badges.push(badge);
       }
       this._layoutHintBadges(ui.doc, ui.badges, false);
-      this._showStatus(state, zh ? '输入标签打开链接 · Esc 取消' : 'Type a link label · Esc cancels');
+      this._showStatus(state, zh ? '输入链接标签 · Esc 取消' : 'Type a link label · Esc cancels');
       ui.statusTimer = state._statusTimer;
     } catch (e) {
       if (state._readerLinkHints !== ui) return;
@@ -364,7 +383,25 @@ Object.assign(ZoteroVim, {
     const ui = state._readerLinkHints;
     return ui && (!pdfWin || ui.pdfWin === pdfWin)
       && (/^[a-z]$/i.test(key) || ['escape', 'backspace', 'enter', 'return'].includes(key)
-        || (ui.citationPicker && ['arrowdown', 'arrowup'].includes(key)));
+        || (ui.linkPreview?.choices.length > 1
+          && (key === ' ' || this._readerLinkPreviewMove(key) !== 0)));
+  },
+
+  _readerLinkPreviewMove(key) {
+    if (['ctrl+j', 'ctrl+\n', 'arrowdown'].includes(key)) return 1;
+    if (['ctrl+k', 'ctrl+\v', 'arrowup'].includes(key)) return -1;
+    return 0;
+  },
+
+  _readerLinkHasPreview(target) {
+    return !!(target.references || target.url || target.text);
+  },
+
+  _readerLinkSourceVisible(ui, target) {
+    const visible = this._flashViewport(ui.pdfWin);
+    const rects = target.source ? this._readerLinkRects(ui, target.source, visible)
+      : this._readerTextLinkRects(ui, target, visible);
+    return rects.length > 0;
   },
 
   _onReaderLinkHintKeyDown(event, state, pdfWin) {
@@ -384,84 +421,130 @@ Object.assign(ZoteroVim, {
     }
     event.preventDefault();
     event.stopImmediatePropagation();
+    const preview = ui.linkPreview;
     if (key === 'escape') {
-      this._closeReaderLinkHints(state);
+      if (event.repeat) return true;
+      if (preview?.marked.size) {
+        preview.marked.clear();
+        preview.message = '';
+        preview.copying = false;
+        ui.prefix = '';
+        this._refreshReaderLinkChoices(ui, preview.choices);
+      } else {
+        this._closeReaderLinkHints(state);
+      }
       return true;
     }
-    const picker = ui.citationPicker;
-    const choices = picker?.choices || ui.badges;
+    const choices = preview?.choices || ui.badges;
+    const direction = preview && this._readerLinkPreviewMove(key);
+    if (preview && !event.repeat) preview.message = '';
     if (key === 'backspace') {
-      if (picker && !ui.prefix) {
-        picker.el.remove();
-        ui.citationPicker = null;
+      if (ui.prefix) {
+        ui.prefix = ui.prefix.slice(0, -1);
+        if (preview) preview.selected = null;
+      } else if (preview?.copying) {
+        preview.copying = false;
+      } else if (preview) {
+        preview.el.remove();
+        ui.linkPreview = null;
         this._refreshReaderLinkChoices(ui, ui.badges);
         return true;
       }
-      ui.prefix = ui.prefix.slice(0, -1);
-      if (picker) picker.selected = null;
-    } else if (picker && (key === 'arrowdown' || key === 'arrowup')) {
+    } else if (direction) {
       const visible = choices.filter(choice => !choice.el.hidden);
-      const index = visible.indexOf(picker.selected);
-      const next = index < 0 ? (key === 'arrowdown' ? 0 : visible.length - 1)
-        : Math.max(0, Math.min(index + (key === 'arrowdown' ? 1 : -1), visible.length - 1));
-      picker.selected = visible[next] || null;
-      picker.selected?.el.scrollIntoView(Components.utils.cloneInto({ block: 'nearest' }, ui.pdfWin));
-    } else if (picker && (key === 'enter' || key === 'return') && !event.repeat && picker.selected) {
-      void this._followReaderLinkHint(state, ui, picker.selected.target);
-      return true;
+      const index = visible.indexOf(preview.selected);
+      const next = index < 0 ? (direction > 0 ? 0 : visible.length - 1)
+        : Math.max(0, Math.min(index + direction, visible.length - 1));
+      preview.selected = visible[next] || null;
+      preview.selected?.el.scrollIntoView(Components.utils.cloneInto({ block: 'nearest' }, ui.pdfWin));
+    } else if (preview && key === ' ' && !event.repeat) {
+      const selected = preview.selected || choices.find(choice => !choice.el.hidden);
+      if (selected) {
+        preview.selected = selected;
+        if (preview.marked.has(selected)) preview.marked.delete(selected);
+        else preview.marked.add(selected);
+        preview.copying = false;
+        ui.prefix = '';
+      }
+    } else if (preview && !preview.copying && !event.repeat && (key === 'enter' || key === 'return')) {
+      const selected = choices.length === 1 ? choices[0] : preview.selected;
+      if (selected) void this._followReaderLinkHint(state, ui, selected.target);
+      if (state._readerLinkHints !== ui) return true;
+    } else if (preview && !event.repeat && !ui.prefix && key.toLowerCase() === 'y') {
+      if (preview.marked.size) {
+        this._copyReaderLinkChoices(state, ui, choices.filter(choice => preview.marked.has(choice)));
+      } else if (choices.length === 1 || preview.copying) {
+        this._copyReaderLinkChoices(state, ui, choices);
+      } else {
+        preview.copying = true;
+      }
+      if (state._readerLinkHints !== ui) return true;
     } else if (!event.repeat && /^[a-z]$/i.test(key)) {
       const next = ui.prefix + key.toUpperCase();
       const exact = choices.find(choice => choice.label === next);
       if (exact) {
-        if (exact.target.references) this._openReaderCitationPicker(state, ui, exact.target);
-        else void this._followReaderLinkHint(state, ui, exact.target);
+        if (preview?.copying) {
+          this._copyReaderLinkChoices(state, ui, [exact]);
+          if (state._readerLinkHints === ui) this._refreshReaderLinkChoices(ui, choices);
+        } else if (!preview && this._readerLinkHasPreview(exact.target)) {
+          this._openReaderLinkPreview(state, ui, exact.target);
+        } else {
+          void this._followReaderLinkHint(state, ui, exact.target);
+        }
         return true;
       }
       ui.prefix = choices.some(choice => choice.label.startsWith(next)) ? next : '';
-      if (picker) picker.selected = null;
+      if (preview) preview.selected = null;
     }
     this._refreshReaderLinkChoices(ui, choices);
     return true;
   },
 
   _refreshReaderLinkChoices(ui, choices) {
+    const preview = ui.linkPreview;
     for (const choice of choices) {
       choice.el.hidden = !choice.label.startsWith(ui.prefix);
       choice.prefixEl.textContent = ui.prefix;
       choice.restEl.textContent = choice.label.slice(ui.prefix.length)
-        + (choice.target.references ? ' ›' : '');
-      if (ui.citationPicker) {
-        choice.el.style.background = ui.citationPicker.selected === choice ? '#313244' : '';
+        + (!preview && this._readerLinkHasPreview(choice.target) ? ' ›' : '');
+      if (preview) {
+        choice.el.style.background = preview.selected === choice ? '#313244' : '';
+        choice.el.style.boxShadow = preview.marked.has(choice) ? 'inset 3px 0 #a6e3a1' : '';
       }
     }
+    if (preview) this._updateReaderLinkPreviewFooter(ui);
   },
 
-  /** Keep one hint in the body and display the available reference destinations on selection. */
-  _openReaderCitationPicker(state, ui, group) {
+  /** Preview a URL or reference without leaving the current reading position. */
+  _openReaderLinkPreview(state, ui, target) {
     if (!this._readerLinkHintsCurrent(state, ui)) return;
     try {
-      const visible = this._flashViewport(ui.pdfWin);
-      if (!this._readerLinkRects(ui, group.source, visible).length) {
+      if (!this._readerLinkSourceVisible(ui, target)) {
         this._closeReaderLinkHints(state);
         return;
       }
       const { doc, zh } = ui;
       const el = doc.createElement('div');
-      el.setAttribute('data-zv-citation-picker', '');
+      const titleText = target.url ? (zh ? '链接' : 'Link') : (zh ? '参考文献' : 'References');
+      el.setAttribute('data-zv-link-preview', '');
       el.setAttribute('role', 'group');
-      el.setAttribute('aria-label', zh ? '选择参考文献' : 'Choose a reference');
+      el.setAttribute('aria-label', titleText);
       el.style.cssText = 'position:fixed;right:14px;bottom:14px;z-index:100001;'
         + 'width:min(540px,calc(100vw - 28px));box-sizing:border-box;'
         + 'padding:10px;border:1px solid #585b70;border-radius:8px;background:#1e1e2e;'
         + 'color:#cdd6f4;box-shadow:0 3px 16px #0006;font:13px/1.45 sans-serif;pointer-events:none;';
       const title = doc.createElement('div');
-      title.textContent = zh ? '选择参考文献' : 'Choose a reference';
+      title.textContent = titleText;
       title.style.cssText = 'font-weight:bold;margin-bottom:6px;';
       const list = doc.createElement('div');
       list.style.cssText = 'max-height:40vh;overflow:auto;color-scheme:dark;'
         + 'scrollbar-width:thin;scrollbar-color:#585b70 transparent;';
-      const labels = this._flashLabels(group.references.length, new Set());
-      const choices = group.references.map((ref, i) => {
+      const entries = target.references?.map(ref => ({ text: ref.text,
+        target: { source: target.source, position: ref.position } }))
+        || [{ text: target.text || target.url, target }];
+      // Reserve Y as an initial key so yy cannot collide with an entry label.
+      const labels = entries.length > 1 ? this._flashLabels(entries.length, new Set(['Y'])) : [''];
+      const choices = entries.map((entry, i) => {
         const row = doc.createElement('div');
         row.style.cssText = 'padding:5px;border-radius:4px;overflow-wrap:anywhere;';
         const badge = doc.createElement('kbd');
@@ -473,29 +556,72 @@ Object.assign(ZoteroVim, {
         badge.appendChild(prefixEl);
         badge.appendChild(restEl);
         const text = doc.createElement('span');
-        text.textContent = [ref.number && '[' + ref.number + ']', ref.excerpt
-          || (zh ? '第 ' + (ref.position.pageIndex + 1) + ' 页' : 'p. ' + (ref.position.pageIndex + 1))]
-          .filter(Boolean).join(' ');
-        row.appendChild(badge);
+        const page = entry.target.position?.pageIndex + 1;
+        text.textContent = entry.text || (zh ? '第 ' + page + ' 页' : 'p. ' + page);
+        if (labels[i]) row.appendChild(badge);
         row.appendChild(text);
         list.appendChild(row);
-        return { label: labels[i], el: row, prefixEl, restEl,
-          target: { source: group.source, position: ref.position } };
+        return { ...entry, label: labels[i], el: row, prefixEl, restEl };
       });
       const footer = doc.createElement('div');
-      footer.textContent = zh ? '标签或 ↑/↓ + Enter · Backspace 返回 · Esc 取消'
-        : 'Label or ↑/↓ + Enter · Backspace back · Esc cancel';
+      footer.setAttribute('aria-live', 'polite');
       footer.style.cssText = 'margin-top:6px;color:#a6adc8;font-size:11px;';
       el.appendChild(title);
       el.appendChild(list);
       el.appendChild(footer);
       doc.body.appendChild(el);
       ui.prefix = '';
-      ui.citationPicker = { el, choices, selected: null };
+      ui.linkPreview = { el, choices, footer, target, selected: null, marked: new Set() };
+      this._updateReaderLinkPreviewFooter(ui);
       for (const badge of ui.badges) badge.el.hidden = true;
     } catch (e) {
       this._closeReaderLinkHints(state);
-      Zotero.debug('[ZoteroVim] open citation picker: ' + e);
+      Zotero.debug('[ZoteroVim] open link preview: ' + e);
+    }
+  },
+
+  _updateReaderLinkPreviewFooter(ui) {
+    const { zh, linkPreview: preview } = ui;
+    const count = preview.marked.size;
+    let help;
+    if (preview.choices.length === 1) {
+      help = zh ? 'Enter 打开 · y 复制' : 'Enter open · y copy';
+    } else if (count) {
+      help = zh ? `Ctrl+j/k 移动 · 空格切换标记 · y 复制已标记（${count} 条）`
+        : `Ctrl+j/k move · Space toggle mark · y copy marked (${count})`;
+    } else if (preview.copying) {
+      help = zh ? '输入标签复制一条 · y 复制全部 · Ctrl+j/k 移动'
+        : 'Type a label to copy one · y copy all · Ctrl+j/k move';
+    } else {
+      help = zh ? '标签或 Ctrl+j/k + Enter 跳转 · y + 标签复制一条 · yy 复制全部 · 空格标记'
+        : 'Label or Ctrl+j/k + Enter jump · y + label copy one · yy copy all · Space mark';
+    }
+    const escape = count ? (zh ? 'Esc 清除标记' : 'Esc clear marks')
+      : (zh ? 'Esc 关闭' : 'Esc close');
+    preview.footer.textContent = (preview.message ? preview.message + ' · ' : '')
+      + help + (zh ? ' · Backspace 返回 · ' : ' · Backspace back · ') + escape;
+  },
+
+  _copyReaderLinkChoices(state, ui, choices) {
+    const { linkPreview: preview, zh } = ui;
+    if (!this._readerLinkSourceVisible(ui, preview.target)) {
+      this._closeReaderLinkHints(state);
+      return;
+    }
+    ui.prefix = '';
+    preview.copying = false;
+    const texts = choices.map(choice => choice.text).filter(Boolean);
+    if (!texts.length) {
+      preview.message = zh ? '没有可复制的文字' : 'No text to copy';
+      return;
+    }
+    try {
+      Components.classes['@mozilla.org/widget/clipboardhelper;1']
+        .getService(Components.interfaces.nsIClipboardHelper).copyString(texts.join('\n'));
+      preview.message = zh ? '已复制 ' + texts.length + ' 条' : 'Copied ' + texts.length;
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] copy link preview: ' + e);
+      preview.message = zh ? '复制失败' : 'Copy failed';
     }
   },
 
@@ -509,7 +635,7 @@ Object.assign(ZoteroVim, {
       state._statusActive = false;
       this._updateIndicator(state);
     }
-    try { ui.citationPicker?.el.remove(); } catch (_) {}
+    try { ui.linkPreview?.el.remove(); } catch (_) {}
     for (const badge of ui.badges) {
       try { badge.el.remove(); } catch (_) {}
     }
@@ -526,10 +652,7 @@ Object.assign(ZoteroVim, {
       && [reader._internalReader?._primaryView, reader._internalReader?._secondaryView].includes(view)
       && ui.tabID === ui.win?.Zotero_Tabs?.selectedID;
     try {
-      const visible = this._flashViewport(pdfWin);
-      const rects = target.source ? this._readerLinkRects(ui, target.source, visible)
-        : this._readerTextLinkRects(ui, target, visible);
-      if (!rects.length) return;
+      if (!this._readerLinkSourceVisible(ui, target)) return;
       if (target.url) {
         if (typeof view._onOpenLink === 'function') await view._onOpenLink(target.url);
         else Zotero.launchURL(target.url);

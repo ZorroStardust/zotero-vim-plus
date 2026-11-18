@@ -242,14 +242,22 @@ separate from named marks and supports count prefixes (`3ctrl+o`).
 #### Follow visible PDF links
 
 Press `f` to label visible internal links, citations, external links and plain
-DOIs, arXiv IDs and HTTP(S) URLs in the current pane. Type a label to follow it,
-use Backspace to edit a partial label or press Esc to cancel. Internal links add
-a reading-history entry and briefly outline the destination. The command
-palette also offers **Open visible PDF links**.
+DOIs, arXiv IDs and HTTP(S) URLs in the current pane. Hints sit above their
+targets. Type a label to jump directly to figures, tables, equations and other
+document locations. References and external links open a preview in the bottom
+right. Internal jumps add a reading-history entry and briefly outline the
+destination. The command palette also offers **Open visible PDF links**.
 
-When Zotero resolves a citation to several references, its hint opens a list
-of the available entries. Type an entry's label or select it with the arrow
-keys and Enter. Backspace returns to the page hints.
+| Key in the preview | Action |
+|---|---|
+| `Enter` | Open a single entry, or the highlighted entry in a list |
+| Label | Jump to a labelled reference |
+| `y` | Copy the marked references or the text of a single-entry preview |
+| `y` + label | Copy one reference when the list has no marks |
+| `yy` | Copy all references when the list has no marks |
+| `Ctrl+j` / `Ctrl+k`, `Space` | Move down / up and toggle the mark on the current row |
+| `Esc` | Clear marks, or close the preview when there are no marks |
+| `Backspace` | Return to the page hints |
 
 #### Page navigation
 

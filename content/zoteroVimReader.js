@@ -5933,7 +5933,19 @@ Object.assign(ZoteroVim, {
     } catch (_) { return true; }
   },
 
-  _clearSearch(reader, pdfWin) {
+  _clearSearch(reader, pdfWin, state = null) {
+    // Normal-mode Escape also dismisses annotation selection. Keys forwarded
+    // from chrome do not reach PdfView's own Escape handler.
+    if (state?.mode === 'normal') {
+      state.lastAnnotationKey = null;
+      state._readerAnnotationJumpWin = null;
+      try {
+        reader?._internalReader?.setSelectedAnnotations?.(
+          Components.utils.cloneInto([], reader._iframeWindow));
+      } catch (e) {
+        Zotero.debug('[ZoteroVim] clear annotation selection: ' + e);
+      }
+    }
     // Close the find popup via the reader app (deactivates the search and
     // clears highlights, matching Zotero's own Escape semantics).  Do NOT
     // re-dispatch an Escape keydown into the PDF.js document — the plugin's

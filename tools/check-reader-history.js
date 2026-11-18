@@ -111,6 +111,29 @@ check('older reader-level API fallback and absent/empty histories are safe', () 
   assert.match(notices.at(-1), /No earlier/);
 });
 
+check('Normal Escape clears native annotation selection and its plugin target', () => {
+  const f = fixture();
+  f.reader._iframeWindow = {};
+  f.state.reader = f.reader;
+  f.state._readerAnnotationJumpWin = primaryWin;
+  f.ir._state = { selectedAnnotationIDs: ['A'] };
+  f.ir.setSelectedAnnotations = ids => { f.ir._state.selectedAnnotationIDs = ids; };
+  let searchClosed = false;
+  f.ir.toggleFindPopup = options => { searchClosed = options.open === false; };
+  assert.equal(key(f, 'Escape').prevented, true);
+  assert.deepEqual(Array.from(f.ir._state.selectedAnnotationIDs), []);
+  assert.equal(f.state.lastAnnotationKey, null);
+  assert.equal(f.state._readerAnnotationJumpWin, null);
+  assert(searchClosed);
+
+  // Mouse selection can exist independently of the plugin's last jump.
+  f.ir._state.selectedAnnotationIDs = ['MOUSE'];
+  key(f, 'Escape');
+  assert.deepEqual(Array.from(f.ir._state.selectedAnnotationIDs), []);
+  assert.equal(f.primary.location, 12);
+  assert.deepEqual(f.state.marks, { a: { pageIndex: 99 } });
+});
+
 check('Insert and native form inputs keep Ctrl+o/i; configurable Insert exit saves comments', () => {
   const f = fixture(); f.state.mode = 'insert';
   for (const value of ['o', 'i']) assert.equal(key(f, value, { ctrlKey: true }).prevented, undefined);

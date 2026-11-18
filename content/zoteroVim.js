@@ -2687,7 +2687,7 @@ var ZoteroVim = {
         case 'yankAnnotation':        this._yankAnnotation(state, reader);          break;
         case 'yankAnnotationComment': this._yankAnnotationComment(state, reader);  break;
         case 'yankParagraph':         this._yankParagraph(state, pdfWin);           break;
-        case 'clearSearch':       this._clearSearch(reader, pdfWin);         break;
+        case 'clearSearch':       this._clearSearch(reader, pdfWin, state);  break;
         case 'findNext':
           if (!this._isSearchActive(reader)) {
             this._showStatus(state, 'No active search — press / to search', 1500);

@@ -65,8 +65,8 @@ the README / CHANGELOG once implemented, and mark them done below.
   `tools/check-sync.js` (run by `build.sh`) enforces this.
 - Reader actions that Zotero's `KeyboardManager` also handles (Read Aloud
   `l`/`r`, tools `h`/`s`, find `Ctrl+F`) are intercepted by
-  `_patchReaderKeyForwarding` / `_readerConsumesKey` — see README
-  "Architecture Notes → Zotero built-in shortcut conflicts (Read Aloud)".
+  `_patchReaderKeyForwarding` / `_readerConsumesKey` — see
+  [Zotero built-in shortcut conflicts (Read Aloud)](docs/development.md#zotero-built-in-shortcut-conflicts-read-aloud).
 - The vim-style search flow (`findBarReturnBridge`) is the reference pattern
   for bridging focus between reader.html form fields and the PDF iframe.
 - When closing the find popup programmatically, use

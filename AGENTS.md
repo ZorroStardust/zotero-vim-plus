@@ -122,14 +122,15 @@ Inline comments are welcome for complex logic — use `//` style.
 ## Architecture Notes
 
 The plugin operates across a **three-level iframe stack** in the Zotero PDF reader.
-Key architectural decisions are documented in `README.md` under "Architecture Notes."
+Key architectural decisions are documented in
+[Architecture notes](docs/development.md#architecture-notes).
 Read them before making changes to annotation navigation, text selection, or iframe injection.
 
 The plugin also patches Zotero's reader key-forwarding callback (`_onKeyDown`
 on the PdfView instances) so keys consumed by vim are not re-handled by Zotero
 (Read Aloud on `l`/`r`, tools on `h`/`s`). Keep `_patchReaderKeyForwarding` /
 `_readerConsumesKey` in mind when touching key handling or iframe injection;
-see README "Architecture Notes → Zotero built-in shortcut conflicts (Read Aloud)".
+see [Zotero built-in shortcut conflicts (Read Aloud)](docs/development.md#zotero-built-in-shortcut-conflicts-read-aloud).
 
 ## Key Files
 

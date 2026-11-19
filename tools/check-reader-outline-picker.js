@@ -1465,6 +1465,106 @@ async function main() {
     assert.deepEqual(jumps, [second, first, figure]);
   });
 
+  await check('blue annotation hints coexist with links and select in the originating split', () => {
+    const f = fixture();
+    const pane = prepareLinkPane(f.secondary);
+    f.reader.itemID = 42;
+    const annotation = (key, annotationType, rects, pageIndex = 0) => ({ key, annotationType,
+      annotationPosition: JSON.stringify({ pageIndex, rects }), annotationText: 'Marked text',
+      annotationComment: 'My comment' });
+    const items = [
+      annotation('HIGHLIGHT', 'highlight', [[30, 700, 100, 720], [30, 670, 80, 690]]),
+      annotation('UNDERLINE', 'underline', [[30, 640, 90, 650]]),
+      annotation('NOTE', 'note', [[120, 650, 140, 670]]),
+      annotation('TEXT', 'text', [[140, 610, 240, 640]]),
+      annotation('AREA', 'image', [[30, 450, 110, 510]]),
+      annotation('BELOW', 'highlight', [[30, 100, 110, 110]]),
+      annotation('OTHERPAGE', 'highlight', [[30, 700, 100, 720]], 1),
+      annotation('INVALID', 'highlight', [[30, null, 100, 720]]),
+      { key: 'MALFORMED', annotationPosition: '{' },
+      { ...annotation('DELETED', 'highlight', [[30, 700, 100, 720]]), deleted: true },
+    ];
+    context.Zotero.Items = { get: id => {
+      assert.equal(id, 42);
+      return { getAnnotations: () => items };
+    } };
+    const nativeURL = 'https://example.org/Link';
+    pane.view._pdfPages = { 0: { overlays: [{ type: 'external-link', url: nativeURL,
+      position: { pageIndex: 0, rects: [[30, 700, 100, 720]] } }] } };
+    const selected = [];
+    const ir = f.reader._internalReader;
+    ir.focusView = primary => { ir._lastView = primary ? f.primary.view : pane.view; };
+    ir.setSelectedAnnotations = ids => {
+      selected.push([ids[0], ir._lastView]);
+      assert.equal(clones.at(-1).target, f.reader._iframeWindow);
+    };
+    key(f, 'f', {}, pane);
+    const ui = f.state._readerLinkHints;
+    assert.equal(ui.pdfWin, pane.win);
+    assert.equal(ui.badges.length, 6);
+    const annotations = ui.badges.filter(badge => badge.target.annotationKey);
+    assert.deepEqual(Array.from(annotations, badge => badge.target.annotationKey),
+      ['HIGHLIGHT', 'NOTE', 'UNDERLINE', 'TEXT', 'AREA']);
+    assert.ok(annotations.every(badge => badge.el.style.background === '#2563eb'
+      && 'data-zv-annotation-hint' in badge.el.attributes));
+    const link = ui.badges.find(badge => badge.target.url === nativeURL);
+    assert.ok(link.el.style.cssText.includes('background:#FFD400'));
+    assert.notEqual(link.label, annotations[0].label);
+    assert.notEqual(link.el.style.left, annotations[0].el.style.left,
+      'overlapping link and annotation should have separate badge positions');
+    assert.equal(f.primary.doc.body.children.length, 0);
+    key(f, annotations[0].label.toLowerCase(), {}, pane);
+    assert.deepEqual(selected, [['HIGHLIGHT', pane.view]]);
+    assert.equal(f.state._readerLinkHints, null);
+    assert.equal(ui.linkPreview, undefined);
+    assert.ok(ui.badges.every(badge => !badge.el.isConnected));
+    assert.equal(f.state.lastAnnotationKey, 'HIGHLIGHT');
+    assert.equal(f.state._readerAnnotationJumpWin, pane.win);
+    // The fixture does not run the single-y chord timeout.
+    z._executeAction('yankAnnotation', f.reader, f.state, pane.win);
+    assert.equal(clipboard.at(-1), 'Marked text');
+    key(f, 'y', {}, pane); key(f, 'y', {}, pane);
+    assert.equal(clipboard.at(-1), 'My comment');
+  });
+
+  await check('annotation-only hints include a visible continuation and reject stale items', () => {
+    const f = fixture();
+    const pane = prepareLinkPane(f.primary);
+    f.reader.itemID = 43;
+    const item = { key: 'CROSSPAGE', annotationType: 'highlight',
+      annotationPosition: JSON.stringify({ pageIndex: 0, rects: [[20, 20, 100, 30]],
+        nextPageRects: [[20, 700, 100, 720]] }) };
+    let items = [item];
+    context.Zotero.Items = { get: () => ({ getAnnotations: () => items }) };
+    const selected = [];
+    f.reader._internalReader.setSelectedAnnotations = ids => selected.push(ids[0]);
+    pane.app.pdfViewer._getVisiblePages = () => ({ views: [{ id: 2 }] });
+    key(f, 'f');
+    let ui = f.state._readerLinkHints;
+    assert.equal(ui.badges.length, 1);
+    assert.equal(ui.badges[0].target.annotationKey, item.key);
+    key(f, 'Escape');
+    assert.equal(f.state._readerLinkHints, null);
+    assert.deepEqual(selected, []);
+    key(f, 'f');
+    ui = f.state._readerLinkHints;
+    items = [];
+    key(f, ui.badges[0].label);
+    assert.deepEqual(selected, []);
+    assert.equal(f.state._readerLinkHints, null);
+    items = [item];
+    key(f, 'f');
+    ui = f.state._readerLinkHints;
+    pane.win.innerHeight = 50;
+    key(f, ui.badges[0].label);
+    assert.deepEqual(selected, []);
+    pane.win.innerHeight = 480;
+    key(f, 'f');
+    ui = f.state._readerLinkHints;
+    key(f, ui.badges[0].label);
+    assert.deepEqual(selected, ['CROSSPAGE']);
+  });
+
   await check('hint placement uses target geometry and avoids text, neighbours and view edges', () => {
     const { doc } = prepareLinkPane(fixture().primary);
     const rect = (left, top, width = 25, height = 12) => ({ left, top, width, height });

@@ -239,14 +239,17 @@ jumps (`gg`/`G`, outline entries, marks, links and annotations) add entries in
 the active split pane; routine `hjkl` motion deliberately does not. It is
 separate from named marks and supports count prefixes (`3ctrl+o`).
 
-#### Follow visible PDF links
+#### Follow visible PDF links and annotations
 
 Press `f` to label visible internal links, citations, external links and plain
-DOIs, arXiv IDs and HTTP(S) URLs in the current pane. Hints sit above their
-targets. Type a label to jump directly to figures, tables, equations and other
+DOIs, arXiv IDs and HTTP(S) URLs in the current pane with yellow hints. Visible
+highlights, underlines, notes, text and area annotations get blue hints. Hints
+sit above their targets. Type a blue label to select its annotation directly,
+then use the usual annotation editing or copying commands. Type a link label
+to jump directly to figures, tables, equations and other
 document locations. References and external links open a preview in the bottom
 right. Internal jumps add a reading-history entry and briefly outline the
-destination. The command palette also offers **Open visible PDF links**.
+destination. The command palette also offers **Open visible PDF links and annotations**.
 
 | Key in the preview | Action |
 |---|---|

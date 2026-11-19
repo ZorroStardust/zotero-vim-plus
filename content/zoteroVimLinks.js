@@ -1,7 +1,7 @@
 /* global Zotero, Components, ZoteroVim */
 /* eslint-disable no-unused-vars */
 
-/** Visible PDF link hints, based on Zotero Neo's Reader Normal f action. */
+/** Visible PDF link and annotation hints, based on Zotero Neo's Reader Normal f action. */
 Object.assign(ZoteroVim, {
   _readerLinkHintsCurrent(state, ui) {
     try {
@@ -57,6 +57,43 @@ Object.assign(ZoteroVim, {
     return Array.from(ui.doc.querySelectorAll('.page[data-page-number]'))
       .filter(node => this._flashRectVisible(node.getBoundingClientRect(), visible))
       .map(node => Number(node.dataset.pageNumber) - 1);
+  },
+
+  _readerHintAnnotations(ui) {
+    if (!ui.reader.itemID) return [];
+    try {
+      return Zotero.Items.get(ui.reader.itemID)?.getAnnotations() || [];
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] read annotation hints: ' + e);
+      return [];
+    }
+  },
+
+  /** Resolve visible fragments of a Zotero annotation, including its continuation page. */
+  _readerAnnotationHintRects(ui, annotation, visible, pages) {
+    if (!annotation?.key || annotation.deleted) return [];
+    let position;
+    try { position = JSON.parse(annotation.annotationPosition); } catch (_) { return []; }
+    if (!Number.isInteger(position?.pageIndex) || position.pageIndex < 0
+        || position.pageIndex >= ui.pdfDoc.numPages) return [];
+    const rects = [];
+    for (const [pageIndex, pageRects] of [[position.pageIndex, position.rects],
+      [position.pageIndex + 1, position.nextPageRects]]) {
+      if (!pages.has(pageIndex)) continue;
+      const source = this._readerLinkPosition({ pageIndex, rects: pageRects }, ui.pdfDoc.numPages);
+      if (source) rects.push(...this._readerLinkRects(ui, source, visible));
+    }
+    return rects.sort((a, b) => a.top - b.top || a.left - b.left);
+  },
+
+  _readerAnnotationHintTargets(ui, pages, visible) {
+    const pageSet = new Set(pages);
+    const positioned = [];
+    for (const annotation of this._readerHintAnnotations(ui)) {
+      const rects = this._readerAnnotationHintRects(ui, annotation, visible, pageSet);
+      if (rects.length) positioned.push({ target: { annotationKey: annotation.key }, rects });
+    }
+    return positioned;
   },
 
   _readerLinkPositionKey(position) {
@@ -295,7 +332,7 @@ Object.assign(ZoteroVim, {
       .find(candidate => candidate && candidate._iframeWindow === pdfWin);
     const zh = this._isZhLocale();
     if (!view || !app?.pdfDocument || !app.pdfViewer) {
-      this._showStatus(state, zh ? '链接提示需要已加载的 PDF' : 'Link hints need a loaded PDF');
+      this._showStatus(state, zh ? '提示需要已加载的 PDF' : 'Hints need a loaded PDF');
       return;
     }
     const win = reader._window || reader._iframe?.ownerDocument?.defaultView;
@@ -353,9 +390,11 @@ Object.assign(ZoteroVim, {
         if (positioned.some(overlaps)) continue;
         positioned.push({ target, rects });
       }
+      // An annotation can cover a link; retain both as independently selectable targets.
+      positioned.push(...this._readerAnnotationHintTargets(ui, pages, viewport));
       if (!positioned.length) {
         this._closeReaderLinkHints(state);
-        this._showStatus(state, zh ? '当前窗格没有可见链接' : 'No visible links');
+        this._showStatus(state, zh ? '当前窗格没有可见链接或标注' : 'No visible links or annotations');
         return;
       }
       positioned.sort((a, b) => a.rects[0].top - b.rects[0].top || a.rects[0].left - b.rects[0].left);
@@ -365,17 +404,26 @@ Object.assign(ZoteroVim, {
         const badge = this._createHintBadge(ui.doc, labels[i], null, 0, rect);
         badge.target = item.target;
         badge.el.setAttribute('data-zv-link-hint', '');
-        if (this._readerLinkHasPreview(item.target)) badge.restEl.textContent += ' ›';
+        if (item.target.annotationKey) {
+          badge.el.setAttribute('data-zv-annotation-hint', '');
+          badge.el.style.background = '#2563eb';
+          badge.el.style.color = '#fff';
+          badge.el.style.borderColor = '#1d4ed8';
+          badge.prefixEl.style.color = '#bfdbfe';
+        } else if (this._readerLinkHasPreview(item.target)) {
+          badge.restEl.textContent += ' ›';
+        }
         ui.badges.push(badge);
       }
       this._layoutHintBadges(ui.doc, ui.badges, false);
-      this._showStatus(state, zh ? '输入链接标签 · Esc 取消' : 'Type a link label · Esc cancels');
+      this._showStatus(state, zh ? '输入标签（蓝色：标注） · Esc 取消'
+        : 'Type a label (blue: annotation) · Esc cancels');
       ui.statusTimer = state._statusTimer;
     } catch (e) {
       if (state._readerLinkHints !== ui) return;
       this._closeReaderLinkHints(state);
       Zotero.debug('[ZoteroVim] open link hints: ' + e);
-      this._showStatus(state, zh ? '无法读取链接' : 'Could not read links');
+      this._showStatus(state, zh ? '无法读取链接或标注' : 'Could not read links or annotations');
     }
   },
 
@@ -652,6 +700,21 @@ Object.assign(ZoteroVim, {
       && [reader._internalReader?._primaryView, reader._internalReader?._secondaryView].includes(view)
       && ui.tabID === ui.win?.Zotero_Tabs?.selectedID;
     try {
+      if (target.annotationKey) {
+        // Recheck the item and its visibility: it may have been edited or deleted
+        // while hints were open. Use the same selection path as [a / ]a.
+        const annotation = this._readerHintAnnotations(ui)
+          .find(item => item.key === target.annotationKey);
+        const visible = this._flashViewport(pdfWin);
+        const pages = new Set(this._readerVisibleLinkPages(ui, visible));
+        if (!this._readerAnnotationHintRects(ui, annotation, visible, pages).length) return;
+        this._clearReaderJumpCue(state, pdfWin);
+        if (this._navigateToAnnotationKey(state, reader, annotation, pdfWin)) {
+          state.lastAnnotationKey = annotation.key;
+          state._readerAnnotationJumpWin = pdfWin;
+        }
+        return;
+      }
       if (!this._readerLinkSourceVisible(ui, target)) return;
       if (target.url) {
         if (typeof view._onOpenLink === 'function') await view._onOpenLink(target.url);
@@ -682,7 +745,8 @@ Object.assign(ZoteroVim, {
       if (current()) state.lastAnnotationKey = null;
     } catch (e) {
       Zotero.debug('[ZoteroVim] follow PDF link: ' + e);
-      if (current()) this._showStatus(state, ui.zh ? '无法打开链接' : 'Could not open link');
+      if (current()) this._showStatus(state, ui.zh ? '无法打开链接或标注'
+        : 'Could not open link or annotation');
     }
   },
 });

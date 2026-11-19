@@ -334,6 +334,9 @@ Object.assign(ZoteroVim, {
         actions.push('followReaderLink', 'toggleReaderBodyText', 'readerOutlinePick', 'readerCaptionPick',
           'toggleReaderSidebarOutline', 'toggleMarksExplorer',
           'prevHeading', 'nextHeading', 'prevFigure', 'nextFigure', 'prevTable', 'nextTable');
+        if (owner.reader._iframeWindow?.document?.querySelector('button#appearance')) {
+          actions.push('openReaderThemePicker');
+        }
         if ([0, 1, 2].includes(viewer.spreadMode)) {
           actions.push('toggleReaderSpread', 'toggleReaderSpreadParity',
             'setReaderSinglePage', 'setReaderOddSpread', 'setReaderEvenSpread');

@@ -8,6 +8,108 @@
  */
 
 Object.assign(ZoteroVim, {
+  /** Open Zotero's own appearance popup so theme changes use its normal preferences path. */
+  _openReaderThemePicker(state, reader, pdfWin) {
+    const doc = reader._iframeWindow?.document;
+    const toolbar = doc?.querySelector('button#appearance');
+    const zh = this._isZhLocale();
+    if (!pdfWin?.PDFViewerApplication || !toolbar) {
+      this._showStatus(state, zh ? '无法打开 PDF 主题浮窗' : 'PDF themes are unavailable');
+      return;
+    }
+
+    this._clearReaderThemePicker(state);
+    this._stopSmoothHoldScroll(state, pdfWin);
+    const win = reader._window || reader._iframe?.ownerDocument?.defaultView;
+    const popup = doc.querySelector('.appearance-popup');
+    state._readerThemePicker = {
+      doc, toolbar, win, popup, tabID: win?.Zotero_Tabs?.selectedID, hints: [], prefix: '',
+    };
+    if (!popup) toolbar.click();
+    this._showStatus(state, zh ? '按 f 显示主题提示 · Esc 关闭'
+      : 'f shows theme hints · Esc closes', 3000);
+  },
+
+  _syncReaderThemePicker(state) {
+    const ui = state._readerThemePicker;
+    if (!ui) return;
+    const popup = ui.doc.querySelector('.appearance-popup');
+    if (!popup || !ui.toolbar.isConnected || ui.tabID !== ui.win?.Zotero_Tabs?.selectedID
+        || state.mode !== 'normal' || (ui.popup && ui.popup !== popup)) {
+      this._clearReaderThemePicker(state);
+    } else {
+      ui.popup = popup;
+    }
+  },
+
+  _clearReaderThemePicker(state) {
+    const ui = state._readerThemePicker;
+    if (!ui) return;
+    state._readerThemePicker = null;
+    for (const { badge } of ui.hints) badge.remove();
+  },
+
+  _readerThemePickerOwnsKey(state, key) {
+    const ui = state._readerThemePicker;
+    return !!ui && (key === 'escape' || key === 'f'
+      || (ui.hints.length > 0 && /^[a-z]$/i.test(key)));
+  },
+
+  /** Label native theme buttons in place and invoke their original click handlers. */
+  _onReaderThemePickerKeyDown(event, state) {
+    const ui = state._readerThemePicker;
+    if (!ui || event.isComposing || event.keyCode === 229) return false;
+    const key = this._keyString(event);
+    if (!this._readerThemePickerOwnsKey(state, key)) return false;
+    const popup = ui.doc.querySelector('.appearance-popup');
+    if (key !== 'escape' && !popup) return false;
+    if (ui.tabID !== ui.win?.Zotero_Tabs?.selectedID) return false;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    if (event.repeat) return true;
+
+    if (key === 'escape') {
+      this._clearReaderThemePicker(state);
+      // Zotero may already have handled Escape in its outer window listener.
+      if (popup && ui.toolbar.classList.contains('active')) ui.toolbar.click();
+    } else if (key === 'f') {
+      ui.popup = popup;
+      for (const { badge } of ui.hints) badge.remove();
+      ui.prefix = '';
+      const buttons = Array.from(popup.querySelectorAll('button.theme:not(.add)'));
+      // The outer reader receives keys before our document listener. Keep
+      // native tool and Read Aloud shortcuts out of every hint position.
+      const alphabet = this._hintAlphabet().replace(/[FHLRSU]/g, '');
+      const labels = this._flashLabels(buttons.length, new Set(), alphabet);
+      ui.hints = buttons.map((button, index) => {
+        const badge = ui.doc.createElement('span');
+        badge.setAttribute('aria-hidden', 'true');
+        badge.style.cssText = 'position:absolute;inset-block-start:1px;inset-inline-start:1px;'
+          + 'pointer-events:none;padding:0 3px;'
+          + 'border-radius:3px;background:var(--zv-theme-hint, #ffd400);'
+          + 'color:var(--zv-theme-on-hint, #000);font:bold 11px/1.2 monospace;';
+        badge.textContent = labels[index];
+        button.prepend(badge);
+        return { button, badge, label: labels[index] };
+      });
+    } else {
+      const prefix = ui.prefix + key.toUpperCase();
+      const matches = ui.hints.filter(hint => hint.label.startsWith(prefix));
+      const selected = matches.find(hint => hint.label === prefix && popup.contains(hint.button));
+      if (selected) {
+        this._clearReaderThemePicker(state);
+        selected.button.click();
+        if (ui.toolbar.classList.contains('active')) ui.toolbar.click();
+      } else {
+        ui.prefix = matches.length ? prefix : '';
+        for (const { badge, label } of ui.hints) {
+          badge.hidden = !label.startsWith(ui.prefix);
+        }
+      }
+    }
+    return true;
+  },
+
   /**
    * Set native PDF page pairing in the key event's pane. Entering from single
    * page saves that pane's zoom/scroll mode; leaving restores them at the

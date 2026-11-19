@@ -88,8 +88,7 @@ Object.assign(ZoteroVim, {
   },
 
   /** Use safe first letters and fixed-length labels, so none prefixes another. */
-  _flashLabels(count, continuations) {
-    const alphabet = this._hintAlphabet();
+  _flashLabels(count, continuations, alphabet = this._hintAlphabet()) {
     const first = [...alphabet].filter(letter => !continuations.has(letter));
     if (!first.length) return [];
     let suffixCapacity = 1;

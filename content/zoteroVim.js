@@ -128,6 +128,7 @@ var ZoteroVim = {
     'normal: |':   'toggleReaderSplitVertical',
     'normal: s':   'toggleReaderSpread',
     'normal: S':   'toggleReaderSpreadParity',
+    'normal: rt':  'openReaderThemePicker',
     'normal: ff':  'mainFuzzyAll',
     'normal: fb':  'mainFuzzyCollection',
     'normal: fh':  'readerOutlinePick',
@@ -402,6 +403,10 @@ var ZoteroVim = {
     try {
       const saved = JSON.parse(this.getPref('bindings', '') || '{}');
       if (saved && typeof saved === 'object' && !Array.isArray(saved)) {
+        // Keep an existing custom Space r action immediately executable.
+        if (typeof saved['normal: r'] === 'string' && saved['normal: r']) {
+          delete bindings['normal: rt'];
+        }
         for (const [key, action] of Object.entries(saved)) {
           // A null override is an explicit unbinding, not a missing default.
           // Legacy flat binding maps continue to work as string overrides.
@@ -879,6 +884,7 @@ var ZoteroVim = {
     }
 
     state.cleanup = () => {
+      this._clearReaderThemePicker(state);
       this._closeShortcutHelp?.(state, false);
       this._closeReaderFlash?.(state, false);
       this._closeReaderLinkHints?.(state);
@@ -1002,6 +1008,7 @@ var ZoteroVim = {
   _syncReaderPdfViewListeners(reader, state) {
     if (!state?._pdfViewHandlers) return;
     this._syncShortcutHelp?.(state);
+    this._syncReaderThemePicker(state);
     this._syncSpacekeysContext(state);
     if (state._readerFlash && !this._readerFlashCurrent(state)) {
       this._closeReaderFlash(state, false);
@@ -1354,6 +1361,7 @@ var ZoteroVim = {
     toggleReaderSplitVertical: ['Vertical split', '左右分栏'],
     toggleReaderSpread: ['Single / two-page view', '单页／双页视图'],
     toggleReaderSpreadParity: ['Odd / even page pairing', '奇偶页配对'],
+    openReaderThemePicker: ['PDF themes', 'PDF 主题'],
     toggleMarksExplorer: ['Marks explorer', '位置标记'],
     focusReaderSplitLeft: ['Focus left pane', '聚焦左侧分栏'],
     focusReaderSplitRight: ['Focus right pane', '聚焦右侧分栏'],
@@ -2006,6 +2014,7 @@ var ZoteroVim = {
       this._closeReaderLinkHints?.(state);
       return;
     }
+    if (this._onReaderThemePickerKeyDown(event, state)) return;
     if (this._onReaderLinkHintKeyDown?.(event, state, pdfWin)) return;
 
     this._onReaderFocusCueEvent?.(state, { kind: 'pdf', win: pdfWin }, event);
@@ -2473,6 +2482,7 @@ var ZoteroVim = {
         || this._isReaderHintPrefix(state.mode + ':', state.keyBuffer))) return true;
     if (state._outlinePicker && (!pdfWin || state._outlinePicker.pdfWin === pdfWin)) return true;
     if (state._readerFlash && (!pdfWin || state._readerFlash.pdfWin === pdfWin)) return true;
+    if (this._readerThemePickerOwnsKey(state, keyStr)) return true;
     if (this._readerLinkHintOwnsKey?.(state, keyStr, pdfWin)) return true;
     if (state.outlineExplorerOpen && this._readerOutlineExplorerFocused(state, pdfWin)) return true;
     if (state._translationPopup) return true;
@@ -2891,6 +2901,8 @@ var ZoteroVim = {
           this._toggleReaderSplit(state, reader, 'horizontal'); break;
         case 'toggleReaderSplitVertical':
           this._toggleReaderSplit(state, reader, 'vertical'); break;
+        case 'openReaderThemePicker':
+          this._openReaderThemePicker(state, reader, pdfWin); break;
         case 'toggleReaderSpread':
           this._setReaderSpreadMode(state, reader, pdfWin, 'toggle'); break;
         case 'toggleReaderSpreadParity':

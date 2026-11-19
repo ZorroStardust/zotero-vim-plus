@@ -127,6 +127,7 @@ const ZV_DEFAULT_BINDINGS = {
   "normal: |":   "toggleReaderSplitVertical",
   "normal: s":   "toggleReaderSpread",
   "normal: S":   "toggleReaderSpreadParity",
+  "normal: rt":  "openReaderThemePicker",
   "normal: bj":  "mainTabPick",
   "normal: ff":  "mainFuzzyAll",
   "normal: fb":  "mainFuzzyCollection",
@@ -939,6 +940,9 @@ function _zvLoadBindings() {
   try {
     const saved = JSON.parse(_zvGet("bindings", "") || "{}");
     if (saved && typeof saved === "object" && !Array.isArray(saved)) {
+      if (typeof saved["normal: r"] === "string" && saved["normal: r"]) {
+        delete bindings["normal: rt"];
+      }
       for (const [key, action] of Object.entries(saved)) {
         if (action === null) delete bindings[key];
         else if (typeof action === "string" && action) bindings[key] = action;

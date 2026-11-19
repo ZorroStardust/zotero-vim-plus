@@ -16,6 +16,7 @@
 | --- | --- | --- |
 | PDF in Normal mode | `j` / `k`, `h` / `l` | Scroll, or jump to the previous / next page |
 | PDF in Normal mode | `/`, `Space f h` | Search PDF text, or search outline headings |
+| PDF Normal | `Space r t`, then `f` | Open PDF themes and type a hint to apply a theme |
 | PDF in Normal mode | `v`, `c` | Enter Visual mode for a selection, or Cursor mode to move a text caret |
 | PDF in Visual mode | `y`, `zy` | Copy the selection, or highlight it in yellow |
 | Library item list | `j` / `k`, `Enter` | Move the selection, or open the selected item |

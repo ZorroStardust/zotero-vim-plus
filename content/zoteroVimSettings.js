@@ -1,4 +1,4 @@
-/* global Zotero, ZoteroVim, Services, Components, ZV_KEYMAP_LABELS */
+/* global Zotero, ZoteroVim, Services, Components, ZV_THEME, ZV_KEYMAP_LABELS */
 
 Object.assign(ZoteroVim, {
   _openSettings(owner, win, sourceWin = null) {
@@ -41,6 +41,41 @@ Object.assign(ZoteroVim, {
       #zotero-vim-settings-form .zv-settings-select::after {
         content: "▾"; margin-inline-start: auto; color: var(--zv-theme-muted, #a6adc8);
       }
+      #zv-theme-cards {
+        width: 100%; display: grid; gap: 10px;
+        grid-template-columns: repeat(auto-fit, minmax(min(100%, 160px), 1fr));
+      }
+      #zv-theme-cards .zv-theme-card {
+        min-width: 0; padding: 6px; text-align: start;
+        display: flex; flex-direction: column; gap: 5px;
+      }
+      #zv-theme-cards .zv-theme-card[aria-checked=true] {
+        border-color: var(--zv-theme-accent, #89b4fa);
+        background: var(--zv-theme-selected, #45475a);
+      }
+      #zv-theme-cards .zv-theme-card-name {
+        display: flex; justify-content: space-between; align-items: baseline; gap: 4px;
+      }
+      #zv-theme-cards .zv-theme-card-name::after {
+        content: '✓'; visibility: hidden; color: var(--zv-theme-accent, #89b4fa);
+      }
+      #zv-theme-cards [aria-checked=true] .zv-theme-card-name::after { visibility: visible; }
+      #zv-theme-cards .zv-theme-card-preview { display: flex; gap: 4px; }
+      #zv-theme-cards .zv-theme-sample {
+        flex: 1; min-width: 0; padding: 6px;
+        border: 1px solid var(--zv-preview-border); border-radius: 5px;
+        background: var(--zv-preview-surface); color: var(--zv-preview-text);
+      }
+      #zv-theme-cards .zv-theme-sample-type {
+        display: block; font-weight: bold; font-size: 15px; line-height: 1;
+        border-inline-start: 3px solid var(--zv-preview-accent);
+        padding-inline-start: 5px; margin-block-end: 6px;
+        background: var(--zv-preview-control);
+      }
+      #zv-theme-cards .zv-theme-swatches {
+        display: flex; gap: 2px; height: 9px;
+      }
+      #zv-theme-cards .zv-theme-swatches > span { flex: 1; border-radius: 2px; }
       #zv-settings-choice-layer {
         position: absolute; inset: 0; z-index: 2; padding: 24px; background: #0005;
         display: flex; justify-content: center; align-items: center;
@@ -188,7 +223,7 @@ Object.assign(ZoteroVim, {
     // Use only pane-local lookup and HTML element creation when the controller
     // runs in the library or reader chrome document.
     const scope = {
-      Zotero, Components, ZV_KEYMAP_LABELS, ZV_SETTINGS_PANE: true,
+      Zotero, Components, ZV_THEME, ZV_KEYMAP_LABELS, ZV_SETTINGS_PANE: true,
       ZV_SETTINGS_SELECT: select => this._wrapSettingsSelect(ui, select),
       dump: message => Zotero.debug(message),
       window: ui.win,
@@ -201,11 +236,14 @@ Object.assign(ZoteroVim, {
     Services.scriptloader.loadSubScript(this.rootURI + 'content/i18n.js', scope, 'UTF-8');
     Services.scriptloader.loadSubScript(this.rootURI + 'content/prefs.js', scope, 'UTF-8');
     ui.prefs = scope;
+    this._renderSettingsThemeCards(ui, list.querySelector('#zv-theme'));
     for (const select of list.querySelectorAll('select:not([hidden])')) {
       this._wrapSettingsSelect(ui, select);
     }
     list.addEventListener('change', event => {
+      if (event.target.id === 'zv-theme') return;
       if (event.target.id === 'zv-language') {
+        ui.syncThemeCards();
         for (const button of list.querySelectorAll('.zv-settings-select')) {
           this._syncSettingsSelect(button.previousElementSibling, button);
         }
@@ -364,6 +402,68 @@ Object.assign(ZoteroVim, {
     if (ui.hints.length) {
       ui.status.textContent = ui.zh ? '输入提示字母 · Esc 取消' : 'Type a hint · Esc cancel';
     }
+  },
+
+  /** Show each preset with its own colors, regardless of the active theme. */
+  _renderSettingsThemeCards(ui, select) {
+    const { h } = ui;
+    const grid = h('div');
+    grid.id = 'zv-theme-cards';
+    grid.setAttribute('role', 'radiogroup');
+    const palettes = ZV_THEME.palettes;
+    const cards = Array.from(select.options, option => {
+      const button = h('button');
+      button.type = 'button';
+      button.className = 'zv-theme-card';
+      button.setAttribute('role', 'radio');
+      const name = h('span');
+      name.className = 'zv-theme-card-name';
+      const preview = h('span');
+      preview.className = 'zv-theme-card-preview';
+      preview.setAttribute('aria-hidden', 'true');
+      const samples = option.value === 'system' ? [palettes.latte, palettes.mocha]
+        : [palettes[option.value] || { ...palettes.mocha, hint: '#ffd400' }];
+      for (const palette of samples) {
+        const sample = h('span');
+        sample.className = 'zv-theme-sample';
+        for (const key of ['border', 'surface', 'text', 'accent', 'control']) {
+          sample.style.setProperty('--zv-preview-' + key, palette[key]);
+        }
+        const type = h('span');
+        type.className = 'zv-theme-sample-type';
+        type.textContent = 'Aa';
+        const swatches = h('span');
+        swatches.className = 'zv-theme-swatches';
+        for (const key of ['control', 'text', 'accent', 'success', 'danger', 'hint']) {
+          const swatch = h('span');
+          swatch.style.backgroundColor = palette[key];
+          swatches.appendChild(swatch);
+        }
+        sample.append(type, swatches);
+        preview.appendChild(sample);
+      }
+      button.append(name, preview);
+      button.addEventListener('click', () => {
+        if (select.value === option.value) return;
+        select.value = option.value;
+        select.dispatchEvent(new ui.win.Event('change', { bubbles: true }));
+      });
+      grid.appendChild(button);
+      return { button, name, option };
+    });
+    ui.syncThemeCards = () => {
+      grid.setAttribute('aria-label', this._settingsSelectLabel(select));
+      for (const { button, name, option } of cards) {
+        name.textContent = option.label;
+        button.setAttribute('aria-label', option.label);
+        button.setAttribute('aria-checked', String(option.selected));
+        button.tabIndex = option.selected ? 0 : -1;
+      }
+    };
+    select.hidden = true;
+    select.after(grid);
+    select.addEventListener('change', ui.syncThemeCards);
+    ui.syncThemeCards();
   },
 
   /** Keep the source select as the form value, with one focusable trigger in the overlay. */
@@ -612,6 +712,19 @@ Object.assign(ZoteroVim, {
       return;
     }
     if (!plain) return;
+    if (target?.classList.contains('zv-theme-card')) {
+      const step = ['ArrowRight', 'ArrowDown', 'l', 'j'].includes(key) ? 1
+        : ['ArrowLeft', 'ArrowUp', 'h', 'k'].includes(key) ? -1 : 0;
+      if (step && !event.shiftKey) {
+        event.preventDefault();
+        const grid = target.parentElement;
+        const next = step > 0 ? target.nextElementSibling || grid.firstElementChild
+          : target.previousElementSibling || grid.lastElementChild;
+        next.click();
+        next.focus();
+        return;
+      }
+    }
     if (target?.classList.contains('zv-settings-select')
         && ['Enter', ' ', 'ArrowDown', 'ArrowUp'].includes(key)) {
       event.preventDefault();

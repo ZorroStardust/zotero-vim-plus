@@ -1078,7 +1078,8 @@ lists can be filtered with `/`. Use the arrow keys in numeric fields and
 `Tab` to move between settings. On the Keybindings tab, filter by action or key,
 then use **Apply bindings** or `Ctrl+Enter` (`Cmd+Enter` on macOS) to save changes.
 
-Open **Appearance** to change the plugin palette. Themes update Vim Plus panels,
+Open **Appearance** to compare palette previews. Use a card’s `f` hint or focus
+the selected card with `Tab` and use the arrow keys to switch themes. Themes update Vim Plus panels,
 controls, hints, indicators and temporary PDF selection immediately. **Classic**
 uses the original palette, and **Follow system** switches between Catppuccin
 Latte and Mocha with the system color scheme. PDF annotation colors are set

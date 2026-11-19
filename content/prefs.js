@@ -80,6 +80,7 @@ const ZV_DEFAULT_BINDINGS = {
   "normal:enter":   "editAnnotation",
   "normal:return":  "editAnnotation",
   "normal:dd":      "deleteAnnotation",
+  "normal:zk":      "recolorBlack",
   "normal:zy":      "highlightYellow",
   "normal:zY":      "underlineYellow",
   "normal:zr":      "highlightRed",

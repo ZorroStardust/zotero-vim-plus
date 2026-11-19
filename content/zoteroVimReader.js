@@ -7195,24 +7195,27 @@ Object.assign(ZoteroVim, {
     }
   },
 
-  /** Resolve one editable annotation. An empty native selection is authoritative. */
-  _annotationStyleTarget(state, reader) {
+  /** Resolve one selected annotation, using the jump key on older readers. */
+  _selectedAnnotation(state, reader) {
     if (!reader?.itemID) return null;
     try {
-      const native = reader._internalReader?._state;
-      const ids = native?.selectedAnnotationIDs;
+      const ids = reader._internalReader?._state?.selectedAnnotationIDs;
       const key = Array.isArray(ids) ? (ids.length === 1 ? ids[0] : null)
         : state.lastAnnotationKey;
-      if (!key || native?.readOnly) return null;
+      if (!key) return null;
       const attachment = Zotero.Items.get(reader.itemID);
-      const target = attachment?.getAnnotations().find(item => item.key === key);
-      if (!target || target.deleted || target.annotationIsExternal
-          || target.isEditable?.() === false) return null;
-      return target;
+      return attachment?.getAnnotations().find(item => item.key === key && !item.deleted) || null;
     } catch (e) {
-      Zotero.debug('[ZoteroVim] _annotationStyleTarget: ' + e);
+      Zotero.debug('[ZoteroVim] _selectedAnnotation: ' + e);
       return null;
     }
+  },
+
+  /** Resolve the selected annotation only if its style can be edited. */
+  _annotationStyleTarget(state, reader) {
+    if (reader?._internalReader?._state?.readOnly) return null;
+    const target = this._selectedAnnotation(state, reader);
+    return target && !target.annotationIsExternal && target.isEditable?.() !== false ? target : null;
   },
 
   _canConvertAnnotation(item) {
@@ -7237,7 +7240,8 @@ Object.assign(ZoteroVim, {
 
       if (typeChanged) await this._refreshAnnotationType(reader, target);
 
-      const colorName = Object.entries(this.COLORS).find(([, value]) => value === color)?.[0];
+      const colorName = color === '#000000' ? (this._isZhLocale() ? '黑色' : 'black')
+        : Object.entries(this.COLORS).find(([, value]) => value === color)?.[0];
       this._showStatus(state, '✓ → ' + colorName, 1200);
     } catch (e) {
       Zotero.debug('[ZoteroVim] _styleAnnotation error: ' + e);
@@ -7306,66 +7310,38 @@ Object.assign(ZoteroVim, {
     }
   },
 
-  /**
-   * Yank the highlighted text of the currently-selected annotation (y in normal
-   * mode after [a / ]a navigation).  Applies the same post-processing as
-   * _copySelection: NFKC ligature normalization + newline → space.
-   */
+  /** Copy the selected markup text or the body of a note or text annotation. */
   _yankAnnotation(state, reader) {
-    const key = state.lastAnnotationKey;
-    if (!key) {
-      this._showStatus(state, '✗ navigate first with [a / ]a', 2000);
+    this._copyAnnotationText(state, reader, false);
+  },
+
+  _yankAnnotationComment(state, reader) {
+    this._copyAnnotationText(state, reader, true);
+  },
+
+  /** Preserve note bodies as typed and use the existing normalization for excerpts. */
+  _copyAnnotationText(state, reader, commentOnly) {
+    const zh = this._isZhLocale();
+    const target = this._selectedAnnotation(state, reader);
+    if (!target) {
+      this._showStatus(state, zh ? '✗ 请先选中一个标注' : '✗ Select an annotation first', 2000);
       return;
     }
     try {
-      const attachment = Zotero.Items.get(reader.itemID);
-      if (!attachment) { this._showStatus(state, '✗ no attachment', 2000); return; }
-
-      const annotations = attachment.getAnnotations();
-      const target = annotations.find(a => a.key === key);
-      if (!target) { this._showStatus(state, '✗ annotation not found', 2000); return; }
-
-      let text = target.annotationText || '';
-      if (!text) { this._showStatus(state, '✗ annotation has no text', 2000); return; }
-
-      text = text.normalize('NFKC').replace(/\n/g, ' ').replace(/ {2,}/g, ' ').trim();
-
-      const clipboardHelper = Components.classes['@mozilla.org/widget/clipboardhelper;1']
-        .getService(Components.interfaces.nsIClipboardHelper);
-      clipboardHelper.copyString(text);
-
-      this._showStatus(state, '✓ copied ' + text.length + ' chars', 1500);
-      Zotero.debug('[ZoteroVim] yankAnnotation key=' + key + ' len=' + text.length);
-    } catch (e) {
-      Zotero.debug('[ZoteroVim] _yankAnnotation error: ' + e);
-      this._showStatus(state, '✗ ' + String(e).slice(0, 35), 3000);
-    }
-  },
-
-  /**
-   * yy in normal mode — copy the comment text of the selected annotation.
-   */
-  _yankAnnotationComment(state, reader) {
-    const key = state.lastAnnotationKey;
-    if (!key) { this._showStatus(state, '✗ navigate first with [a / ]a', 2000); return; }
-    try {
-      const attachment = Zotero.Items.get(reader.itemID);
-      if (!attachment) { this._showStatus(state, '✗ no attachment', 2000); return; }
-
-      const annotations = attachment.getAnnotations();
-      const target = annotations.find(a => a.key === key);
-      if (!target) { this._showStatus(state, '✗ annotation not found', 2000); return; }
-
-      const comment = (target.annotationComment || '').trim();
-      if (!comment) { this._showStatus(state, '✗ annotation has no comment', 2000); return; }
-
-      const text = comment.normalize('NFKC').replace(/\n/g, ' ').replace(/ {2,}/g, ' ').trim();
+      const body = target.annotationType === 'note' || target.annotationType === 'text';
+      const source = commentOnly || body ? target.annotationComment : target.annotationText;
+      const text = !commentOnly && body ? source || ''
+        : (source || '').normalize('NFKC').replace(/\n/g, ' ').replace(/ {2,}/g, ' ').trim();
+      if (!text.trim()) {
+        this._showStatus(state, zh ? '✗ 标注没有可复制的内容' : '✗ Annotation has no text to copy', 2000);
+        return;
+      }
       Components.classes['@mozilla.org/widget/clipboardhelper;1']
         .getService(Components.interfaces.nsIClipboardHelper).copyString(text);
-      this._showStatus(state, '✓ copied comment (' + text.length + ' chars)', 1500);
-      Zotero.debug('[ZoteroVim] yankAnnotationComment key=' + key + ' len=' + text.length);
+      this._showStatus(state, zh ? '✓ 已复制 ' + text.length + ' 个字符'
+        : '✓ copied ' + text.length + ' chars', 1500);
     } catch (e) {
-      Zotero.debug('[ZoteroVim] _yankAnnotationComment error: ' + e);
+      Zotero.debug('[ZoteroVim] _yankAnnotation error: ' + e);
       this._showStatus(state, '✗ ' + String(e).slice(0, 35), 3000);
     }
   },

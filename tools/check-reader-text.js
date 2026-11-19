@@ -792,7 +792,9 @@ async function checkAnnotationStyleSelection() {
   const watermark = { key: 'OLD', annotationType: 'highlight' };
   const mark = { key: 'MARK', annotationType: 'highlight', annotationColor: z.COLORS.yellow,
     annotationComment: 'Keep me', annotationPosition: '{"pageIndex":0}' };
-  const box = { key: 'BOX', annotationType: 'text', annotationColor: z.COLORS.red };
+  const box = { key: 'BOX', annotationType: 'text', annotationColor: z.COLORS.red,
+    annotationComment: 'Line one\nLine two' };
+  const note = { key: 'NOTE', annotationType: 'note', annotationComment: 'A note\n  Indented' };
   const saved = [];
   for (const item of [watermark, mark, box]) {
     item.save = async () => saved.push([item.key, item.annotationType, item.annotationColor]);
@@ -802,7 +804,13 @@ async function checkAnnotationStyleSelection() {
     _iframeWindow: {}, setAnnotations: async () => {} };
   const state = { mode: 'normal', lastAnnotationKey: 'OLD' };
   const { Items, DB } = context.Zotero;
-  context.Zotero.Items = { get: () => ({ getAnnotations: () => [watermark, mark, box] }) };
+  const { classes, interfaces } = context.Components;
+  const copied = [];
+  context.Components.classes = { '@mozilla.org/widget/clipboardhelper;1': {
+    getService: () => ({ copyString: text => copied.push(text) }),
+  } };
+  context.Components.interfaces = {};
+  context.Zotero.Items = { get: () => ({ getAnnotations: () => [watermark, mark, box, note] }) };
   context.Zotero.DB = { executeTransaction: async fn => fn() };
   try {
     await z._executeAction('highlightYellow', reader, state, {});
@@ -821,10 +829,18 @@ async function checkAnnotationStyleSelection() {
     native.selectedAnnotationIDs = ['BOX'];
     await z._executeAction('highlightOrange', reader, state, {});
     await z._executeAction('underlineOrange', reader, state, {});
-    assert.equal(box.annotationColor, z.COLORS.red);
-    assert.equal(saved.length, 5);
-    await z._executeAction('recolorOrange', reader, state, {});
     assert.deepEqual(saved.at(-1), ['BOX', 'text', z.COLORS.orange]);
+    assert.equal(saved.length, 6);
+    await z._executeAction('recolorBlack', reader, state, {});
+    assert.deepEqual(saved.at(-1), ['BOX', 'text', '#000000']);
+    z._executeAction('yankAnnotation', reader, state, {});
+    native.selectedAnnotationIDs = ['NOTE'];
+    native.readOnly = true;
+    z._executeAction('yankAnnotation', reader, state, {});
+    native.readOnly = false;
+    assert.deepEqual(copied, ['Line one\nLine two', 'A note\n  Indented']);
+    native.selectedAnnotationIDs = ['MARK'];
+    await z._executeAction('recolorBlack', reader, state, {});
     native.selectedAnnotationIDs = [];
     await z._executeAction('highlightGray', reader, state, {});
     native.selectedAnnotationIDs = ['MARK', 'BOX'];
@@ -832,8 +848,9 @@ async function checkAnnotationStyleSelection() {
     native.selectedAnnotationIDs = ['MARK'];
     mark.annotationIsExternal = true;
     await z._executeAction('highlightOrange', reader, state, {});
-    assert.equal(saved.length, 6);
+    assert.equal(saved.length, 7);
   } finally {
+    Object.assign(context.Components, { classes, interfaces });
     Object.assign(context.Zotero, { Items, DB });
   }
 }

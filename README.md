@@ -775,15 +775,16 @@ Selected annotations are highlighted in the PDF and scrolled to in the sidebar.
 |-----|--------|
 | `Enter` | Open the selected annotation's comment field for editing |
 | `i` | Enter Insert mode **and** focus the annotation comment field |
-| `y` | Copy the annotation's **highlighted text** to the clipboard |
+| `y` | Copy the selected annotation's excerpt or its note/text body |
 | `yy` | Copy the annotation's **comment text** to the clipboard |
 | `dd` | Delete the selected annotation |
-| `z` | Show the highlight and underline palette |
+| `z` | Show the selected annotation’s colour palette |
 | `.` | Repeat the last annotation change (highlight, underline, note, delete or recolour) |
 
 Use the [colour pairs below](#creating-annotations) to style a selected highlight
 or underline in place. For example, `zy` sets yellow highlight and `zY` sets yellow
-underline. With no selection, `zb` positions the page at the bottom of the viewport.
+underline. For a selected text annotation, the palette uses lowercase colour keys,
+including `zk` for Zotero’s extra black option. With no selection, `zb` positions the page at the bottom of the viewport.
 
 > **Tip:** `y` vs `yy` — the plugin waits up to 800 ms for the second `y`
 > before firing the single-`y` action. Typing `yy` quickly always wins.
@@ -1110,12 +1111,13 @@ failures are reported to `zv-startup.log` in the profile directory with
 | `filterBlue` | Filter sidebar to Blue annotations only |
 | `filterPurple` | Filter sidebar to Purple annotations only |
 | `filterClear` | Clear colour filter (show all annotations) |
+| `recolorBlack` | Change the selected text annotation to black |
 | `recolorYellow` | Change selected annotation colour to Yellow |
 | `recolorRed` | Change selected annotation colour to Red |
 | `recolorGreen` | Change selected annotation colour to Green |
 | `recolorBlue` | Change selected annotation colour to Blue |
 | `recolorPurple` | Change selected annotation colour to Purple |
-| `yankAnnotation` | Copy annotation highlighted text |
+| `yankAnnotation` | Copy the selected annotation excerpt or note/text body |
 | `yankAnnotationComment` | Copy annotation comment text |
 | `enterVisual` | Enter Visual mode |
 | `flashCursor` | Find visible text and place the Cursor caret at its start |

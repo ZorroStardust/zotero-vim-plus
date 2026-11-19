@@ -225,7 +225,7 @@ check('Visual z uses effective bindings and cancels without exiting Visual', () 
   assert.deepEqual(f.actions, []);
 });
 
-check('Normal z uses the same highlight/underline palette with or without an annotation', () => {
+check('Normal z offers lowercase recolours for text annotations and pairs for markup', () => {
   const f = fixture();
   f.prefs['readerBindings.revision'] = 1;
   f.prefs.bindings = JSON.stringify({
@@ -251,8 +251,9 @@ check('Normal z uses the same highlight/underline palette with or without an ann
   assert.deepEqual(f.actions, []);
 
   f.pdfKey('z'); f.advance(200);
-  assert.deepEqual(keys(), base);
-  assert.match(text(f.state._spacekeys.el), /高亮 \/ 下划线/);
+  assert.deepEqual(keys(), ['b', 'g', 'k', 'm', 'o', 'p', 'r', 's', 'y']);
+  assert(f.state._spacekeys.rows.every(row => row.style.type === 'recolor'));
+  assert.match(text(f.state._spacekeys.el), /改色/);
   f.pdfKey('Escape');
   selected = { key: 'MARKUP', annotationType: 'underline' };
   f.pdfKey('z'); f.pdfKey('y');

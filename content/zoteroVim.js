@@ -82,6 +82,7 @@ var ZoteroVim = {
     'normal:dd':      'deleteAnnotation',
     'normal:y':       'yankAnnotation',
     'normal:yy':      'yankAnnotationComment',
+    'normal:zk':      'recolorBlack',
     'normal:zy':      'highlightYellow',
     'normal:zY':      'underlineYellow',
     'normal:zr':      'highlightRed',
@@ -1348,10 +1349,11 @@ var ZoteroVim = {
   },
 
   /** Group matching bindings by the next key, keeping case and modifiers intact. */
-  _spacekeysRows(modePrefix, buffer) {
+  _spacekeysRows(modePrefix, buffer, annotation) {
     const zh = this._isZhLocale();
     const prefix = modePrefix + buffer;
     const palette = this._isReaderAnnotationPrefix(modePrefix, buffer);
+    const textAnnotation = annotation?.annotationType === 'text';
     const groups = new Map();
     const named = 'arrow(?:left|right|up|down)|page(?:up|down)|backspace|delete|escape|enter|'
       + 'return|tab|home|end|insert|f(?:2[0-4]|1\\d|[1-9])(?!\\d)';
@@ -1361,7 +1363,11 @@ var ZoteroVim = {
       const rest = binding.slice(prefix.length);
       if (!rest) continue;
       const style = palette ? this._annotationStyleForAction(action) : null;
-      if (palette && modePrefix === 'normal:' && !style) continue;
+      if (palette && modePrefix === 'normal:') {
+        if (!style || (action === 'recolorBlack' && !textAnnotation)) continue;
+        if (textAnnotation && (style.type === 'underline' || !/^[a-z]$/.test(rest))) continue;
+        if (textAnnotation) style.type = 'recolor';
+      }
       const token = rest.match(nextKey);
       const key = token[0];
       if (!groups.has(key)) groups.set(key, []);
@@ -1470,7 +1476,9 @@ var ZoteroVim = {
       this._hideSpacekeys(state);
       return;
     }
-    const rows = this._spacekeysRows(modePrefix, buffer);
+    const annotation = modePrefix === 'normal:' && buffer.startsWith('z')
+      ? this._annotationStyleTarget?.(state, state.reader) ?? null : undefined;
+    const rows = this._spacekeysRows(modePrefix, buffer, annotation);
     if (!rows.length) { this._hideSpacekeys(state); return; }
     try {
       const sourceWin = source === 'note' ? state._contextNoteEditorWin
@@ -1518,8 +1526,7 @@ var ZoteroVim = {
       }
       ui.buffer = buffer;
       ui.rows = rows;
-      ui.annotationKey = modePrefix === 'normal:' && buffer.startsWith('z')
-        ? this._annotationStyleTarget?.(state, state.reader)?.key ?? null : undefined;
+      ui.annotationKey = annotation === undefined ? undefined : annotation?.key ?? null;
       if (ui.el) this._renderSpacekeys(state, ui);
     } catch (e) {
       this._hideSpacekeys(state);
@@ -2490,6 +2497,7 @@ var ZoteroVim = {
   // ── Action dispatcher ─────────────────────────────────────────────────────
 
   _annotationStyleForAction(action) {
+    if (action === 'recolorBlack') return { type: 'recolor', color: '#000000' };
     const match = /^(highlight|underline|recolor)([A-Z][a-z]+)$/.exec(action);
     const colorName = match?.[2].toLowerCase();
     return Object.hasOwn(this.COLORS, colorName)
@@ -2540,6 +2548,7 @@ var ZoteroVim = {
         }
         const target = this._annotationStyleTarget(state, reader);
         if (!target) {
+          if (action === 'recolorBlack') return;
           if ((action === 'highlightBlue' || action === 'recolorBlue')
               && !reader?._internalReader?._state?.selectedAnnotationIDs?.length) {
             this._scrollToPagePosition(pdfWin, 'bottom');
@@ -2549,13 +2558,17 @@ var ZoteroVim = {
           }
           return;
         }
-        if (type !== 'recolor' && !this._canConvertAnnotation(target)) {
+        const textAnnotation = target.annotationType === 'text';
+        if (action === 'recolorBlack' && !textAnnotation) return;
+        if (textAnnotation && type === 'underline') return;
+        const recolor = type === 'recolor' || textAnnotation;
+        if (!recolor && !this._canConvertAnnotation(target)) {
           this._showStatus(state, this._isZhLocale()
             ? '请选择一条高亮或下划线' : 'Select a highlight or underline', 1800);
           return;
         }
         state.lastReaderChange = { action, count };
-        return this._styleAnnotation(state, reader, target, color, type === 'recolor' ? null : type);
+        return this._styleAnnotation(state, reader, target, color, recolor ? null : type);
       }
 
       if ((action === 'deleteAnnotation' || action === 'addNote')

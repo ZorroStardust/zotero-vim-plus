@@ -16,6 +16,11 @@ const ZV_XUL_NS = "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul
 const ZV_I18N = {
   en: {
     "zv.settings.notes": "Notes",
+    "zv.settings.general": "General",
+    "zv.settings.appearance": "Appearance",
+    "zv.settings.reader": "Reader",
+    "zv.settings.keys": "Keybindings",
+    "zv.bindings.search": "Filter actions or keys…",
     "zv.theme.label": "Plugin theme",
     "zv.theme.classic": "Classic",
     "zv.theme.custom": "Custom",
@@ -117,6 +122,11 @@ const ZV_I18N = {
   },
   "zh-CN": {
     "zv.settings.notes": "笔记",
+    "zv.settings.general": "常规",
+    "zv.settings.appearance": "外观",
+    "zv.settings.reader": "阅读器",
+    "zv.settings.keys": "快捷键",
+    "zv.bindings.search": "筛选动作或按键…",
     "zv.theme.label": "插件主题",
     "zv.theme.classic": "经典",
     "zv.theme.custom": "自定义",

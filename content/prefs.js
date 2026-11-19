@@ -404,6 +404,8 @@ function _zvInit() {
         const next = langSelect.value === "zh-CN" ? "zh-CN" : "en";
         _zvSet("language", next);
         ZV_I18N_APPLY(document, next);
+        document.getElementById("zv-theme")?._zvSyncThemeCards?.();
+        _zvLabelBindingSearch(next);
         // Relabel in place: duplicate/invalid rows are still unsaved edits.
         const tbody = document.getElementById("zv-bindings-body");
         for (const option of tbody?.querySelectorAll("option") || []) {
@@ -420,6 +422,8 @@ function _zvInit() {
     }
     ZV_I18N_APPLY(document, lang);
   });
+
+  if (typeof ZV_SETTINGS_PANE === "undefined") _zvSection("tabs", _zvInitNativeTabs);
 
   _zvSection("appearance", () => {
     if (typeof ZV_THEME !== "undefined" && typeof ZV_SETTINGS_PANE === "undefined") {
@@ -438,7 +442,10 @@ function _zvInit() {
       if (!_zvSet("theme", select.value)) select.value = _zvGet("theme", "classic");
       syncEditor();
     });
-    if (editor && typeof ZV_THEME !== "undefined") _zvInitCustomTheme(editor);
+    if (editor && typeof ZV_THEME !== "undefined") {
+      _zvInitCustomTheme(editor);
+      select._zvSyncThemeCards = _zvRenderThemeCards(select, editor);
+    }
   });
 
   // ── Modes ──────────────────────────────────────────────────────────────────
@@ -647,7 +654,6 @@ function _zvInit() {
       if (typeof ZV_SETTINGS_PANE === "undefined") _zvSaveBindings();
     });
 
-    // ── Remove Save button — settings are live ──────────────────────────────
     const saveBtn    = document.getElementById("zv-save");
     const saveStatus = document.getElementById("zv-save-status");
     if (saveBtn) {
@@ -659,11 +665,208 @@ function _zvInit() {
         }
       });
     }
+    _zvInitBindingSearch();
   });
 
   try { _zvInitObserver?.disconnect(); } catch (_) {}
   _zvLog('prefs init complete in ' + (Date.now() - _zvInitStarted) + 'ms ('
          + (_zvInitTries + 1) + ' attempts)');
+}
+
+/** Show each preset with its own colors, regardless of the active theme. */
+function _zvRenderThemeCards(select, editor) {
+  const h = tag => select.ownerDocument.createElementNS("http://www.w3.org/1999/xhtml", tag);
+  const grid = h("div");
+  grid.id = "zv-theme-cards";
+  grid.setAttribute("role", "radiogroup");
+  const palettes = ZV_THEME.palettes;
+  const cards = Array.from(select.options, option => {
+    const button = h("button");
+    button.type = "button";
+    button.className = "zv-theme-card";
+    button.setAttribute("role", "radio");
+    const name = h("span");
+    name.className = "zv-theme-card-name";
+    const preview = h("span");
+    preview.className = "zv-theme-card-preview";
+    preview.setAttribute("aria-hidden", "true");
+    const samples = option.value === "system" ? [palettes.latte, palettes.mocha]
+      : [option.value === "custom" ? ZV_THEME.readCustom()
+        : palettes[option.value] || palettes.classic];
+    for (const palette of samples) {
+      const sample = h("span");
+      sample.className = "zv-theme-sample";
+      for (const key of ["border", "surface", "text", "accent", "control"]) {
+        sample.style.setProperty("--zv-preview-" + key, palette[key]);
+      }
+      const type = h("span");
+      type.className = "zv-theme-sample-type";
+      type.textContent = "Aa";
+      const swatches = h("span");
+      swatches.className = "zv-theme-swatches";
+      for (const key of ["control", "text", "accent", "success", "danger", "hint"]) {
+        const swatch = h("span");
+        swatch.style.backgroundColor = palette[key];
+        swatches.appendChild(swatch);
+      }
+      sample.append(type, swatches);
+      preview.appendChild(sample);
+    }
+    button.append(name, preview);
+    button.addEventListener("click", () => {
+      if (select.value === option.value) return;
+      select.value = option.value;
+      select.dispatchEvent(new window.Event("change", { bubbles: true }));
+    });
+    grid.appendChild(button);
+    return { button, name, option };
+  });
+  const custom = cards.find(card => card.option.value === "custom");
+  const sample = custom.button.querySelector(".zv-theme-sample");
+  const swatches = sample.querySelector(".zv-theme-swatches").children;
+  const refreshPreview = () => {
+    const colors = {};
+    for (const input of editor.querySelectorAll("[data-theme-color]")) {
+      colors[input.dataset.themeColor] = input.value.trim();
+    }
+    const palette = ZV_THEME.customPalette(colors);
+    for (const key of ["border", "surface", "text", "accent", "control"]) {
+      sample.style.setProperty("--zv-preview-" + key, palette[key]);
+    }
+    ["control", "text", "accent", "success", "danger", "hint"].forEach((key, index) => {
+      swatches[index].style.backgroundColor = palette[key];
+    });
+  };
+  editor.addEventListener("input", refreshPreview);
+  editor.addEventListener("change", refreshPreview);
+  const sync = () => {
+    grid.setAttribute("aria-label", ZV_I18N_STR("zv.theme.label", ZV_I18N_CURRENT_LANG()));
+    for (const { button, name, option } of cards) {
+      name.textContent = option.label;
+      button.setAttribute("aria-label", option.label);
+      button.setAttribute("aria-checked", String(option.selected));
+      button.tabIndex = option.selected ? 0 : -1;
+    }
+  };
+  select.hidden = true;
+  select.after(grid);
+  select.addEventListener("change", sync);
+  grid.addEventListener("keydown", event => {
+    if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+    if (_zvMoveThemeCard(event.target, event.key)) event.preventDefault();
+  });
+  sync();
+  return sync;
+}
+
+function _zvMoveThemeCard(target, key) {
+  if (!target?.classList?.contains("zv-theme-card")) return false;
+  const step = ["ArrowRight", "ArrowDown", "l", "j"].includes(key) ? 1
+    : ["ArrowLeft", "ArrowUp", "h", "k"].includes(key) ? -1 : 0;
+  if (!step) return false;
+  const grid = target.parentElement;
+  const next = step > 0 ? target.nextElementSibling || grid.firstElementChild
+    : target.previousElementSibling || grid.lastElementChild;
+  next.click();
+  next.focus();
+  return true;
+}
+
+function _zvInitNativeTabs() {
+  const pane = document.getElementById("zotero-vim-prefs");
+  if (!pane) return;
+  const h = tag => pane.ownerDocument.createElementNS("http://www.w3.org/1999/xhtml", tag);
+  const groups = Array.from(pane.children).filter(node => node.hasAttribute("data-zv-settings-page"));
+  const bar = h("div");
+  bar.id = "zv-native-prefs-tabs";
+  bar.setAttribute("role", "tablist");
+  pane.insertBefore(bar, groups[0]);
+  const tabs = ["general", "appearance", "reader", "notes", "keys"].map(id => {
+    const panel = h("section");
+    panel.id = "zv-native-prefs-" + id;
+    panel.setAttribute("data-zv-native-panel", "");
+    panel.setAttribute("role", "tabpanel");
+    const button = h("button");
+    button.type = "button";
+    button.id = panel.id + "-tab";
+    button.setAttribute("role", "tab");
+    button.setAttribute("aria-controls", panel.id);
+    panel.setAttribute("aria-labelledby", button.id);
+    const label = "zv.settings." + id;
+    button.setAttribute("data-i18n", label);
+    button.textContent = ZV_I18N_STR(label, ZV_I18N_CURRENT_LANG());
+    for (const group of groups) {
+      if (group.getAttribute("data-zv-settings-page") === id) panel.appendChild(group);
+    }
+    bar.appendChild(button);
+    pane.appendChild(panel);
+    return { button, panel };
+  });
+  const select = index => {
+    tabs.forEach(({ button, panel }, i) => {
+      button.setAttribute("aria-selected", String(i === index));
+      button.tabIndex = i === index ? 0 : -1;
+      panel.hidden = i !== index;
+    });
+  };
+  tabs.forEach(({ button, panel }, index) => {
+    button.addEventListener("click", () => select(index));
+    if (panel.id === "zv-native-prefs-keys") {
+      panel.addEventListener("keydown", event => {
+        if (event.isComposing || event.keyCode === 229 || event.altKey
+            || !(event.ctrlKey || event.metaKey) || event.key !== "Enter") return;
+        event.preventDefault();
+        if (!event.repeat) document.getElementById("zv-save").click();
+      });
+    }
+    button.addEventListener("keydown", event => {
+      const { key } = event;
+      if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(key)) return;
+      event.preventDefault();
+      const next = key === "Home" ? 0 : key === "End" ? tabs.length - 1
+        : (index + tabs.length + (key === "ArrowRight" ? 1 : -1)) % tabs.length;
+      select(next);
+      tabs[next].button.focus();
+    });
+  });
+  select(0);
+}
+
+function _zvLabelBindingSearch(lang) {
+  const search = document.getElementById("zv-bindings-search");
+  if (!search) return;
+  search.placeholder = ZV_I18N_STR("zv.bindings.search", lang);
+  search.setAttribute("aria-label", search.placeholder);
+}
+
+function _zvInitBindingSearch() {
+  const search = document.getElementById("zv-bindings-search");
+  if (!search) return;
+  _zvLabelBindingSearch(ZV_I18N_CURRENT_LANG());
+  const rows = document.getElementById("zv-bindings-body");
+  const filter = () => {
+    const query = search.value.trim().toLowerCase();
+    for (const row of rows.rows) {
+      const key = row.querySelector("input").value;
+      const selects = row.querySelectorAll("select");
+      const selected = selects[selects.length - 1].selectedOptions[0];
+      row.hidden = ![key, key.replace(/<space>/g, "space "), row.dataset.mode,
+        selected?.value, selected?.textContent]
+        .some(text => text?.toLowerCase().includes(query));
+    }
+  };
+  search.addEventListener("input", filter);
+  const clear = () => { search.value = ""; filter(); };
+  for (const id of ["zv-add-binding", "zv-reset-bindings"]) {
+    document.getElementById(id).addEventListener("click", clear, true);
+  }
+  document.getElementById("zv-save").addEventListener("click", () => {
+    const invalid = rows.querySelector("input[aria-invalid=true]");
+    if (invalid) {
+      clear();
+      invalid.focus();
+    }
+  });
 }
 
 function _zvInitCustomTheme(editor) {

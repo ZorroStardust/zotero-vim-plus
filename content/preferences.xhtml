@@ -13,6 +13,19 @@
       color: var(--zv-theme-text, inherit);
       color-scheme: var(--zv-theme-scheme, inherit);
     }
+    #zv-native-prefs-tabs {
+      display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 12px;
+      border-bottom: 1px solid var(--zv-theme-border, GrayText);
+    }
+    #zv-native-prefs-tabs > html|button {
+      padding: 6px 12px; border: 1px solid transparent; border-radius: 4px 4px 0 0;
+    }
+    #zv-native-prefs-tabs > html|button[aria-selected=true] {
+      border-color: var(--zv-theme-accent, Highlight);
+      background: var(--zv-theme-selected, ButtonFace);
+      font-weight: bold;
+    }
+    #zotero-vim-prefs [data-zv-native-panel][hidden] { display: none !important; }
     #zotero-vim-prefs :is(html|input, html|select, html|button, menulist) {
       color: var(--zv-theme-text, revert);
       background-color: var(--zv-theme-control, revert);
@@ -70,6 +83,48 @@
     }
   </html:style>
 
+  <html:style id="zv-theme-card-style">
+    #zv-theme-editor input[aria-invalid=true] {
+      border-color: var(--zv-theme-danger, #ffb4ab);
+    }
+    #zv-theme-status { margin-inline-start: 8px; }
+    #zv-theme-cards {
+      width: 100%; display: grid; gap: 10px;
+      grid-template-columns: repeat(auto-fit, minmax(min(100%, 160px), 1fr));
+    }
+    #zv-theme-cards .zv-theme-card {
+      min-width: 0; padding: 6px; text-align: start;
+      display: flex; flex-direction: column; gap: 5px;
+    }
+    #zv-theme-cards .zv-theme-card[aria-checked=true] {
+      border-color: var(--zv-theme-accent, #89b4fa);
+      background: var(--zv-theme-selected, #45475a);
+    }
+    #zv-theme-cards .zv-theme-card-name {
+      display: flex; justify-content: space-between; align-items: baseline; gap: 4px;
+    }
+    #zv-theme-cards .zv-theme-card-name::after {
+      content: '✓'; visibility: hidden; color: var(--zv-theme-accent, #89b4fa);
+    }
+    #zv-theme-cards [aria-checked=true] .zv-theme-card-name::after { visibility: visible; }
+    #zv-theme-cards .zv-theme-card-preview { display: flex; gap: 4px; }
+    #zv-theme-cards .zv-theme-sample {
+      flex: 1; min-width: 0; padding: 6px;
+      border: 1px solid var(--zv-preview-border); border-radius: 5px;
+      background: var(--zv-preview-surface); color: var(--zv-preview-text);
+    }
+    #zv-theme-cards .zv-theme-sample-type {
+      display: block; font-weight: bold; font-size: 15px; line-height: 1;
+      border-inline-start: 3px solid var(--zv-preview-accent);
+      padding-inline-start: 5px; margin-block-end: 6px;
+      background: var(--zv-preview-control);
+    }
+    #zv-theme-cards .zv-theme-swatches {
+      display: flex; gap: 2px; height: 9px;
+    }
+    #zv-theme-cards .zv-theme-swatches > span { flex: 1; border-radius: 2px; }
+  </html:style>
+
   <!-- ── Language ──────────────────────────────────────────────────────── -->
   <groupbox data-zv-settings-page="general">
     <hbox align="center">
@@ -86,24 +141,22 @@
 
   <groupbox data-zv-settings-page="appearance">
     <hbox align="center">
-      <label value="Plugin theme" data-i18n="zv.theme.label"
-        style="font-weight: bold; margin-right: 12px;" />
-      <menulist id="zv-theme" style="padding: 2px 6px;">
-        <menupopup>
-          <menuitem value="classic" label="Classic" data-i18n="zv.theme.classic" />
-          <menuitem value="system" label="Follow system" data-i18n="zv.theme.system" />
-          <menuitem value="mocha" label="Catppuccin Mocha" />
-          <menuitem value="latte" label="Catppuccin Latte" />
-          <menuitem value="nord" label="Nord" />
-          <menuitem value="gruvbox" label="Gruvbox Dark" />
-          <menuitem value="dracula" label="Dracula" />
-          <menuitem value="onedark" label="One Dark" />
-          <menuitem value="tokyonight" label="Tokyo Night" />
-          <menuitem value="solarizeddark" label="Solarized Dark" />
-          <menuitem value="solarizedlight" label="Solarized Light" />
-          <menuitem value="custom" label="Custom" data-i18n="zv.theme.custom" />
-        </menupopup>
-      </menulist>
+      <html:label for="zv-theme" data-i18n="zv.theme.label"
+        style="font-weight: bold; margin-right: 12px;">Plugin theme</html:label>
+      <html:select id="zv-theme" style="padding: 2px 6px;">
+        <html:option value="classic" data-i18n="zv.theme.classic">Classic</html:option>
+        <html:option value="system" data-i18n="zv.theme.system">Follow system</html:option>
+        <html:option value="mocha">Catppuccin Mocha</html:option>
+        <html:option value="latte">Catppuccin Latte</html:option>
+        <html:option value="nord">Nord</html:option>
+        <html:option value="gruvbox">Gruvbox Dark</html:option>
+        <html:option value="dracula">Dracula</html:option>
+        <html:option value="onedark">One Dark</html:option>
+        <html:option value="tokyonight">Tokyo Night</html:option>
+        <html:option value="solarizeddark">Solarized Dark</html:option>
+        <html:option value="solarizedlight">Solarized Light</html:option>
+        <html:option value="custom" data-i18n="zv.theme.custom">Custom</html:option>
+      </html:select>
     </hbox>
     <html:p data-i18n="zv.theme.help" style="margin: 4px 0; font-size: 0.9em;">
       Changes the colors of Vim Plus controls and indicators immediately.
@@ -355,6 +408,15 @@
     <html:div id="zv-bindings-status" role="status" aria-live="polite"
       style="font-size: 0.9em; margin-bottom: 6px;"></html:div>
 
+    <html:input id="zv-bindings-search" type="search"
+      style="width: min(100%, 28em); margin-bottom: 8px;" />
+    <hbox style="margin-bottom: 8px; align-items: center;">
+      <html:button id="zv-save" data-i18n="zv.bindings.apply"
+        style="padding: 4px 16px; font-weight: bold;">Apply bindings</html:button>
+      <html:span id="zv-save-status" role="status"
+        style="margin-left: 10px; font-size: 0.9em; color: #5FB236;" />
+    </hbox>
+
     <!-- Keybinding table -->
     <html:div style="max-height: 400px; overflow-y: auto; border: 1px solid var(--zv-theme-border, #ccc); border-radius: 3px;">
       <html:table id="zv-bindings-table"
@@ -373,20 +435,5 @@
       </html:table>
     </html:div>
   </groupbox>
-
-  <!-- ── Keybinding apply ───────────────────────────────────────────── -->
-  <!-- Modes/marks/colour/scroll save live on change.
-       Keybindings need an explicit "Apply" because the table is edited. -->
-  <hbox data-zv-settings-page="keys"
-    style="margin-top: 12px; justify-content: flex-end; align-items: center;">
-    <html:p style="font-size: 0.85em; color: var(--zv-theme-muted, #888); margin: 0 12px 0 0;"
-      data-i18n="zv.bindings.footer">
-      Modes, marks, colour and scroll settings save automatically.
-    </html:p>
-    <html:button id="zv-save"
-      data-i18n="zv.bindings.apply" style="padding: 4px 16px; font-weight: bold;">Apply bindings</html:button>
-    <html:span id="zv-save-status"
-      style="margin-left: 10px; font-size: 0.9em; color: #5FB236;"></html:span>
-  </hbox>
 
 </vbox>

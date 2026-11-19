@@ -5,6 +5,7 @@
 // UI inside the reader and note iframes. Only plugin styles consume them.
 var ZV_THEME = {
   pref: 'extensions.zotero-vim@zotero-vim.theme',
+  customPref: 'extensions.zotero-vim@zotero-vim.theme.custom',
   documents: new Map(),
   observing: false,
   palettes: {
@@ -36,6 +37,69 @@ var ZV_THEME = {
       hint: '#fabd2f', 'on-hint': '#342914', 'hint-border': '#a8813a',
       'selection-rgb': '250, 189, 47', 'selection-opacity': '0.48',
     },
+    dracula: {
+      scheme: 'dark', surface: '#282a36', recessed: '#21222c',
+      control: '#343746', selected: '#44475a', border: '#6272a4',
+      text: '#f8f8f2', muted: '#b8bad0', accent: '#bd93f9',
+      success: '#50fa7b', danger: '#ff5555', hint: '#f1fa8c',
+      'on-hint': '#282a36', 'hint-border': '#a4ae52',
+      'selection-rgb': '189, 147, 249', 'selection-opacity': '0.45',
+    },
+    onedark: {
+      scheme: 'dark', surface: '#282c34', recessed: '#21252b',
+      control: '#303640', selected: '#3e4451', border: '#616a79',
+      text: '#abb2bf', muted: '#9da5b4', accent: '#61afef',
+      success: '#98c379', danger: '#e06c75', hint: '#e5c07b',
+      'on-hint': '#282c34', 'hint-border': '#aa8949',
+      'selection-rgb': '97, 175, 239', 'selection-opacity': '0.45',
+    },
+    tokyonight: {
+      scheme: 'dark', surface: '#1a1b26', recessed: '#16161e',
+      control: '#24283b', selected: '#33405b', border: '#565f89',
+      text: '#c0caf5', muted: '#a9b1d6', accent: '#7aa2f7',
+      success: '#9ece6a', danger: '#f7768e', hint: '#e0af68',
+      'on-hint': '#1a1b26', 'hint-border': '#a98248',
+      'selection-rgb': '122, 162, 247', 'selection-opacity': '0.45',
+    },
+    solarizeddark: {
+      scheme: 'dark', surface: '#002b36', recessed: '#00212b',
+      control: '#073642', selected: '#174653', border: '#586e75',
+      text: '#eee8d5', muted: '#a4b5b7', accent: '#56b4ee',
+      success: '#a5b51e', danger: '#ff6b64', hint: '#f1bb48',
+      'on-hint': '#002b36', 'hint-border': '#9a741d',
+      'selection-rgb': '86, 180, 238', 'selection-opacity': '0.45',
+    },
+    solarizedlight: {
+      scheme: 'light', surface: '#fdf6e3', recessed: '#eee8d5',
+      control: '#f0e8d2', selected: '#e3e0c8', border: '#889a99',
+      text: '#344e58', muted: '#4e646a', accent: '#096fa4',
+      success: '#526200', danger: '#a82d29', hint: '#f4cf72',
+      'on-hint': '#422c10', 'hint-border': '#87620a',
+      'selection-rgb': '9, 111, 164', 'selection-opacity': '0.45',
+    },
+  },
+
+  customKeys: [
+    'surface', 'recessed', 'control', 'selected', 'border', 'text', 'muted',
+    'accent', 'success', 'danger', 'hint', 'on-hint', 'hint-border',
+  ],
+
+  customPalette(value) {
+    const palette = { ...this.palettes.mocha, scheme: value?.scheme === 'light' ? 'light' : 'dark' };
+    for (const key of this.customKeys) {
+      const color = value?.[key];
+      if (typeof color === 'string' && /^#[0-9a-f]{6}$/i.test(color)) palette[key] = color;
+    }
+    palette['selection-rgb'] = palette.accent.slice(1).match(/../g)
+      .map(channel => parseInt(channel, 16)).join(', ');
+    palette['selection-opacity'] = palette.scheme === 'light' ? '0.35' : '0.52';
+    return palette;
+  },
+
+  readCustom() {
+    let value;
+    try { value = JSON.parse(this.prefs().getStringPref(this.customPref, '{}')); } catch (_) {}
+    return this.customPalette(value);
   },
 
   prefs() {
@@ -54,6 +118,7 @@ var ZV_THEME = {
   stylesheet() {
     let theme;
     try { theme = this.prefs().getStringPref(this.pref, 'classic'); } catch (_) {}
+    if (theme === 'custom') return this.rules(this.readCustom());
     if (theme === 'system') {
       return this.rules(this.palettes.latte)
         + '@media (prefers-color-scheme: dark) {' + this.rules(this.palettes.mocha) + '}';

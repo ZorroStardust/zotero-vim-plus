@@ -1084,6 +1084,9 @@ controls, hints, indicators and temporary PDF selection immediately. **Classic**
 uses the original palette, and **Follow system** switches between Catppuccin
 Latte and Mocha with the system color scheme. PDF annotation colors are set
 through the annotation controls.
+Select **Custom** to edit the palette with six-digit hex colors. The card previews
+your draft. Use **Apply colors** to save or **Load default colors** to load a
+fresh draft.
 
 Open **Edit → Preferences** (macOS: **Zotero → Settings**) and navigate to the
 **Zotero Vim** tab.

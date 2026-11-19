@@ -422,15 +422,23 @@ function _zvInit() {
   });
 
   _zvSection("appearance", () => {
-    if (typeof ZV_THEME !== "undefined") ZV_THEME.attach(document);
+    if (typeof ZV_THEME !== "undefined" && typeof ZV_SETTINGS_PANE === "undefined") {
+      ZV_THEME.attach(document);
+    }
     const select = document.getElementById("zv-theme");
     if (!select) return;
     const saved = _zvGet("theme", "classic");
-    select.value = ["classic", "system", "mocha", "latte", "nord", "gruvbox"].includes(saved)
+    const options = Array.from(select.querySelectorAll("option, menuitem"));
+    select.value = options.some(option => option.getAttribute("value") === saved)
       ? saved : "classic";
+    const editor = document.getElementById("zv-theme-editor");
+    const syncEditor = () => { if (editor) editor.hidden = select.value !== "custom"; };
+    syncEditor();
     _zvOnSelect(select, () => {
       if (!_zvSet("theme", select.value)) select.value = _zvGet("theme", "classic");
+      syncEditor();
     });
+    if (editor && typeof ZV_THEME !== "undefined") _zvInitCustomTheme(editor);
   });
 
   // ── Modes ──────────────────────────────────────────────────────────────────
@@ -656,6 +664,68 @@ function _zvInit() {
   try { _zvInitObserver?.disconnect(); } catch (_) {}
   _zvLog('prefs init complete in ' + (Date.now() - _zvInitStarted) + 'ms ('
          + (_zvInitTries + 1) + ' attempts)');
+}
+
+function _zvInitCustomTheme(editor) {
+  const fields = document.getElementById("zv-theme-fields");
+  const status = document.getElementById("zv-theme-status");
+  const lang = ZV_I18N_CURRENT_LANG();
+  for (const role of ZV_THEME.customKeys) {
+    const label = document.createElement("label");
+    label.style.display = "grid";
+    const name = document.createElement("span");
+    name.setAttribute("data-i18n", "zv.theme." + role);
+    name.textContent = ZV_I18N_STR("zv.theme." + role, lang);
+    const input = document.createElement("input");
+    input.type = "text";
+    input.dataset.themeColor = role;
+    input.spellcheck = false;
+    input.autocomplete = "off";
+    input.style.width = "9em";
+    label.append(name, input);
+    fields.appendChild(label);
+    input.addEventListener("input", () => {
+      input.removeAttribute("aria-invalid");
+      status.textContent = "";
+    });
+  }
+
+  const scheme = document.getElementById("zv-theme-scheme");
+  const fill = palette => {
+    scheme.value = palette.scheme;
+    for (const input of fields.querySelectorAll("input")) {
+      input.value = palette[input.dataset.themeColor];
+      input.removeAttribute("aria-invalid");
+    }
+    status.textContent = "";
+    // The floating pane uses this event to refresh its scheme button and preview.
+    scheme.dispatchEvent(new window.Event("change", { bubbles: true }));
+  };
+  fill(ZV_THEME.readCustom());
+  editor.querySelector("#zv-theme-reset").addEventListener("click", () => {
+    fill(ZV_THEME.customPalette());
+  });
+  editor.querySelector("#zv-theme-save").addEventListener("click", () => {
+    const palette = { scheme: scheme.value };
+    let invalid;
+    for (const input of fields.querySelectorAll("input")) {
+      const color = input.value.trim();
+      const valid = /^#[0-9a-f]{6}$/i.test(color);
+      input.setAttribute("aria-invalid", String(!valid));
+      if (valid) palette[input.dataset.themeColor] = color.toLowerCase();
+      else if (!invalid) invalid = input;
+    }
+    const currentLang = ZV_I18N_CURRENT_LANG();
+    if (invalid) {
+      status.textContent = ZV_I18N_STR("zv.theme.invalid", currentLang);
+      invalid.focus();
+    } else if (_zvSet("theme.custom", JSON.stringify(palette))) {
+      fill(palette);
+      _zvFlashStatus(status, ZV_I18N_STR("zv.status.saved", currentLang), "#5FB236");
+    } else {
+      status.textContent = ZV_I18N_STR("zv.theme.failed", currentLang);
+    }
+  });
 }
 
 // ── Table helpers ─────────────────────────────────────────────────────────────

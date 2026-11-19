@@ -41,6 +41,10 @@ Object.assign(ZoteroVim, {
       #zotero-vim-settings-form .zv-settings-select::after {
         content: "▾"; margin-inline-start: auto; color: var(--zv-theme-muted, #a6adc8);
       }
+      #zv-theme-editor input[aria-invalid=true] {
+        border-color: var(--zv-theme-danger, #ffb4ab);
+      }
+      #zv-theme-status { margin-inline-start: 8px; }
       #zv-theme-cards {
         width: 100%; display: grid; gap: 10px;
         grid-template-columns: repeat(auto-fit, minmax(min(100%, 160px), 1fr));
@@ -422,7 +426,8 @@ Object.assign(ZoteroVim, {
       preview.className = 'zv-theme-card-preview';
       preview.setAttribute('aria-hidden', 'true');
       const samples = option.value === 'system' ? [palettes.latte, palettes.mocha]
-        : [palettes[option.value] || { ...palettes.mocha, hint: '#ffd400' }];
+        : [option.value === 'custom' ? ZV_THEME.readCustom()
+          : palettes[option.value] || { ...palettes.mocha, hint: '#ffd400' }];
       for (const palette of samples) {
         const sample = h('span');
         sample.className = 'zv-theme-sample';
@@ -451,6 +456,25 @@ Object.assign(ZoteroVim, {
       grid.appendChild(button);
       return { button, name, option };
     });
+    const custom = cards.find(card => card.option.value === 'custom');
+    const sample = custom.button.querySelector('.zv-theme-sample');
+    const swatches = sample.querySelector('.zv-theme-swatches').children;
+    const editor = ui.list.querySelector('#zv-theme-editor');
+    const refreshPreview = () => {
+      const colors = {};
+      for (const input of editor.querySelectorAll('[data-theme-color]')) {
+        colors[input.dataset.themeColor] = input.value.trim();
+      }
+      const palette = ZV_THEME.customPalette(colors);
+      for (const key of ['border', 'surface', 'text', 'accent', 'control']) {
+        sample.style.setProperty('--zv-preview-' + key, palette[key]);
+      }
+      ['control', 'text', 'accent', 'success', 'danger', 'hint'].forEach((key, index) => {
+        swatches[index].style.backgroundColor = palette[key];
+      });
+    };
+    editor.addEventListener('input', refreshPreview);
+    editor.addEventListener('change', refreshPreview);
     ui.syncThemeCards = () => {
       grid.setAttribute('aria-label', this._settingsSelectLabel(select));
       for (const { button, name, option } of cards) {

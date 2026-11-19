@@ -96,12 +96,31 @@
           <menuitem value="latte" label="Catppuccin Latte" />
           <menuitem value="nord" label="Nord" />
           <menuitem value="gruvbox" label="Gruvbox Dark" />
+          <menuitem value="dracula" label="Dracula" />
+          <menuitem value="onedark" label="One Dark" />
+          <menuitem value="tokyonight" label="Tokyo Night" />
+          <menuitem value="solarizeddark" label="Solarized Dark" />
+          <menuitem value="solarizedlight" label="Solarized Light" />
+          <menuitem value="custom" label="Custom" data-i18n="zv.theme.custom" />
         </menupopup>
       </menulist>
     </hbox>
     <html:p data-i18n="zv.theme.help" style="margin: 4px 0; font-size: 0.9em;">
       Changes the colors of Vim Plus controls and indicators immediately.
     </html:p>
+    <html:div id="zv-theme-editor" hidden="true" style="margin-top: 12px;">
+      <html:p data-i18n="zv.theme.hex">Enter colors as #RRGGBB.</html:p>
+      <html:label for="zv-theme-scheme" data-i18n="zv.theme.scheme">Control appearance</html:label>
+      <html:select id="zv-theme-scheme">
+        <html:option value="dark" data-i18n="zv.theme.dark">Dark</html:option>
+        <html:option value="light" data-i18n="zv.theme.light">Light</html:option>
+      </html:select>
+      <html:div id="zv-theme-fields"
+        style="display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:8px;margin:8px 0;" />
+      <html:button id="zv-theme-save" data-i18n="zv.theme.save">Apply colors</html:button>
+      <html:button id="zv-theme-reset" data-i18n="zv.theme.reset">Load default colors</html:button>
+      <html:span id="zv-theme-status" role="status" />
+    </html:div>
   </groupbox>
 
   <!-- ── Modes ──────────────────────────────────────────────────────── -->

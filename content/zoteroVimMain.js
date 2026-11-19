@@ -23,17 +23,7 @@ Object.assign(ZoteroVim, {
     Zotero.debug('[ZoteroVim] Injecting into main window');
     this._attachTheme(win.document);
 
-    // Main window is a XUL document — must use HTML namespace for HTML elements.
-    const _H = 'http://www.w3.org/1999/xhtml';
-    const statusEl = win.document.createElementNS(_H, 'div');
-    statusEl.setAttribute('style', [
-      'position:fixed', 'bottom:10px', 'right:14px', 'z-index:99999',
-      'font:bold 12px/1.4 monospace', 'color:var(--zv-theme-text, #fff)',
-      'background:var(--zv-theme-surface, rgba(0,0,0,0.65))', 'padding:2px 8px',
-      'border-radius:3px', 'pointer-events:none',
-      'display:none', 'user-select:none',
-    ].join(';'));
-    (win.document.body || win.document.documentElement).appendChild(statusEl);
+    const statusEl = this._createStatusIndicator(win.document, 'zv-main-status', 99999);
 
     const mainWinState = {
       mode: 'main',
@@ -4346,11 +4336,7 @@ Object.assign(ZoteroVim, {
       if (!el) return;
       el.style.display = 'block';
       el.textContent = msg;
-      el.style.background =
-        msg.startsWith('✓') ? 'var(--zv-theme-success-tint, rgba(50,150,50,0.9))'   :
-        msg.startsWith('→') ? 'var(--zv-theme-accent-tint, rgba(60,100,180,0.9))'  :
-        msg.startsWith('▶') ? 'var(--zv-theme-accent-tint, rgba(60,100,180,0.9))'  :
-                              'var(--zv-theme-danger-tint, rgba(180,40,40,0.9))';
+      this._setIndicatorTone(el, this._statusIndicatorTone(msg));
       clearTimeout(winState._statusTimer);
       winState._statusTimer = setTimeout(() => { el.style.display = 'none'; }, ms);
     } catch (e) {
@@ -5404,21 +5390,21 @@ Object.assign(ZoteroVim, {
 
     const modal = h('div');
     modal.style.cssText =
-      'width:min(1100px, 92vw);height:min(760px, 88vh);background:var(--zv-theme-surface, #10141b);color:var(--zv-theme-text, #e8edf5);' +
-      'border:1px solid var(--zv-theme-border, #2b3442);border-radius:10px;overflow:hidden;' +
+      'width:min(1100px, 92vw);height:min(760px, 88vh);background:var(--zv-theme-surface, #23262d);color:var(--zv-theme-text, #edf0f5);' +
+      'border:1px solid var(--zv-theme-border, #49515e);border-radius:10px;overflow:hidden;' +
       'display:flex;flex-direction:column;box-shadow:0 22px 72px rgba(0,0,0,0.62);' +
-      'font:13px/1.45 monospace;';
+      'font:13px/1.45 monospace;color-scheme:var(--zv-theme-scheme, dark);';
 
     const header = h('div');
     header.style.cssText =
-      'padding:10px 14px;background:var(--zv-theme-control, #16202d);border-bottom:1px solid var(--zv-theme-border, #2b3442);' +
+      'padding:10px 14px;background:var(--zv-theme-control, #2d323b);border-bottom:1px solid var(--zv-theme-border, #49515e);' +
       'display:flex;justify-content:space-between;align-items:center;gap:10px;';
     const title = h('div');
     title.textContent = 'Notes Layout';
     title.style.cssText = 'font-weight:700;letter-spacing:0.2px;';
     const hint = h('div');
     hint.textContent = 'j/k move  ·  Ctrl+d/u fast  ·  Ctrl+j/k section  ·  Ctrl+h/l list/preview  ·  n/N new  ·  Enter/Shift+Enter open';
-    hint.style.cssText = 'font-size:11px;color:var(--zv-theme-muted, #9db0c9);';
+    hint.style.cssText = 'font-size:11px;color:var(--zv-theme-muted, #b3bccb);';
     header.appendChild(title);
     header.appendChild(hint);
 
@@ -5428,15 +5414,15 @@ Object.assign(ZoteroVim, {
     const listPane = h('div');
     listPane.style.cssText =
       'display:grid;grid-template-rows:auto minmax(0,1fr) auto minmax(0,1fr);' +
-      'min-height:0;border-right:1px solid var(--zv-theme-border, #2b3442);background:var(--zv-theme-recessed, #0f141d);';
+      'min-height:0;border-right:1px solid var(--zv-theme-border, #49515e);background:var(--zv-theme-recessed, #1b1e24);';
 
     const currentWrap = h('section');
     currentWrap.style.cssText = 'display:contents;';
     const currentHead = h('div');
     currentHead.textContent = 'Current item notes';
     currentHead.style.cssText =
-      'padding:8px 12px;background:var(--zv-theme-control, #121a25);color:var(--zv-theme-accent, #7db1ff);font-weight:700;' +
-      'border-bottom:1px solid var(--zv-theme-border, #2b3442);';
+      'padding:8px 12px;background:var(--zv-theme-control, #2d323b);color:var(--zv-theme-accent, #a7c3ed);font-weight:700;' +
+      'border-bottom:1px solid var(--zv-theme-border, #49515e);';
     const currentList = h('div');
     currentList.style.cssText = 'overflow:auto;padding:8px 8px 10px 8px;';
 
@@ -5445,13 +5431,13 @@ Object.assign(ZoteroVim, {
     const allHead = h('div');
     allHead.textContent = 'All notes in library';
     allHead.style.cssText =
-      'padding:8px 12px;background:var(--zv-theme-control, #121a25);color:var(--zv-theme-success, #8fd4aa);font-weight:700;' +
-      'border-top:1px solid var(--zv-theme-border, #2b3442);border-bottom:1px solid var(--zv-theme-border, #2b3442);';
+      'padding:8px 12px;background:var(--zv-theme-control, #2d323b);color:var(--zv-theme-accent, #a7c3ed);font-weight:700;' +
+      'border-top:1px solid var(--zv-theme-border, #49515e);border-bottom:1px solid var(--zv-theme-border, #49515e);';
     const allList = h('div');
     allList.style.cssText = 'overflow:auto;padding:8px 8px 10px 8px;';
 
     const previewPane = h('div');
-    previewPane.style.cssText = 'overflow:auto;padding:14px 16px 16px 16px;background:var(--zv-theme-recessed, #111825);';
+    previewPane.style.cssText = 'overflow:auto;padding:14px 16px 16px 16px;background:var(--zv-theme-surface, #23262d);';
 
     currentWrap.appendChild(currentHead);
     currentWrap.appendChild(currentList);
@@ -6059,7 +6045,7 @@ Object.assign(ZoteroVim, {
 
     if (opts?.loading) {
       const loading = h('div');
-      loading.style.cssText = 'padding:10px;color:var(--zv-theme-muted, #93a6bd);';
+      loading.style.cssText = 'padding:10px;color:var(--zv-theme-muted, #b3bccb);';
       loading.textContent = rows?.[0]?.title || 'Loading...';
       container.appendChild(loading);
       return;
@@ -6067,7 +6053,7 @@ Object.assign(ZoteroVim, {
 
     if (!rows?.length) {
       const empty = h('div');
-      empty.style.cssText = 'padding:10px;color:var(--zv-theme-muted, #93a6bd);';
+      empty.style.cssText = 'padding:10px;color:var(--zv-theme-muted, #b3bccb);';
       empty.textContent = opts?.emptyMessage || 'No notes.';
       container.appendChild(empty);
       return;
@@ -6079,19 +6065,20 @@ Object.assign(ZoteroVim, {
       const isSelected = opts?.selectedID && row.id === opts.selectedID;
       const hint = opts?.hintByID?.get?.(row.id) || '';
       card.style.cssText =
-        'border:1px solid ' + (isSelected ? 'var(--zv-theme-accent, #5f93da)' : 'var(--zv-theme-border, #293240)') + ';' +
-        'background:' + (isSelected ? 'var(--zv-theme-selected, #152236)' : 'var(--zv-theme-recessed, #0f151f)') + ';border-radius:6px;' +
+        'border:1px solid ' + (isSelected ? 'var(--zv-theme-accent, #a7c3ed)' : 'var(--zv-theme-border, #49515e)') + ';' +
+        'background:' + (isSelected ? 'var(--zv-theme-selected, #363f50)' : 'var(--zv-theme-recessed, #1b1e24)') + ';border-radius:6px;' +
         'padding:6px 8px;margin:0 0 6px 0;';
       card.tabIndex = -1;
       card.dataset.noteId = String(row.id || '');
 
       const t = h('div');
-      t.style.cssText = 'display:flex;align-items:center;gap:8px;font-weight:700;color:var(--zv-theme-text, #d7e5f8);';
+      t.style.cssText = 'display:flex;align-items:center;gap:8px;font-weight:700;color:var(--zv-theme-text, #edf0f5);';
       if (hint) {
         const badge = h('span');
         badge.style.cssText =
           'display:inline-block;min-width:20px;padding:0 5px;border-radius:4px;' +
-          'border:1px solid var(--zv-theme-border, #43617f);color:var(--zv-theme-accent, #9ec5ff);font-size:11px;line-height:1.6;text-align:center;';
+          'background:var(--zv-theme-hint, #e5c58e);color:var(--zv-theme-on-hint, #2c251b);' +
+          'border:1px solid var(--zv-theme-hint-border, #a88f66);font-size:11px;line-height:1.6;text-align:center;';
         badge.textContent = hint;
         t.appendChild(badge);
       }
@@ -6127,7 +6114,7 @@ Object.assign(ZoteroVim, {
 
     if (opts?.loading) {
       const loading = h('div');
-      loading.style.cssText = 'padding:12px;color:var(--zv-theme-muted, #93a6bd);';
+      loading.style.cssText = 'padding:12px;color:var(--zv-theme-muted, #b3bccb);';
       loading.textContent = opts.message || 'Loading preview...';
       container.appendChild(loading);
       return;
@@ -6136,7 +6123,7 @@ Object.assign(ZoteroVim, {
     const row = selectedEntry?.row || null;
     if (!row) {
       const empty = h('div');
-      empty.style.cssText = 'padding:12px;color:var(--zv-theme-muted, #93a6bd);';
+      empty.style.cssText = 'padding:12px;color:var(--zv-theme-muted, #b3bccb);';
       empty.textContent = opts?.message || 'No note selected.';
       container.appendChild(empty);
       return;
@@ -6145,21 +6132,21 @@ Object.assign(ZoteroVim, {
     const section = h('div');
     section.style.cssText =
       'display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;' +
-      'border:1px solid var(--zv-theme-border, #314860);color:var(--zv-theme-accent, #9ec5ff);background:var(--zv-theme-control, #121f2f);margin-bottom:10px;';
+      'border:1px solid var(--zv-theme-border, #49515e);color:var(--zv-theme-accent, #a7c3ed);background:var(--zv-theme-control, #2d323b);margin-bottom:10px;';
     section.textContent = selectedEntry.section === 'current' ? 'Current item note' : 'All notes';
 
     const title = h('h3');
-    title.style.cssText = 'margin:0 0 8px 0;font-size:18px;line-height:1.35;color:var(--zv-theme-text, #e8edf5);';
+    title.style.cssText = 'margin:0 0 8px 0;font-size:18px;line-height:1.35;color:var(--zv-theme-text, #edf0f5);';
     title.textContent = row.title || 'Untitled note';
 
     const meta = h('div');
-    meta.style.cssText = 'font-size:12px;color:var(--zv-theme-muted, #8ea4bf);margin-bottom:12px;';
+    meta.style.cssText = 'font-size:12px;color:var(--zv-theme-muted, #b3bccb);margin-bottom:12px;';
     meta.textContent = row.meta || '';
 
     const body = h('div');
     body.style.cssText =
-      'white-space:pre-wrap;color:var(--zv-theme-text, #c8d6e8);line-height:1.6;background:var(--zv-theme-recessed, #0f151f);' +
-      'border:1px solid var(--zv-theme-border, #293240);border-radius:8px;padding:12px 14px;min-height:120px;';
+      'white-space:pre-wrap;color:var(--zv-theme-text, #edf0f5);line-height:1.6;background:var(--zv-theme-recessed, #1b1e24);' +
+      'border:1px solid var(--zv-theme-border, #49515e);border-radius:8px;padding:12px 14px;min-height:120px;';
     body.textContent = row.text || '(empty)';
 
     container.appendChild(section);

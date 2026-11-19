@@ -437,7 +437,7 @@ Object.assign(ZoteroVim, {
       preview.setAttribute('aria-hidden', 'true');
       const samples = option.value === 'system' ? [palettes.latte, palettes.mocha]
         : [option.value === 'custom' ? ZV_THEME.readCustom()
-          : palettes[option.value] || { ...palettes.mocha, hint: '#ffd400' }];
+          : palettes[option.value] || palettes.classic];
       for (const palette of samples) {
         const sample = h('span');
         sample.className = 'zv-theme-sample';

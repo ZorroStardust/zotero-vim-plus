@@ -825,7 +825,7 @@ var ZoteroVim = {
     this._attachTheme(reader._window?.document || reader._iframe?.ownerDocument);
     if (outerDoc) {
       this._attachTheme(outerDoc);
-      state.indicatorEl = this._createModeIndicator(outerDoc);
+      state.indicatorEl = this._createStatusIndicator(outerDoc, 'zotero-vim-mode-indicator', 9999);
     }
 
     // Force text-layer spans to be selectable and show selection highlight.
@@ -1620,17 +1620,18 @@ var ZoteroVim = {
 
   // ── Mode indicator ────────────────────────────────────────────────────────
 
-  _createModeIndicator(doc) {
-    const el = doc.createElement('div');
-    el.id = 'zotero-vim-mode-indicator';
+  _createStatusIndicator(doc, id, zIndex) {
+    const el = doc.createElementNS('http://www.w3.org/1999/xhtml', 'div');
+    el.id = id;
     el.setAttribute('style', [
-      'position:fixed', 'bottom:10px', 'right:14px', 'z-index:9999',
-      'font:bold 12px/1.4 monospace', 'color:var(--zv-theme-text, #fff)',
-      'background:var(--zv-theme-surface, rgba(0,0,0,0.65))', 'padding:2px 8px',
-      'border-radius:3px', 'pointer-events:none',
+      'position:fixed', 'bottom:10px', 'right:14px', 'z-index:' + zIndex,
+      'font:600 11px/1.5 monospace', 'color:var(--zv-theme-text, #edf0f5)',
+      'background:var(--zv-theme-surface, #23262d)', 'padding:2px 8px',
+      'border:1px solid var(--zv-theme-border, #49515e)', 'border-inline-start-width:3px',
+      'border-radius:6px', 'box-shadow:0 1px 4px #0003', 'pointer-events:none',
       'display:none', 'user-select:none',
     ].join(';'));
-    doc.body?.appendChild(el);
+    (doc.body || doc.documentElement).appendChild(el);
     return el;
   },
 
@@ -1687,19 +1688,30 @@ var ZoteroVim = {
     }
   },
 
+  _setIndicatorTone(el, role) {
+    const fallback = {
+      accent: '#a7c3ed', hint: '#e5c58e', success: '#a6c9b6',
+      danger: '#efaeb4', border: '#49515e',
+    };
+    el.style.borderInlineStartColor = 'var(--zv-theme-' + role + ', ' + fallback[role] + ')';
+  },
+
+  _statusIndicatorTone(message) {
+    if (message.startsWith('✗')) return 'danger';
+    if (message.startsWith('✓') || message.startsWith('-- NOTE INSERT')) return 'success';
+    if (message.startsWith('-- NOTE NORMAL')) return 'border';
+    return 'accent';
+  },
+
   /** Briefly flash a message in the mode indicator (for visible debugging). */
   _showStatus(state, msg, ms = 2000) {
     if (!state.indicatorEl) return;
     const el = state.indicatorEl;
     el.style.display = 'block';
     el.textContent = msg;
-    el.style.fontWeight = 'bold';
+    el.style.fontWeight = '600';
     state._statusActive = true;
-    el.style.background =
-      msg.startsWith('✓') ? 'var(--zv-theme-success-tint, rgba(50,150,50,0.9))'    :  // green  — success
-      msg.startsWith('→') ? 'var(--zv-theme-accent-tint, rgba(60,100,180,0.9))'   :  // blue   — info/navigation
-      msg.startsWith('▶') ? 'var(--zv-theme-accent-tint, rgba(60,100,180,0.9))'   :  // blue   — action in progress
-                            'var(--zv-theme-danger-tint, rgba(180,40,40,0.9))';       // red    — error (✗ / other)
+    this._setIndicatorTone(el, this._statusIndicatorTone(msg));
     clearTimeout(state._statusTimer);
     state._statusTimer = setTimeout(() => {
       state._statusActive = false;
@@ -1767,7 +1779,7 @@ var ZoteroVim = {
       }
       state.indicatorEl.style.display = 'block';
       state.indicatorEl.textContent = progress;
-      state.indicatorEl.style.background = 'var(--zv-theme-surface, rgba(0,0,0,0.42))';
+      this._setIndicatorTone(state.indicatorEl, 'border');
       state.indicatorEl.style.fontWeight = 'normal';
       return;
     }
@@ -1778,11 +1790,9 @@ var ZoteroVim = {
     state.indicatorEl.textContent =
       '-- ' + mode.toUpperCase() + body + ' --' + (prefix || buffer ? '  ' + prefix + buffer : '')
       + (progress ? '  ·  ' + progress : '');
-    state.indicatorEl.style.fontWeight = 'bold';
-    state.indicatorEl.style.background =
-      mode === 'visual' ? 'var(--zv-theme-accent-tint, rgba(80,120,200,0.85))' :
-      mode === 'cursor' ? 'var(--zv-theme-hint-tint, rgba(180,120,40,0.9))'  :
-      mode === 'insert' ? 'var(--zv-theme-success-tint, rgba(50,150,80,0.85))'  : 'var(--zv-theme-surface, rgba(0,0,0,0.65))';
+    state.indicatorEl.style.fontWeight = '600';
+    const tone = { visual: 'accent', cursor: 'hint', insert: 'success' };
+    this._setIndicatorTone(state.indicatorEl, tone[mode] || 'border');
   },
 
   _readerProgressText(state) {

@@ -226,6 +226,7 @@ Object.assign(ZoteroVim, {
     const panel = doc.createElement('div');
     panel.setAttribute('role', 'dialog');
     panel.setAttribute('aria-label', 'Flash');
+    panel.id = 'zv-flash-panel';
     panel.style.cssText = 'position:fixed;right:14px;bottom:14px;'
       + 'z-index:100001;width:min(420px,85vw);box-sizing:border-box;padding:8px 10px;'
       + 'border:1px solid var(--zv-theme-border, #585b70);border-radius:7px;background:var(--zv-theme-surface, #1e1e2e);color:var(--zv-theme-text, #cdd6f4);'

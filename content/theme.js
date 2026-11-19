@@ -9,6 +9,12 @@ var ZV_THEME = {
   documents: new Map(),
   observing: false,
   palettes: {
+    classic: {
+      scheme: 'dark', surface: '#23262d', recessed: '#1b1e24', control: '#2d323b',
+      selected: '#363f50', border: '#49515e', text: '#edf0f5', muted: '#b3bccb',
+      accent: '#a7c3ed', success: '#a6c9b6', danger: '#efaeb4',
+      hint: '#e5c58e', 'on-hint': '#2c251b', 'hint-border': '#a88f66',
+    },
     mocha: {
       scheme: 'dark', surface: '#1e1e2e', recessed: '#181825', control: '#313244',
       selected: '#45475a', border: '#585b70', text: '#cdd6f4', muted: '#a6adc8',
@@ -118,15 +124,30 @@ var ZV_THEME = {
   stylesheet() {
     let theme;
     try { theme = this.prefs().getStringPref(this.pref, 'classic'); } catch (_) {}
+    if (!Object.hasOwn(this.palettes, theme) && theme !== 'custom' && theme !== 'system') {
+      theme = 'classic';
+    }
+    if (theme === 'classic') {
+      // Keep Classic colors on plugin UI surfaces so native editor decorations
+      // and PDF selections retain their own contrast and color settings.
+      const surfaces = [
+        '#zv-shortcut-help', '#zv-settings-overlay', '#zv-picker-overlay',
+        '#zv-notes-layout-overlay', '#zv-spacekeys', '#zv-main-status',
+        '#zotero-vim-mode-indicator', '#zv-outline-picker', '#zv-outline-explorer',
+        '#zv-marks-explorer', '#zv-translation-popup', '#zv-annotation-comment',
+        '#zv-flash-panel', '[data-zv-link-preview]',
+      ];
+      return this.rules(this.palettes.classic, surfaces.join(','));
+    }
     if (theme === 'custom') return this.rules(this.readCustom());
     if (theme === 'system') {
       return this.rules(this.palettes.latte)
         + '@media (prefers-color-scheme: dark) {' + this.rules(this.palettes.mocha) + '}';
     }
-    return Object.hasOwn(this.palettes, theme) ? this.rules(this.palettes[theme]) : '';
+    return this.rules(this.palettes[theme]);
   },
 
-  rules(palette) {
+  rules(palette, selector = ':root') {
     const colors = { ...palette };
     colors['hint-text'] = palette.scheme === 'light' ? '#795006' : palette.hint;
     for (const role of ['accent', 'success', 'danger', 'hint']) {
@@ -134,7 +155,7 @@ var ZV_THEME = {
     }
     colors['accent-faint'] = 'color-mix(in srgb,' + palette.accent + ' 15%,transparent)';
     colors['hint-faint'] = 'color-mix(in srgb,' + palette.hint + ' 32%,transparent)';
-    return ':root{' + Object.entries(colors)
+    return selector + '{' + Object.entries(colors)
       .map(([key, value]) => '--zv-theme-' + key + ':' + value)
       .join(';') + '}';
   },

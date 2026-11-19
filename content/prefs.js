@@ -128,6 +128,7 @@ const ZV_DEFAULT_BINDINGS = {
   "normal: s":   "toggleReaderSpread",
   "normal: S":   "toggleReaderSpreadParity",
   "normal: rt":  "openReaderThemePicker",
+  "normal: rn":  "toggleReaderNotesSidebar",
   "normal: bj":  "mainTabPick",
   "normal: ff":  "mainFuzzyAll",
   "normal: fb":  "mainFuzzyCollection",
@@ -218,6 +219,7 @@ const ZV_DEFAULT_BINDINGS = {
   "main: ca": "mainAddWorksetToCollection",
   "main: bj":   "mainTabPick",
   "main: n":    "mainNotesLayout",
+  "main: rn":   "toggleReaderNotesSidebar",
   "main: e":    "mainFocusTree",
   "main: yy":   "mainYankCitekey",
   "main: o":    "mainOpenPDF",
@@ -942,6 +944,10 @@ function _zvLoadBindings() {
     if (saved && typeof saved === "object" && !Array.isArray(saved)) {
       if (typeof saved["normal: r"] === "string" && saved["normal: r"]) {
         delete bindings["normal: rt"];
+        delete bindings["normal: rn"];
+      }
+      if (typeof saved["main: r"] === "string" && saved["main: r"]) {
+        delete bindings["main: rn"];
       }
       for (const [key, action] of Object.entries(saved)) {
         if (action === null) delete bindings[key];

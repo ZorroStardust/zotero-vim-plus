@@ -129,6 +129,7 @@ var ZoteroVim = {
     'normal: s':   'toggleReaderSpread',
     'normal: S':   'toggleReaderSpreadParity',
     'normal: rt':  'openReaderThemePicker',
+    'normal: rn':  'toggleReaderNotesSidebar',
     'normal: ff':  'mainFuzzyAll',
     'normal: fb':  'mainFuzzyCollection',
     'normal: fh':  'readerOutlinePick',
@@ -229,6 +230,7 @@ var ZoteroVim = {
     'main: ca': 'mainAddWorksetToCollection',
     'main: bj':   'mainTabPick',          // <space>bj  — pick/open tab by hint
     'main: n':    'mainNotesLayout',      // <space>n   — notes layout (current item + all notes)
+    'main: rn':   'toggleReaderNotesSidebar', // <space>rn — inherited by note Normal mode
     'main: e':    'mainFocusTree',        // <space>e   — focus collection tree
     'main: yy':   'mainYankCitekey',      // <space>yy  — copy citekey of selected item
     'main: o':    'mainOpenPDF',          // <space>o   — open selected item's PDF
@@ -406,6 +408,10 @@ var ZoteroVim = {
         // Keep an existing custom Space r action immediately executable.
         if (typeof saved['normal: r'] === 'string' && saved['normal: r']) {
           delete bindings['normal: rt'];
+          delete bindings['normal: rn'];
+        }
+        if (typeof saved['main: r'] === 'string' && saved['main: r']) {
+          delete bindings['main: rn'];
         }
         for (const [key, action] of Object.entries(saved)) {
           // A null override is an explicit unbinding, not a missing default.
@@ -1343,6 +1349,7 @@ var ZoteroVim = {
     readerCaptionPick: ['PDF captions', 'PDF 图表题注'],
     mainTabPick: ['Choose a tab', '选择标签页'],
     mainNotesLayout: ['Notes layout', '笔记布局'],
+    toggleReaderNotesSidebar: ['Toggle notes sidebar', '开关笔记侧栏'],
     mainYankCitekey: ['Copy citation key', '复制引用键'],
     mainOpenPDF: ['Open attachment', '打开附件'],
     mainClosePDF: ['Close PDF tab', '关闭 PDF 标签页'],
@@ -1401,9 +1408,9 @@ var ZoteroVim = {
       groups.get(key).push({ action, rest, style });
     }
     const names = zh ? { f: '搜索', b: '标签页和阅读分组', w: '窗口', y: '复制',
-      s: '选择集', t: '标签', c: '分类' }
+      s: '选择集', t: '标签', c: '分类', r: '阅读器' }
       : { f: 'Search', b: 'Tabs and reading groups', w: 'Windows', y: 'Copy',
-        s: 'Selection set', t: 'Tags', c: 'Collections' };
+        s: 'Selection set', t: 'Tags', c: 'Collections', r: 'Reader' };
     const rows = Array.from(groups, ([key, entries]) => {
       const exact = entries.find(entry => entry.rest === key);
       const grouped = entries.some(entry => entry.rest !== key);
@@ -2890,6 +2897,7 @@ var ZoteroVim = {
         case 'mainFuzzyCollection':
         case 'mainTabPick':
         case 'mainNotesLayout':
+        case 'toggleReaderNotesSidebar':
         case 'mainYankCitekey':
         case 'mainOpenPDF':
         case 'mainClosePDF':

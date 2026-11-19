@@ -37,3 +37,7 @@ previews the selected note. Use `j` / `k` to move and `Ctrl+j` / `Ctrl+k` to
 switch between the two lists. Press `Enter` to open a note, or `Shift+Enter`
 to open it in a separate tab. From a PDF, `Enter` prefers the reader's
 side-by-side note editor.
+
+Press `Space r n` to toggle the reader’s notes sidebar. The
+shortcut also works from **NOTE NORMAL** inside the sidebar. Closing it
+returns focus to the PDF. Reopening it shows the same note if one was open.

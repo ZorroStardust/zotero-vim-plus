@@ -170,6 +170,21 @@ check('reader shows fh and preserves distinct s/S actions and count prefixes', (
   assert.equal(f.counts.pop(), 3);
 });
 
+check('Space r n toggles reader notes from PDF and note Normal mode', () => {
+  const f = fixture();
+  f.pdfKey(' '); f.pdfKey('r'); f.advance(200);
+  const rows = f.state._spacekeys.rows;
+  assert(rows.some(row => row.key === 'n' && row.label === '开关笔记侧栏'));
+  assert(rows.some(row => row.key === 't' && row.label === 'PDF 主题'));
+  f.pdfKey('n');
+  f.noteKey(' '); f.noteKey('r'); f.noteKey('n');
+  f.pdfKey(' '); f.pdfKey('n');
+  assert.deepEqual(f.actions, ['toggleReaderNotesSidebar', 'toggleReaderNotesSidebar', 'mainNotesLayout']);
+  f.main._contextNoteMode = 'insert';
+  f.noteKey(' '); f.noteKey('r'); f.noteKey('n');
+  assert.equal(f.actions.length, 3);
+});
+
 check('Visual z pairs highlight and underline keys in the reader hint popup', () => {
   const f = fixture();
   f.state.mode = 'visual';

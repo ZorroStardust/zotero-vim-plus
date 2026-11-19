@@ -197,4 +197,39 @@ check('insert mode still passes printable keys through untouched', () => {
   assert.equal(event.immediatePropagationStopped, undefined);
 });
 
+check('reader notes toggle preserves the native note and returns focus to the PDF on close', () => {
+  const win = makeMainWindow('reader');
+  const pane = win.ZoteroContextPane;
+  const editor = pane.activeEditor;
+  const getReader = context.Zotero.Reader.getByTabID;
+  const focusReader = plugin._focusReaderContent;
+  const syncEditor = plugin._syncMainContextNoteListener;
+  let focusCount = 0;
+  let syncCount = 0;
+  context.Zotero.Reader.getByTabID = id => id === 'reader-1' ? {} : null;
+  plugin._focusReaderContent = () => { focusCount++; };
+  plugin._syncMainContextNoteListener = () => { syncCount++; };
+  try {
+    pane.context.mode = 'item';
+    plugin._toggleReaderNotesSidebar(win, {});
+    assert.equal(pane.context.mode, 'item');
+    win.Zotero_Tabs.selectedID = 'reader-1';
+    plugin._toggleReaderNotesSidebar(win, {});
+    assert.equal(pane.context.mode, 'notes');
+    assert.equal(pane.collapsed, false);
+    plugin._toggleReaderNotesSidebar(win, {});
+    assert.equal(pane.collapsed, true);
+    assert.equal(focusCount, 1);
+    plugin._toggleReaderNotesSidebar(win, {});
+    assert.equal(pane.collapsed, false);
+    assert.equal(pane.activeEditor, editor);
+    assert.equal(focusCount, 1);
+    assert.equal(syncCount, 3);
+  } finally {
+    context.Zotero.Reader.getByTabID = getReader;
+    plugin._focusReaderContent = focusReader;
+    plugin._syncMainContextNoteListener = syncEditor;
+  }
+});
+
 console.log('Note editor routing checks passed (' + pass + ' cases).');

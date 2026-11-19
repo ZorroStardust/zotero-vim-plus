@@ -456,6 +456,9 @@ Object.assign(ZoteroVim, {
       case 'mainFuzzyCollection':  this._openFuzzyPicker(win, winState, 'collection');  break;
       case 'mainTabPick':          this._openFuzzyPicker(win, winState, 'tabs');        break;
       case 'mainNotesLayout':      this._toggleMainNotesLayout(win, winState);          break;
+      case 'toggleReaderNotesSidebar':
+        this._toggleReaderNotesSidebar(win, winState);
+        break;
       case 'mainFocusTree':
       case 'mainFocusLeft':        this._mainFocusPanel(win, winState, 'collections');  break;
       case 'mainFocusItems':
@@ -3708,6 +3711,28 @@ Object.assign(ZoteroVim, {
     } catch (e) {
       Zotero.debug('[ZoteroVim] _focusContextNoteEditor error: ' + e);
       return false;
+    }
+  },
+
+  /** Toggle the reader's native notes pane without replacing its selected note. */
+  _toggleReaderNotesSidebar(win, winState) {
+    try {
+      const tabID = win?.Zotero_Tabs?.selectedID;
+      const reader = tabID && Zotero.Reader.getByTabID?.(tabID);
+      const pane = win?.ZoteroContextPane;
+      if (!reader || !pane?.context) return;
+
+      if (!pane.collapsed && pane.context.mode === 'notes') {
+        pane.collapsed = true;
+        void this._focusReaderContent(win);
+      } else {
+        pane.context.mode = 'notes';
+        if (pane.collapsed) pane.collapsed = false;
+        else pane.updateAddToNote?.();
+      }
+      this._syncMainContextNoteListener(win, winState);
+    } catch (e) {
+      Zotero.debug('[ZoteroVim] _toggleReaderNotesSidebar error: ' + e);
     }
   },
 

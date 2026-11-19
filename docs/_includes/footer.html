@@ -1,0 +1,17 @@
+{% assign locale = site.data.locales[page.lang] | default: site.data.locales.en %}
+<footer class="site-footer">
+  <div class="shell footer-inner">
+    <div>
+      <a class="brand" href="{{ locale.home | relative_url }}">
+        <img src="{{ '/assets/logo.png' | relative_url }}" alt="" width="30" height="30">
+        <span>Zotero Vim Plus</span>
+      </a>
+      <p>{{ locale.credits | escape }} <a href="https://codeberg.org/finktank/zotero-vim">zotero-vim</a> · <a href="https://github.com/zhongyangchuwu/Zotero-Neo">Zotero Neo</a></p>
+    </div>
+    <nav aria-label="{{ locale.navigation | escape }}">
+      <a href="{{ site.repository_url }}/releases">{{ locale.releases | escape }}</a>
+      <a href="{{ site.repository_url }}/issues">{{ locale.issues | escape }}</a>
+      <a href="{{ site.repository_url }}/blob/main/LICENSE">AGPL-3.0</a>
+    </nav>
+  </div>
+</footer>

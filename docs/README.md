@@ -1,3 +1,6 @@
+---
+permalink: /guide/
+---
 # Zotero Vim Plus documentation
 
 [English](en/getting-started.md) · [简体中文](zh-CN/getting-started.md) · [Español](es-ES/README.md) · [日本語](ja/README.md) · [한국어](ko/README.md) · [Français](fr/README.md) · [Italiano](it/README.md) · [Deutsch](de/README.md) · [Русский](ru/README.md)
@@ -20,8 +23,8 @@ The guides use default shortcuts. Press `Space` then `/` to look up your current
 
 [Flash 选文](zh-CN/annotate-pdfs.md#用-flash-查找并选中可见文字) · [批量整理与阅读分组](zh-CN/manage-library.md#用临时选择集做批量整理) · [跟随链接与查找图表](zh-CN/read-pdfs.md#跟随链接和查找图表)
 
-[Project README](../README.md) · [Build and architecture](development.md) ·
+[Project README](https://github.com/ZorroStardust/zotero-vim-plus#readme) · [Build and architecture](development.md) ·
 [Release history](https://github.com/ZorroStardust/zotero-vim-plus/releases)
 
 Archived READMEs ·
-[English](archive/README.md) · [简体中文](archive/README.zh-CN.md) · [Español](archive/README.es-ES.md)
+[English](https://github.com/ZorroStardust/zotero-vim-plus/blob/main/docs/archive/README.md) · [简体中文](https://github.com/ZorroStardust/zotero-vim-plus/blob/main/docs/archive/README.zh-CN.md) · [Español](https://github.com/ZorroStardust/zotero-vim-plus/blob/main/docs/archive/README.es-ES.md)

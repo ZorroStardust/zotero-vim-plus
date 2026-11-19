@@ -1,3 +1,7 @@
+---
+lang: zh-CN
+guide_key: annotate-pdfs
+---
 # 选中文字和创建批注
 
 [文档目录](../README.md) · [English](../en/annotate-pdfs.md)

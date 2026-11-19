@@ -1,3 +1,7 @@
+---
+lang: zh-CN
+guide_key: troubleshooting
+---
 # Zotero Vim Plus 故障排查
 
 [文档目录](../README.md) · [English](../en/troubleshooting.md)

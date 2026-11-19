@@ -1,3 +1,7 @@
+---
+lang: en
+guide_key: troubleshooting
+---
 # Troubleshoot Zotero Vim Plus
 
 [Documentation](../README.md) · [简体中文](../zh-CN/troubleshooting.md)

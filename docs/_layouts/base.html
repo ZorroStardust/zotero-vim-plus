@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="{{ page.lang | default: 'en' }}">
+{% assign locale = site.data.locales[page.lang] | default: site.data.locales.en %}
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% if page.title %}{{ page.title | escape }} · {% endif %}{{ site.title }}</title>
+  <meta name="description" content="{{ locale.summary | escape }}">
+  <link rel="icon" href="{{ '/assets/logo.png' | relative_url }}">
+  <link rel="stylesheet" href="{{ '/assets/site.css' | relative_url }}">
+  <script src="{{ '/assets/site.js' | relative_url }}" defer></script>
+</head>
+<body class="{{ layout.body_class }}">
+  <a class="skip-link" href="#content">{{ locale.skip | escape }}</a>
+  {% include header.html %}
+  <main id="content">{{ content }}</main>
+  {% include footer.html %}
+</body>
+</html>

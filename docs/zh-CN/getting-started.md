@@ -1,3 +1,7 @@
+---
+lang: zh-CN
+guide_key: getting-started
+---
 # 安装 Zotero Vim Plus 并试用快捷键
 
 [文档目录](../README.md) · [English](../en/getting-started.md)

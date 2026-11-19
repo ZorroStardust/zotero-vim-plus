@@ -1,3 +1,7 @@
+---
+lang: zh-CN
+guide_key: read-pdfs
+---
 # 阅读和定位 PDF
 
 [文档目录](../README.md) · [English](../en/read-pdfs.md)

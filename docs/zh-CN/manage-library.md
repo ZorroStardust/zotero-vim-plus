@@ -1,3 +1,7 @@
+---
+lang: zh-CN
+guide_key: manage-library
+---
 # 在文献库里查找和整理论文
 
 [文档目录](../README.md) · [English](../en/manage-library.md)

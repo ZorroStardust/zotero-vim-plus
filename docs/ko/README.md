@@ -1,23 +1,47 @@
+---
+lang: ko
+permalink: /ko/manual.html
+---
 # Zotero Vim Plus 사용 가이드
 
-[언어 목록](../README.md) · [프로젝트](../../README.ko.md)
+[언어 목록](../README.md) · [프로젝트](https://github.com/ZorroStardust/zotero-vim-plus/blob/main/README.ko.md)
 
 ## 설치와 언어 설정
 
 [XPI 파일](https://github.com/ZorroStardust/zotero-vim-plus/releases/latest/download/zoetero-vim-plus.xpi)을 내려받습니다. Zotero의 도구 메뉴에서 플러그인 관리 창을 열고 톱니바퀴 메뉴를 통해 파일을 설치합니다. Zotero 7–10을 지원합니다. Zotero 설정의 **Zotero Vim Plus → 일반 → 언어**에서 한국어를 선택할 수 있습니다.
 
-## PDF 읽기와 주석 달기
+<a id="read-pdfs"></a>
+
+## PDF 읽기와 탐색
 
 페이지를 클릭합니다. `j` / `k`로 스크롤하고 `h` / `l`로 페이지를 이동합니다. `/`로 검색한 뒤 `Enter`로 확인하고 `n` / `N`으로 결과를 이동합니다. `Space f h`는 목차 제목, `Space f g`는 그림과 표의 캡션을 검색합니다. `f`를 누르면 보이는 링크와 주석에 힌트가 표시됩니다. PDF 테마를 바꾸려면 `Space r t`를 누르고 `f`와 힌트 문자를 차례로 입력합니다.
 
+<a id="annotate-pdfs"></a>
+
+## 텍스트 선택과 주석
+
 `v`를 누른 후 힌트로 선택을 시작합니다. `Shift+V`를 누르면 화면에 보이는 단어나 구절을 입력해 일치하는 텍스트를 선택할 수 있습니다. `h` / `j` / `k` / `l`로 범위를 조절하면 오른쪽 아래의 글자 수가 바뀝니다. `y`는 복사, `i`는 주석 작성, `zy`는 노란색 강조, `zY`는 밑줄입니다. Translate for Zotero를 설정했다면 `t`로 번역할 수 있습니다. `[a` / `]a`로 이전 또는 다음 주석을 선택합니다.
 
-## 문헌 관리와 노트 편집
+<a id="manage-library"></a>
+
+## 문헌 검색과 정리
 
 `Space f f`로 라이브러리를 검색하거나 `Space f b`로 현재 컬렉션을 검색합니다. 항목 목록에서 `s`로 임시 선택 집합에 항목을 추가하거나 제거하고, `Space s s`로 확인합니다. `Space t a` / `Space t r`로 태그를 변경하기 전에 대상을 확인하세요. `Space b c`로 읽기 그룹을 만들고 `Space b l`로 엽니다.
 
+<a id="edit-notes"></a>
+
+## Zotero 노트 편집
+
 `Space n`으로 노트 선택 창을 엽니다. `Ctrl+k`는 현재 항목, `Ctrl+j`는 전체 노트를 표시합니다. `Enter`로 열거나 `Shift+Enter`로 별도 탭에서 엽니다. 읽기 화면에서는 `Space r n`으로 노트 사이드바를 전환합니다. 편집기에서 `Esc`를 누르면 **NOTE NORMAL** 모드로 돌아가고 `i`를 누르면 입력할 수 있습니다.
 
-## 단축키 확인과 변경
+<a id="shortcuts"></a>
 
-`Space /`로 현재 단축키를 확인하고 `Space p`로 설정을 엽니다. 키가 작동하지 않으면 포커스와 모드를 확인하세요. **단축키**에서 키를 변경한 뒤 **단축키 적용**으로 저장합니다.
+## 단축키 확인
+
+`Space /`로 현재 단축키를 확인하고 `Space p`로 설정을 엽니다. **단축키**에서 키를 변경한 뒤 **단축키 적용**으로 저장합니다.
+
+<a id="troubleshooting"></a>
+
+## 문제 해결
+
+키가 작동하지 않으면 포커스와 모드를 확인하세요.

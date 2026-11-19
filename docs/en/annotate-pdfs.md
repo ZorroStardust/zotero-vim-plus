@@ -1,3 +1,7 @@
+---
+lang: en
+guide_key: annotate-pdfs
+---
 # Select text and annotate PDFs
 
 [Documentation](../README.md) · [简体中文](../zh-CN/annotate-pdfs.md)

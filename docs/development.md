@@ -1,6 +1,8 @@
+---
+---
 # Development
 
-[Documentation](README.md) · [Source repository](../README.md)
+[Documentation](README.md) · [Source repository](https://github.com/ZorroStardust/zotero-vim-plus#readme)
 
 ## Building from source
 
@@ -50,6 +52,29 @@ zotero-vim-plus/
 In Zotero, open **Tools → Plugins**, click the gear, and choose **Install Plugin
 From File…**. Select the XPI you built and restart Zotero if prompted. For
 reader or note changes, open a PDF or note and exercise the affected shortcuts.
+
+## Documentation website
+
+The GitHub Pages source is the `docs/` folder of this repository. In GitHub,
+open **Settings → Pages**, choose **Deploy from a branch**, and select
+**main → /docs**. The project site uses the `/zotero-vim-plus` base path.
+
+The homepage uses the shared `_layouts/home.html` template and the translations
+in `_data/locales.yml`. Guides are rendered from the Markdown in each language
+folder. Use `relative_url` for site assets and template navigation so the
+repository subpath stays intact.
+
+To preview locally, install the supported `github-pages` Ruby gem and run
+the following from the repository root.
+
+```bash
+ruby -r github-pages -r jekyll -e \
+  'Jekyll::Site.new(Jekyll.configuration({"source"=>"docs", "destination"=>ARGV.fetch(0)})).process' \
+  /tmp/zvp-preview/zotero-vim-plus
+python3 -m http.server 8765 --directory /tmp/zvp-preview --bind 127.0.0.1
+```
+
+Open `http://127.0.0.1:8765/zotero-vim-plus/` in a browser.
 
 ## Architecture notes
 

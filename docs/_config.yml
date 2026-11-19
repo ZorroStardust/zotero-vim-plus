@@ -1,0 +1,30 @@
+title: Zotero Vim Plus
+url: https://zorrostardust.github.io
+baseurl: /zotero-vim-plus
+repository_url: https://github.com/ZorroStardust/zotero-vim-plus
+markdown: kramdown
+kramdown:
+  input: GFM
+readme_index:
+  enabled: false
+titles_from_headings:
+  strip_title: false
+plugins:
+  - jekyll-relative-links
+relative_links:
+  enabled: true
+exclude:
+  - archive
+  - releases
+  - issue-6-diagnostics.md
+  - issue-6-reply.md
+defaults:
+  - scope:
+      path: ""
+    values:
+      layout: guide
+      lang: en
+  - scope:
+      path: zh-CN
+    values:
+      lang: zh-CN

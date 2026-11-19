@@ -1,3 +1,7 @@
+---
+lang: en
+guide_key: edit-notes
+---
 # Edit Zotero notes with Vim keys
 
 [Documentation](../README.md) · [简体中文](../zh-CN/edit-notes.md)

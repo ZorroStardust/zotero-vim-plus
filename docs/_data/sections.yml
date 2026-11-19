@@ -1,0 +1,14 @@
+workflow:
+  - key: read-pdfs
+    keys: ["j", "k", "/"]
+  - key: annotate-pdfs
+    keys: ["v", "z", "y"]
+  - key: edit-notes
+    keys: ["Space", "n"]
+guide:
+  - read-pdfs
+  - annotate-pdfs
+  - manage-library
+  - edit-notes
+  - shortcuts
+  - troubleshooting

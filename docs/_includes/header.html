@@ -1,0 +1,32 @@
+{% assign current_lang = page.lang | default: 'en' %}
+{% assign locale = site.data.locales[current_lang] %}
+<header class="site-header">
+  <div class="shell topbar">
+    <a class="brand" href="{{ locale.home | relative_url }}">
+      <img src="{{ '/assets/logo.png' | relative_url }}" alt="" width="36" height="36">
+      <span>Zotero Vim Plus</span>
+    </a>
+    <nav class="topnav" aria-label="{{ locale.navigation | escape }}">
+      <a href="{{ locale.manual | relative_url }}">{{ locale.docs | escape }}</a>
+      <a href="{{ site.repository_url }}">GitHub</a>
+      <details class="languages">
+        <summary>{{ locale.name | escape }}</summary>
+        <ul>
+          {% for entry in site.data.locales %}
+            {% assign code = entry[0] %}
+            {% assign translation = entry[1] %}
+            {% if page.layout == 'guide' %}
+              {% assign language_url = translation.manual %}
+              {% if page.guide_key and translation.parallel %}
+                {% assign language_url = '/' | append: code | append: '/' | append: page.guide_key | append: '.html' %}
+              {% endif %}
+            {% else %}
+              {% assign language_url = translation.home %}
+            {% endif %}
+            <li><a href="{{ language_url | relative_url }}" lang="{{ code }}" hreflang="{{ code }}"{% if code == current_lang %} aria-current="true"{% endif %}>{{ translation.name | escape }}</a></li>
+          {% endfor %}
+        </ul>
+      </details>
+    </nav>
+  </div>
+</header>

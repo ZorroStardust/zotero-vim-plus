@@ -1,0 +1,18 @@
+---
+layout: base
+body_class: guide-page
+---
+{% assign locale = site.data.locales[page.lang] | default: site.data.locales.en %}
+<div class="shell manual">
+  <nav class="manual-nav" aria-label="{{ locale.docs | escape }}">
+    <a class="manual-nav-title" href="{{ locale.manual | relative_url }}">{{ locale.docs | escape }}</a>
+      <ul>
+        <li><a href="{{ locale.manual | relative_url }}"{% if page.guide_key == 'getting-started' %} aria-current="page"{% endif %}>{{ locale.start | escape }}</a></li>
+        {% for section in site.data.sections.guide %}
+          {% include guide-url.html key=section %}
+          <li><a href="{{ guide_url }}"{% if page.guide_key == section %} aria-current="page"{% endif %}>{{ locale.sections[section].title | escape }}</a></li>
+        {% endfor %}
+      </ul>
+  </nav>
+  <article class="prose">{{ content }}</article>
+</div>

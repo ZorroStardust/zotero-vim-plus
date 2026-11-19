@@ -1,3 +1,7 @@
+---
+lang: zh-CN
+guide_key: edit-notes
+---
 # 用 Vim 按键编辑 Zotero 笔记
 
 [文档目录](../README.md) · [English](../en/edit-notes.md)

@@ -1,0 +1,62 @@
+---
+layout: base
+body_class: home-page
+---
+{% assign locale = site.data.locales[page.lang] %}
+<section class="shell hero">
+  <div class="hero-copy">
+    <h1>{{ locale.headline | escape }}</h1>
+    <p>{{ locale.summary | escape }}</p>
+    <div class="actions">
+      <a class="button primary" href="{{ site.repository_url }}/releases/latest/download/zoetero-vim-plus.xpi">{{ locale.download | escape }}</a>
+      <a class="button secondary" href="{{ locale.manual | relative_url }}">{{ locale.start | escape }}</a>
+    </div>
+    <p class="compatibility">Zotero 7–10 <span aria-hidden="true">·</span> macOS, Linux, Windows</p>
+  </div>
+  <figure class="demo" data-demo>
+    <div class="demo-toolbar">
+      <span class="demo-title"><img src="{{ '/assets/logo.png' | relative_url }}" alt="" width="22" height="22">Zotero Vim Plus</span>
+      <a class="demo-play" href="https://raw.githubusercontent.com/ZorroStardust/zotero-vim-plus/main/BriefDemoVideo.gif" data-demo-play data-pause="{{ locale.stop | escape }}" data-error="{{ locale.demo_error | escape }}">
+        <span class="play-symbol" aria-hidden="true"></span><span data-demo-label>{{ locale.play | escape }}</span>
+      </a>
+    </div>
+    <div class="demo-window">
+      <img class="demo-poster" src="{{ '/assets/pdf-demo.webp' | relative_url }}" alt="{{ locale.demo_alt | escape }}" width="650" height="327" fetchpriority="high">
+    </div>
+    <figcaption class="demo-caption"><span>{{ locale.demo_caption | escape }}</span><span><kbd>v</kbd> <kbd>z</kbd><kbd>y</kbd></span></figcaption>
+    <p class="visually-hidden" aria-live="polite" data-demo-status></p>
+  </figure>
+</section>
+
+<section class="workflow" aria-labelledby="workflow-title">
+  <div class="shell">
+    <h2 id="workflow-title">{{ locale.workflow | escape }}</h2>
+    <div class="workflow-grid">
+      {% for step in site.data.sections.workflow %}
+        {% assign tile = locale.sections[step.key] %}
+        {% include guide-url.html key=step.key %}
+        <article class="workflow-step">
+          <div class="key-sequence" aria-label="{{ step.keys | join: ' ' | escape }}">
+            {% for key in step.keys %}<kbd>{{ key | escape }}</kbd>{% endfor %}
+          </div>
+          <h3><a href="{{ guide_url }}">{{ tile.title | escape }}</a></h3>
+          <p>{{ tile.text | escape }}</p>
+        </article>
+      {% endfor %}
+    </div>
+  </div>
+</section>
+
+<section class="shell guides" aria-labelledby="guides-title">
+  <div class="guides-intro">
+    <h2 id="guides-title">{{ locale.docs | escape }}</h2>
+    <p>{{ locale.docs_intro | escape }}</p>
+  </div>
+  <ul class="guide-links">
+    {% for section in site.data.sections.guide %}
+      {% assign tile = locale.sections[section] %}
+      {% include guide-url.html key=section %}
+      <li><a href="{{ guide_url }}"><span>{{ tile.title | escape }}</span><span class="link-mark" aria-hidden="true">/</span></a></li>
+    {% endfor %}
+  </ul>
+</section>

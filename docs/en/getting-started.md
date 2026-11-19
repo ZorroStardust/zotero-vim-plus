@@ -1,3 +1,7 @@
+---
+lang: en
+guide_key: getting-started
+---
 # Install Zotero Vim Plus and try your first shortcuts
 
 [Documentation](../README.md) · [简体中文](../zh-CN/getting-started.md)

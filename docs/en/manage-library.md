@@ -1,3 +1,7 @@
+---
+lang: en
+guide_key: manage-library
+---
 # Find and organize papers in the library
 
 [Documentation](../README.md) · [简体中文](../zh-CN/manage-library.md)

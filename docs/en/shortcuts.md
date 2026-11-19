@@ -1,3 +1,7 @@
+---
+lang: en
+guide_key: shortcuts
+---
 # Look up and customize shortcuts
 
 [Documentation](../README.md) · [简体中文](../zh-CN/shortcuts.md)

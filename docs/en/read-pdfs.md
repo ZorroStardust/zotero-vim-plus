@@ -1,3 +1,7 @@
+---
+lang: en
+guide_key: read-pdfs
+---
 # Read and navigate PDFs
 
 [Documentation](../README.md) · [简体中文](../zh-CN/read-pdfs.md)

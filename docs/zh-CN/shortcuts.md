@@ -1,3 +1,7 @@
+---
+lang: zh-CN
+guide_key: shortcuts
+---
 # 查找和修改快捷键
 
 [文档目录](../README.md) · [English](../en/shortcuts.md)

@@ -1,0 +1,261 @@
+en:
+  name: "English"
+  headline: "Read and annotate papers with Vim keys"
+  summary: "Navigate PDFs, select text, and keep writing in Zotero’s rich-text notes."
+  download: "Download XPI"
+  start: "Quick start"
+  docs: "User guide"
+  play: "Play demo"
+  stop: "Stop demo"
+  demo_error: "The demo could not load."
+  demo_alt: "A highlighted passage in Zotero’s PDF reader"
+  demo_caption: "PDF reading and selection in Zotero"
+  workflow: "From reading to notes"
+  docs_intro: "Find the steps for the task you want to do."
+  releases: "Releases"
+  issues: "Report an issue"
+  credits: "Project origins and contributions"
+  skip: "Skip to content"
+  navigation: "Site navigation"
+  home: "/"
+  manual: "/en/getting-started.html"
+  parallel: true
+  sections:
+    read-pdfs: {"title": "Read and navigate PDFs", "text": "Scroll with j and k, or search for a term using /."}
+    annotate-pdfs: {"title": "Select text and annotate", "text": "Enter Visual mode, choose a text hint, and make a yellow highlight with zy."}
+    edit-notes: {"title": "Edit Zotero notes", "text": "Open the note picker and continue writing in Zotero."}
+    manage-library: {"title": "Find and organize papers"}
+    shortcuts: {"title": "Look up shortcuts"}
+    troubleshooting: {"title": "Troubleshoot"}
+zh-CN:
+  name: "简体中文"
+  headline: "用 Vim 按键读论文、做批注"
+  summary: "在 PDF 里定位、选文和高亮，再到 Zotero 笔记里继续编辑。"
+  download: "下载 XPI"
+  start: "快速开始"
+  docs: "使用指南"
+  play: "播放演示"
+  stop: "停止演示"
+  demo_error: "无法加载演示。"
+  demo_alt: "Zotero PDF 阅读器中选中的一段文字"
+  demo_caption: "在 Zotero 中阅读和选择 PDF 文字"
+  workflow: "从阅读到笔记"
+  docs_intro: "按任务查找操作步骤。"
+  releases: "发布记录"
+  issues: "反馈问题"
+  credits: "项目沿革与贡献"
+  skip: "跳到正文"
+  navigation: "站点导航"
+  home: "/zh-CN/"
+  manual: "/zh-CN/getting-started.html"
+  parallel: true
+  sections:
+    read-pdfs: {"title": "阅读和定位 PDF", "text": "用 j 和 k 滚动，或按 / 查找关键词。"}
+    annotate-pdfs: {"title": "选文和批注", "text": "进入可视模式，用字母提示选文，再按 zy 创建黄色高亮。"}
+    edit-notes: {"title": "编辑 Zotero 笔记", "text": "打开笔记选择器，在 Zotero 里继续写。"}
+    manage-library: {"title": "查找和整理文献"}
+    shortcuts: {"title": "查找快捷键"}
+    troubleshooting: {"title": "故障排查"}
+es-ES:
+  name: "Español"
+  headline: "Lee y anota artículos con teclas de Vim"
+  summary: "Navega por PDF, selecciona texto y sigue escribiendo en las notas de Zotero."
+  download: "Descargar XPI"
+  start: "Guía rápida"
+  docs: "Guía de uso"
+  play: "Ver demostración"
+  stop: "Detener demostración"
+  demo_error: "No se pudo cargar la demostración."
+  demo_alt: "Un pasaje seleccionado en el lector PDF de Zotero"
+  demo_caption: "Lectura y selección de texto en Zotero"
+  workflow: "De la lectura a las notas"
+  docs_intro: "Busca los pasos de la tarea que quieres realizar."
+  releases: "Versiones"
+  issues: "Informar de un problema"
+  credits: "Origen y contribuciones del proyecto"
+  skip: "Saltar al contenido"
+  navigation: "Navegación del sitio"
+  home: "/es-ES/"
+  manual: "/es-ES/manual.html"
+  parallel: false
+  sections:
+    read-pdfs: {"title": "Leer y recorrer PDF", "text": "Desplázate con j y k o busca un término con /."}
+    annotate-pdfs: {"title": "Seleccionar y anotar", "text": "Entra en modo visual, elige una pista y resalta en amarillo con zy."}
+    edit-notes: {"title": "Editar notas de Zotero", "text": "Abre el selector de notas y sigue escribiendo en Zotero."}
+    manage-library: {"title": "Buscar y organizar artículos"}
+    shortcuts: {"title": "Consultar atajos"}
+    troubleshooting: {"title": "Resolver problemas"}
+ja:
+  name: "日本語"
+  headline: "Vim キーで論文を読み、注釈を付ける"
+  summary: "PDF を移動し、文字を選択して、Zotero のノートで編集を続けられます。"
+  download: "XPI をダウンロード"
+  start: "クイックスタート"
+  docs: "ユーザーガイド"
+  play: "デモを再生"
+  stop: "デモを停止"
+  demo_error: "デモを読み込めませんでした。"
+  demo_alt: "Zotero の PDF リーダーで選択した文章"
+  demo_caption: "Zotero での PDF 閲覧と文字選択"
+  workflow: "論文を読んでノートを書く"
+  docs_intro: "目的に合った操作手順を探せます。"
+  releases: "リリース"
+  issues: "問題を報告"
+  credits: "プロジェクトの由来と貢献"
+  skip: "本文へ移動"
+  navigation: "サイト内ナビゲーション"
+  home: "/ja/"
+  manual: "/ja/manual.html"
+  parallel: false
+  sections:
+    read-pdfs: {"title": "PDF を読む", "text": "j と k でスクロールし、/ で用語を検索します。"}
+    annotate-pdfs: {"title": "文字を選択して注釈を付ける", "text": "ビジュアルモードでヒントを選び、zy で黄色のハイライトを付けます。"}
+    edit-notes: {"title": "Zotero のノートを編集する", "text": "ノート選択画面を開き、Zotero で入力を続けます。"}
+    manage-library: {"title": "文献を探して整理する"}
+    shortcuts: {"title": "キー割り当てを確認する"}
+    troubleshooting: {"title": "トラブルシューティング"}
+ko:
+  name: "한국어"
+  headline: "Vim 키로 논문을 읽고 주석 달기"
+  summary: "PDF를 탐색하고 텍스트를 선택한 뒤 Zotero 노트에서 편집을 이어가세요."
+  download: "XPI 다운로드"
+  start: "빠른 시작"
+  docs: "사용 가이드"
+  play: "시연 재생"
+  stop: "시연 중지"
+  demo_error: "시연을 불러올 수 없습니다."
+  demo_alt: "Zotero PDF 리더에서 선택한 문단"
+  demo_caption: "Zotero에서 PDF 읽기와 텍스트 선택"
+  workflow: "논문 읽기에서 노트 작성까지"
+  docs_intro: "원하는 작업의 단계별 방법을 확인하세요."
+  releases: "릴리스"
+  issues: "문제 신고"
+  credits: "프로젝트의 기원과 기여"
+  skip: "본문으로 건너뛰기"
+  navigation: "사이트 탐색"
+  home: "/ko/"
+  manual: "/ko/manual.html"
+  parallel: false
+  sections:
+    read-pdfs: {"title": "PDF 읽기와 탐색", "text": "j와 k로 스크롤하거나 /로 단어를 검색하세요."}
+    annotate-pdfs: {"title": "텍스트 선택과 주석", "text": "비주얼 모드에서 힌트를 선택한 뒤 zy로 노란색 강조를 추가하세요."}
+    edit-notes: {"title": "Zotero 노트 편집", "text": "노트 선택 창을 열고 Zotero에서 편집을 이어가세요."}
+    manage-library: {"title": "문헌 검색과 정리"}
+    shortcuts: {"title": "단축키 확인"}
+    troubleshooting: {"title": "문제 해결"}
+fr:
+  name: "Français"
+  headline: "Lire et annoter des articles avec les touches Vim"
+  summary: "Parcourez vos PDF, sélectionnez du texte et poursuivez dans les notes enrichies de Zotero."
+  download: "Télécharger le XPI"
+  start: "Prise en main"
+  docs: "Guide utilisateur"
+  play: "Lancer la démo"
+  stop: "Arrêter la démo"
+  demo_error: "La démo n’a pas pu être chargée."
+  demo_alt: "Un passage sélectionné dans le lecteur PDF de Zotero"
+  demo_caption: "Lecture et sélection dans Zotero"
+  workflow: "De la lecture aux notes"
+  docs_intro: "Retrouvez les étapes de chaque tâche."
+  releases: "Versions"
+  issues: "Signaler un problème"
+  credits: "Origine du projet et contributions"
+  skip: "Aller au contenu"
+  navigation: "Navigation du site"
+  home: "/fr/"
+  manual: "/fr/manual.html"
+  parallel: false
+  sections:
+    read-pdfs: {"title": "Lire et parcourir des PDF", "text": "Défilez avec j et k ou cherchez un terme avec /."}
+    annotate-pdfs: {"title": "Sélectionner et annoter", "text": "Passez en mode visuel, choisissez un indice et surlignez en jaune avec zy."}
+    edit-notes: {"title": "Modifier les notes Zotero", "text": "Ouvrez le sélecteur de notes et poursuivez dans Zotero."}
+    manage-library: {"title": "Chercher et organiser des articles"}
+    shortcuts: {"title": "Consulter les raccourcis"}
+    troubleshooting: {"title": "Résoudre un problème"}
+it:
+  name: "Italiano"
+  headline: "Leggi e annota articoli con i tasti di Vim"
+  summary: "Esplora i PDF, seleziona il testo e continua a scrivere nelle note di Zotero."
+  download: "Scarica il file XPI"
+  start: "Per iniziare"
+  docs: "Guida utente"
+  play: "Riproduci la demo"
+  stop: "Interrompi la demo"
+  demo_error: "Impossibile caricare la demo."
+  demo_alt: "Un brano selezionato nel lettore PDF di Zotero"
+  demo_caption: "Lettura e selezione in Zotero"
+  workflow: "Dalla lettura alle note"
+  docs_intro: "Trova i passaggi per ogni attività."
+  releases: "Versioni"
+  issues: "Segnala un problema"
+  credits: "Origini del progetto e contributi"
+  skip: "Vai al contenuto"
+  navigation: "Navigazione del sito"
+  home: "/it/"
+  manual: "/it/manual.html"
+  parallel: false
+  sections:
+    read-pdfs: {"title": "Leggere e navigare i PDF", "text": "Scorri con j e k o cerca un termine con /."}
+    annotate-pdfs: {"title": "Selezionare e annotare", "text": "Entra in modalità visuale, scegli un suggerimento ed evidenzia in giallo con zy."}
+    edit-notes: {"title": "Modificare le note di Zotero", "text": "Apri il selettore delle note e continua a scrivere in Zotero."}
+    manage-library: {"title": "Cercare e organizzare gli articoli"}
+    shortcuts: {"title": "Consultare le scorciatoie"}
+    troubleshooting: {"title": "Risolvere i problemi"}
+de:
+  name: "Deutsch"
+  headline: "Fachartikel mit Vim-Tasten lesen und kommentieren"
+  summary: "Navigiere in PDFs, markiere Text und schreibe in den formatierten Zotero-Notizen weiter."
+  download: "XPI herunterladen"
+  start: "Erste Schritte"
+  docs: "Benutzerhandbuch"
+  play: "Demo abspielen"
+  stop: "Demo anhalten"
+  demo_error: "Die Demo konnte nicht geladen werden."
+  demo_alt: "Eine markierte Passage im PDF-Leser von Zotero"
+  demo_caption: "PDF lesen und Text auswählen in Zotero"
+  workflow: "Vom Lesen zur Notiz"
+  docs_intro: "Hier findest du die Schritte für deine Aufgabe."
+  releases: "Versionen"
+  issues: "Problem melden"
+  credits: "Ursprung des Projekts und Beiträge"
+  skip: "Zum Inhalt springen"
+  navigation: "Seitennavigation"
+  home: "/de/"
+  manual: "/de/manual.html"
+  parallel: false
+  sections:
+    read-pdfs: {"title": "PDFs lesen und navigieren", "text": "Scrolle mit j und k oder suche mit / nach einem Begriff."}
+    annotate-pdfs: {"title": "Text auswählen und kommentieren", "text": "Wähle im visuellen Modus einen Hinweis und markiere mit zy gelb."}
+    edit-notes: {"title": "Zotero-Notizen bearbeiten", "text": "Öffne die Notizauswahl und schreibe in Zotero weiter."}
+    manage-library: {"title": "Fachartikel finden und organisieren"}
+    shortcuts: {"title": "Tastenkürzel nachschlagen"}
+    troubleshooting: {"title": "Probleme beheben"}
+ru:
+  name: "Русский"
+  headline: "Читайте статьи и добавляйте аннотации клавишами Vim"
+  summary: "Перемещайтесь по PDF, выделяйте текст и продолжайте работу в заметках Zotero."
+  download: "Скачать XPI"
+  start: "Быстрый старт"
+  docs: "Руководство"
+  play: "Смотреть демонстрацию"
+  stop: "Остановить демонстрацию"
+  demo_error: "Не удалось загрузить демонстрацию."
+  demo_alt: "Выделенный фрагмент в читалке PDF Zotero"
+  demo_caption: "Чтение PDF и выделение текста в Zotero"
+  workflow: "От чтения к заметкам"
+  docs_intro: "Найдите инструкцию для нужной задачи."
+  releases: "Выпуски"
+  issues: "Сообщить о проблеме"
+  credits: "История проекта и вклад авторов"
+  skip: "Перейти к содержанию"
+  navigation: "Навигация по сайту"
+  home: "/ru/"
+  manual: "/ru/manual.html"
+  parallel: false
+  sections:
+    read-pdfs: {"title": "Чтение и навигация по PDF", "text": "Прокручивайте клавишами j и k или ищите слова с помощью /."}
+    annotate-pdfs: {"title": "Выделение и аннотации", "text": "В визуальном режиме выберите подсказку и выделите текст жёлтым с помощью zy."}
+    edit-notes: {"title": "Редактирование заметок Zotero", "text": "Откройте список заметок и продолжайте писать в Zotero."}
+    manage-library: {"title": "Поиск и организация статей"}
+    shortcuts: {"title": "Сочетания клавиш"}
+    troubleshooting: {"title": "Решение проблем"}

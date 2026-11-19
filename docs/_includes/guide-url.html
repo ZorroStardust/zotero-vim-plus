@@ -1,0 +1,7 @@
+{%- assign guide_key = include.key -%}
+{%- if locale.parallel -%}
+  {%- assign guide_path = '/' | append: page.lang | append: '/' | append: guide_key | append: '.html' -%}
+  {%- assign guide_url = guide_path | relative_url -%}
+{%- else -%}
+  {%- assign guide_url = locale.manual | relative_url | append: '#' | append: guide_key -%}
+{%- endif -%}

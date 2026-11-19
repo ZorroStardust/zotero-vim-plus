@@ -512,7 +512,7 @@ Object.assign(ZoteroVim, {
   _openShortcutHelp(owner, win, sourceWin = null, palette = false, settings = false) {
     if (!win?.document || !owner) return;
     const previous = this._shortcutHelpForWindow(win);
-    if (previous) { previous.input.focus(); return; }
+    if (previous) { (previous.choice?.list || previous.input).focus(); return; }
     const doc = win.document;
     const zh = this._isZhLocale();
     sourceWin = sourceWin || Services.focus?.focusedWindow || win;
@@ -572,7 +572,7 @@ Object.assign(ZoteroVim, {
         if (!ui.overlay.contains(event.target)) this._focusShortcutHelp(ui);
       });
       listen(ui.overlay, 'wheel', event => {
-        if (!ui.list.contains(event.target)) event.preventDefault();
+        if (!(ui.choice?.list || ui.list).contains(event.target)) event.preventDefault();
       });
       if (settings) {
         listen(win, 'resize', () => this._clearSettingsHints(ui));
@@ -842,7 +842,7 @@ Object.assign(ZoteroVim, {
   _focusShortcutHelp(ui) {
     if (ui.owner._shortcutHelp !== ui || ui.focusing) return;
     ui.focusing = true;
-    try { ui.win.focus(); ui.input.focus(); } catch (_) {}
+    try { ui.win.focus(); (ui.choice?.list || ui.input).focus(); } catch (_) {}
     ui.focusing = false;
   },
 

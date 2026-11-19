@@ -12,7 +12,7 @@ Object.assign(ZoteroVim, {
     const style = h('style');
     style.textContent = `
       #zv-settings-overlay { color-scheme: var(--zv-theme-scheme, dark); }
-      #zv-settings-overlay button, #zv-settings-overlay select,
+      #zv-settings-overlay button,
       #zv-settings-overlay input:not([type=checkbox]) {
         background: var(--zv-theme-control, #313244); color: var(--zv-theme-text, #cdd6f4); border: 1px solid var(--zv-theme-border, #585b70);
         border-radius: 5px; font: inherit; padding: 4px 8px;
@@ -30,7 +30,49 @@ Object.assign(ZoteroVim, {
       #zotero-vim-settings-form p { color: var(--zv-theme-muted, #a6adc8) !important; }
       #zotero-vim-settings-form th { background: var(--zv-theme-control, #313244); }
       #zotero-vim-settings-form td { border-bottom: 1px solid var(--zv-theme-selected, #45475a); }
-      #zotero-vim-settings-form td select { max-width: 100%; }
+      #zotero-vim-settings-form .zv-settings-select {
+        display: inline-flex; align-items: center; gap: 12px;
+        max-width: 100%; text-align: start;
+      }
+      #zotero-vim-settings-form .zv-settings-select > span {
+        min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+      }
+      #zotero-vim-settings-form td .zv-settings-select { width: 100%; }
+      #zotero-vim-settings-form .zv-settings-select::after {
+        content: "▾"; margin-inline-start: auto; color: var(--zv-theme-muted, #a6adc8);
+      }
+      #zv-settings-choice-layer {
+        position: absolute; inset: 0; z-index: 2; padding: 24px; background: #0005;
+        display: flex; justify-content: center; align-items: center;
+      }
+      #zv-settings-choice {
+        width: min(520px, 100%); max-height: min(75vh, 100%);
+        display: flex; flex-direction: column; gap: 8px; min-height: 0;
+        box-sizing: border-box; padding: 12px; border-radius: 9px;
+        font: 13px/1.5 sans-serif; color: var(--zv-theme-text, #cdd6f4);
+        background: var(--zv-theme-surface, #1e1e2e);
+        border: 1px solid var(--zv-theme-border, #585b70);
+        box-shadow: 0 16px 48px #0008;
+      }
+      #zv-settings-choice-title { margin: 0; font-size: 15px; }
+      #zv-settings-choice-options {
+        overflow: auto; overscroll-behavior: contain; min-height: 0;
+        border: 1px solid var(--zv-theme-border, #585b70); border-radius: 5px;
+      }
+      #zv-settings-choice-options [role=option] {
+        display: flex; align-items: baseline; gap: 8px;
+        padding: 4px 8px; cursor: pointer; overflow-wrap: anywhere;
+        border-inline-start: 2px solid transparent;
+      }
+      #zv-settings-choice-options [aria-selected=true] {
+        background: var(--zv-theme-selected, #45475a);
+        border-inline-start-color: var(--zv-theme-accent, #89b4fa);
+      }
+      #zv-settings-choice-options .zv-settings-choice-mark {
+        min-width: 1em; color: var(--zv-theme-accent, #89b4fa);
+      }
+      #zv-settings-choice [hidden] { display: none !important; }
+      #zv-settings-choice footer { color: var(--zv-theme-muted, #a6adc8); font-size: 11px; }
       #zotero-vim-settings-form tr[data-mode=normal] {
         background: var(--zv-theme-accent-faint, transparent);
       }
@@ -86,7 +128,7 @@ Object.assign(ZoteroVim, {
     footer.append(status, confirm);
     panel.append(style, header, body, footer);
 
-    Object.assign(ui, { overlay, body, list, status, tips, confirm, keep, h,
+    Object.assign(ui, { overlay, panel, body, list, status, tips, confirm, keep, h,
       input: close, hints: [], hintPrefix: '', page: 0 });
     (ui.doc.body || ui.doc.documentElement).appendChild(overlay);
     list.textContent = ui.zh ? '正在加载设置…' : 'Loading settings…';
@@ -147,6 +189,7 @@ Object.assign(ZoteroVim, {
     // runs in the library or reader chrome document.
     const scope = {
       Zotero, Components, ZV_KEYMAP_LABELS, ZV_SETTINGS_PANE: true,
+      ZV_SETTINGS_SELECT: select => this._wrapSettingsSelect(ui, select),
       dump: message => Zotero.debug(message),
       window: ui.win,
       document: {
@@ -158,6 +201,18 @@ Object.assign(ZoteroVim, {
     Services.scriptloader.loadSubScript(this.rootURI + 'content/i18n.js', scope, 'UTF-8');
     Services.scriptloader.loadSubScript(this.rootURI + 'content/prefs.js', scope, 'UTF-8');
     ui.prefs = scope;
+    for (const select of list.querySelectorAll('select:not([hidden])')) {
+      this._wrapSettingsSelect(ui, select);
+    }
+    list.addEventListener('change', event => {
+      if (event.target.id === 'zv-language') {
+        for (const button of list.querySelectorAll('.zv-settings-select')) {
+          this._syncSettingsSelect(button.previousElementSibling, button);
+        }
+      } else if (event.target.localName === 'select') {
+        this._syncSettingsSelect(event.target, event.target.nextElementSibling);
+      }
+    });
     this._addSettingsBindingSearch(ui);
     this._selectSettingsPage(ui, 0);
   },
@@ -289,11 +344,11 @@ Object.assign(ZoteroVim, {
   _showSettingsHints(ui) {
     const page = ui.pages?.[ui.page]?.section;
     if (!page) return;
-    const targets = [...page.querySelectorAll('button:not(:disabled), input:not(:disabled), select:not(:disabled)')]
+    const targets = [...page.querySelectorAll('button:not(:disabled), input:not(:disabled)')]
       .map(control => ({ control, rect: control.getBoundingClientRect() }))
       .filter(({ control, rect }) => rect.width && rect.height && ui.doc.elementFromPoint(
         Math.max(rect.left, Math.min(rect.right - 2, rect.left + 8)),
-        rect.top + rect.height / 2)?.closest('input, button, select') === control);
+        rect.top + rect.height / 2)?.closest('input, button') === control);
     const labels = this._hintLabelList(targets.length);
     ui.hints = targets.map(({ control, rect }, i) => {
       const badge = ui.h('span');
@@ -311,28 +366,205 @@ Object.assign(ZoteroVim, {
     }
   },
 
+  /** Keep the source select as the form value, with one focusable trigger in the overlay. */
+  _wrapSettingsSelect(ui, select) {
+    const button = ui.h('button');
+    button.type = 'button';
+    button.className = 'zv-settings-select';
+    button.setAttribute('aria-haspopup', 'dialog');
+    button.setAttribute('aria-expanded', 'false');
+    button.appendChild(ui.h('span'));
+    this._syncSettingsSelect(select, button);
+    select.hidden = true;
+    select.after(button);
+    button.addEventListener('click', () => this._openSettingsChoice(ui, select, button));
+    for (const label of select.labels) {
+      label.addEventListener('click', event => {
+        event.preventDefault();
+        button.click();
+      });
+    }
+  },
+
+  _settingsSelectLabel(select) {
+    return select.getAttribute('aria-label')
+      || [...select.labels].map(label => label.textContent.trim()).join(' ');
+  },
+
+  _syncSettingsSelect(select, button) {
+    const value = select.selectedOptions[0]?.label || '';
+    button.firstElementChild.textContent = value;
+    button.title = value;
+    button.disabled = select.disabled;
+    button.setAttribute('aria-label', [this._settingsSelectLabel(select), value]
+      .filter(Boolean).join(' · '));
+  },
+
+  _openSettingsChoice(ui, select, button) {
+    if (ui.choice || button.disabled || !ui.confirm.hidden) return;
+    const { h } = ui;
+    const zh = ui.prefs.ZV_I18N_CURRENT_LANG() === 'zh-CN';
+    const layer = h('div');
+    layer.id = 'zv-settings-choice-layer';
+    const dialog = h('section');
+    dialog.id = 'zv-settings-choice';
+    dialog.setAttribute('role', 'dialog');
+    dialog.setAttribute('aria-modal', 'true');
+    const title = h('h2');
+    title.id = 'zv-settings-choice-title';
+    title.textContent = this._settingsSelectLabel(select) || (zh ? '选择选项' : 'Choose an option');
+    dialog.setAttribute('aria-labelledby', title.id);
+    dialog.appendChild(title);
+
+    const list = h('div');
+    list.id = 'zv-settings-choice-options';
+    list.tabIndex = 0;
+    list.setAttribute('role', 'listbox');
+    list.setAttribute('aria-labelledby', title.id);
+    const options = Array.from(select.options).filter(option => !option.disabled);
+    const choice = { layer, list, select, button, items: [], visible: [], active: null };
+    if (options.length > 10) {
+      const search = h('input');
+      search.type = 'search';
+      search.placeholder = zh ? '筛选选项…' : 'Filter options…';
+      search.setAttribute('aria-label', search.placeholder);
+      search.setAttribute('aria-controls', list.id);
+      search.addEventListener('input', () => this._filterSettingsChoice(choice));
+      choice.search = search;
+      dialog.appendChild(search);
+    }
+    const empty = h('div');
+    empty.setAttribute('role', 'status');
+    empty.textContent = zh ? '没有匹配的选项' : 'No matching options';
+    choice.empty = empty;
+    const footer = h('footer');
+    footer.textContent = zh ? 'j/k 或 ↑/↓ 移动 · Enter 确认 · Esc 取消'
+      : 'j/k or ↑/↓ move · Enter confirm · Esc cancel';
+    if (choice.search) footer.textContent += zh ? ' · / 筛选' : ' · / filter';
+    for (const [index, option] of options.entries()) {
+      const row = h('div');
+      row.id = 'zv-settings-choice-option-' + index;
+      row.setAttribute('role', 'option');
+      row.setAttribute('aria-selected', 'false');
+      const mark = h('span');
+      mark.className = 'zv-settings-choice-mark';
+      mark.setAttribute('aria-hidden', 'true');
+      if (option.selected) mark.textContent = '✓';
+      row.append(mark, option.label);
+      const item = { option, row };
+      row.addEventListener('click', () => this._closeSettingsChoice(ui, item));
+      choice.items.push(item);
+      list.appendChild(row);
+    }
+    dialog.append(list, empty, footer);
+    layer.appendChild(dialog);
+    layer.addEventListener('click', event => {
+      if (event.target === layer) this._closeSettingsChoice(ui);
+    });
+    ui.choice = choice;
+    button.setAttribute('aria-expanded', 'true');
+    ui.panel.inert = true;
+    ui.overlay.appendChild(layer);
+    list.focus({ preventScroll: true });
+    choice.active = choice.items.find(item => item.option.selected);
+    this._filterSettingsChoice(choice);
+  },
+
+  _filterSettingsChoice(choice) {
+    const query = (choice.search?.value || '').trim().toLocaleLowerCase();
+    choice.visible = choice.items.filter(({ option, row }) => {
+      row.hidden = !option.label.toLocaleLowerCase().includes(query)
+        && !option.value.toLocaleLowerCase().includes(query);
+      return !row.hidden;
+    });
+    choice.empty.hidden = choice.visible.length > 0;
+    this._focusSettingsChoiceItem(choice,
+      choice.visible.includes(choice.active) ? choice.active : choice.visible[0]);
+  },
+
+  _focusSettingsChoiceItem(choice, item) {
+    if (choice.active && choice.active !== item) {
+      choice.active.row.setAttribute('aria-selected', 'false');
+    }
+    choice.active = item;
+    if (!item) {
+      choice.list.removeAttribute('aria-activedescendant');
+      return;
+    }
+    item.row.setAttribute('aria-selected', 'true');
+    choice.list.setAttribute('aria-activedescendant', item.row.id);
+    item.row.scrollIntoView({ block: 'nearest' });
+  },
+
+  _closeSettingsChoice(ui, item = null) {
+    const { layer, select, button } = ui.choice;
+    ui.choice = null;
+    layer.remove();
+    ui.panel.inert = false;
+    button.setAttribute('aria-expanded', 'false');
+    if (item && select.selectedIndex !== item.option.index) {
+      select.selectedIndex = item.option.index;
+      select.dispatchEvent(new ui.win.Event('change', { bubbles: true }));
+    }
+    button.focus({ preventScroll: true });
+  },
+
+  _onSettingsChoiceKeyDown(event, ui) {
+    const { key } = event;
+    const choice = ui.choice;
+    const typing = choice.search && ui.doc.activeElement === choice.search;
+    const plain = !event.ctrlKey && !event.metaKey && !event.altKey;
+    if (key === 'Escape') {
+      event.preventDefault();
+      if (!event.repeat) this._closeSettingsChoice(ui);
+    } else if (key === 'Tab') {
+      event.preventDefault();
+      (typing ? choice.list : choice.search || choice.list).focus();
+    } else if (!plain) {
+      return;
+    } else if (key === 'Enter' || (!typing && key === ' ')) {
+      event.preventDefault();
+      if (!event.repeat && choice.active) this._closeSettingsChoice(ui, choice.active);
+    } else if (!typing && key === '/' && choice.search) {
+      event.preventDefault();
+      choice.search.focus();
+    } else {
+      const { visible, active } = choice;
+      const index = visible.indexOf(active);
+      const step = key === 'ArrowDown' || (!typing && key === 'j') ? 1
+        : key === 'ArrowUp' || (!typing && key === 'k') ? -1 : 0;
+      const next = step ? index + step
+        : !typing && key === 'Home' ? 0 : !typing && key === 'End' ? visible.length - 1 : null;
+      if (next === null) return;
+      event.preventDefault();
+      this._focusSettingsChoiceItem(choice, visible[Math.max(0, Math.min(next, visible.length - 1))]);
+    }
+  },
+
   _activateSettingsControl(control) {
     control.focus();
     if (control.matches('button, input[type=checkbox]')) {
       control.click();
-    } else if (control.localName === 'select') {
-      try { control.showPicker?.(); } catch (_) {}
     } else {
       control.select();
     }
   },
 
   _onSettingsKeyDown(event, ui) {
+    if (ui.choice) {
+      this._onSettingsChoiceKeyDown(event, ui);
+      return;
+    }
     const { key } = event;
     const target = ui.doc.activeElement;
-    const inField = target?.matches?.('input:not([type=checkbox]), select');
+    const inField = target?.matches?.('input:not([type=checkbox])');
     const typing = target?.matches?.('input[type=text], input[type=search]');
     const plain = !event.ctrlKey && !event.metaKey && !event.altKey;
     if (key === 'Tab') {
       event.preventDefault();
       this._clearSettingsHints(ui);
       const root = ui.confirm.hidden ? ui.overlay : ui.confirm;
-      const controls = [...root.querySelectorAll('button, input, select')]
+      const controls = [...root.querySelectorAll('button, input')]
         .filter(el => el.tabIndex >= 0 && !el.disabled && el.getClientRects().length);
       if (!controls.length) return;
       const index = controls.indexOf(target);
@@ -380,6 +612,12 @@ Object.assign(ZoteroVim, {
       return;
     }
     if (!plain) return;
+    if (target?.classList.contains('zv-settings-select')
+        && ['Enter', ' ', 'ArrowDown', 'ArrowUp'].includes(key)) {
+      event.preventDefault();
+      if (!event.repeat) target.click();
+      return;
+    }
     const onTab = target === ui.input;
     const direction = (event.shiftKey && key === 'J') || (onTab && key === 'ArrowDown') ? 1
       : (event.shiftKey && key === 'K') || (onTab && key === 'ArrowUp') ? -1 : 0;

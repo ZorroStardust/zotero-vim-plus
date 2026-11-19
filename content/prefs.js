@@ -1,5 +1,5 @@
 /* global Zotero, Components, Services, document, window, MutationObserver, dump,
-  ZV_SETTINGS_PANE, ZV_THEME, ZV_KEYMAP_LABELS, ZV_I18N_CURRENT_LANG, ZV_I18N_APPLY, ZV_I18N_STR, ZV_I18N_ACTION */
+  ZV_SETTINGS_PANE, ZV_SETTINGS_SELECT, ZV_THEME, ZV_KEYMAP_LABELS, ZV_I18N_CURRENT_LANG, ZV_I18N_APPLY, ZV_I18N_STR, ZV_I18N_ACTION */
 "use strict";
 
 // ── Pref helpers ─────────────────────────────────────────────────────────────
@@ -781,6 +781,9 @@ function _zvMakeRow(mode, key, action, isNew) {
   tdDel.appendChild(delBtn);
   tr.appendChild(tdDel);
 
+  if (typeof ZV_SETTINGS_SELECT !== "undefined") {
+    for (const select of tr.querySelectorAll("select")) ZV_SETTINGS_SELECT(select);
+  }
   return tr;
 }
 

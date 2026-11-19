@@ -1072,7 +1072,8 @@ editors keeps its Zotero behavior).
 Press `Space p` in the library, reader or note Normal mode to open the settings overlay.
 Use `Shift+J/K` to cycle the sidebar tabs and `f` to label visible controls.
 Type a hint to toggle a checkbox, activate a button or focus a field. A dropdown
-hint opens its choice list. You can also open a focused dropdown with `Enter`.
+hint opens its choice list. A mouse click opens an inline dropdown, and `Enter` on a focused control opens
+the keyboard choice panel.
 Use `j/k` or the arrow keys to move, `Enter` to confirm and `Esc` to cancel. Long
 lists can be filtered with `/`. Use the arrow keys in numeric fields and
 `Tab` to move between settings. On the Keybindings tab, filter by action or key,

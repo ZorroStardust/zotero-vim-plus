@@ -93,6 +93,16 @@ Object.assign(ZoteroVim, {
         border: 1px solid var(--zv-theme-border, #585b70);
         box-shadow: 0 16px 48px #0008;
       }
+      #zv-settings-choice-layer.zv-settings-dropdown {
+        background: transparent; display: block; padding: 0;
+      }
+      .zv-settings-dropdown #zv-settings-choice {
+        position: absolute; padding: 0; gap: 0;
+      }
+      .zv-settings-dropdown #zv-settings-choice-options { border: 0; }
+      .zv-settings-dropdown [role=option]:hover {
+        background: var(--zv-theme-control, #313244);
+      }
       #zv-settings-choice-title { margin: 0; font-size: 15px; }
       #zv-settings-choice-options {
         overflow: auto; overscroll-behavior: contain; min-height: 0;
@@ -501,11 +511,12 @@ Object.assign(ZoteroVim, {
     this._syncSettingsSelect(select, button);
     select.hidden = true;
     select.after(button);
-    button.addEventListener('click', () => this._openSettingsChoice(ui, select, button));
+    const open = event => this._openSettingsChoice(ui, select, button, event.detail > 0);
+    button.addEventListener('click', open);
     for (const label of select.labels) {
       label.addEventListener('click', event => {
         event.preventDefault();
-        button.click();
+        open(event);
       });
     }
   },
@@ -524,7 +535,7 @@ Object.assign(ZoteroVim, {
       .filter(Boolean).join(' · '));
   },
 
-  _openSettingsChoice(ui, select, button) {
+  _openSettingsChoice(ui, select, button, dropdown) {
     if (ui.choice || button.disabled || !ui.confirm.hidden) return;
     const { h } = ui;
     const zh = ui.prefs.ZV_I18N_CURRENT_LANG() === 'zh-CN';
@@ -538,6 +549,7 @@ Object.assign(ZoteroVim, {
     title.id = 'zv-settings-choice-title';
     title.textContent = this._settingsSelectLabel(select) || (zh ? '选择选项' : 'Choose an option');
     dialog.setAttribute('aria-labelledby', title.id);
+    title.hidden = dropdown;
     dialog.appendChild(title);
 
     const list = h('div');
@@ -546,8 +558,8 @@ Object.assign(ZoteroVim, {
     list.setAttribute('role', 'listbox');
     list.setAttribute('aria-labelledby', title.id);
     const options = Array.from(select.options).filter(option => !option.disabled);
-    const choice = { layer, list, select, button, items: [], visible: [], active: null };
-    if (options.length > 10) {
+    const choice = { layer, list, select, button, dropdown, items: [], visible: [], active: null };
+    if (!dropdown && options.length > 10) {
       const search = h('input');
       search.type = 'search';
       search.placeholder = zh ? '筛选选项…' : 'Filter options…';
@@ -580,6 +592,11 @@ Object.assign(ZoteroVim, {
       choice.items.push(item);
       list.appendChild(row);
     }
+    footer.hidden = dropdown;
+    if (dropdown) {
+      layer.classList.add('zv-settings-dropdown');
+      this._positionSettingsDropdown(ui.win, button, dialog);
+    }
     dialog.append(list, empty, footer);
     layer.appendChild(dialog);
     layer.addEventListener('click', event => {
@@ -592,6 +609,22 @@ Object.assign(ZoteroVim, {
     list.focus({ preventScroll: true });
     choice.active = choice.items.find(item => item.option.selected);
     this._filterSettingsChoice(choice);
+  },
+
+  _positionSettingsDropdown(win, button, dialog) {
+    const rect = button.getBoundingClientRect();
+    const margin = 8;
+    const gap = 3;
+    const width = Math.min(Math.max(rect.width, 220), win.innerWidth - 2 * margin);
+    const below = win.innerHeight - rect.bottom - margin - gap;
+    const above = rect.top - margin - gap;
+    const openAbove = below < 180 && above > below;
+    dialog.style.width = width + 'px';
+    dialog.style.left = Math.max(margin, Math.min(rect.left,
+      win.innerWidth - width - margin)) + 'px';
+    dialog.style.maxHeight = Math.min(360, Math.max(0, openAbove ? above : below)) + 'px';
+    if (openAbove) dialog.style.bottom = (win.innerHeight - rect.top + gap) + 'px';
+    else dialog.style.top = (rect.bottom + gap) + 'px';
   },
 
   _filterSettingsChoice(choice) {

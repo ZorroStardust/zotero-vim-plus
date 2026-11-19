@@ -575,7 +575,10 @@ Object.assign(ZoteroVim, {
         if (!(ui.choice?.list || ui.list).contains(event.target)) event.preventDefault();
       });
       if (settings) {
-        listen(win, 'resize', () => this._clearSettingsHints(ui));
+        listen(win, 'resize', () => {
+          this._clearSettingsHints(ui);
+          if (ui.choice?.dropdown) this._closeSettingsChoice(ui);
+        });
       } else {
         listen(win, 'deactivate', () => this._closeShortcutHelp(owner, false));
         this._renderShortcutHelp(ui);

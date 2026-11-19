@@ -73,6 +73,13 @@ press `:` and run **Toggle body text only** to skip recognized headers,
 page numbers, captions, and footnotes in Flash and keyboard selections. Run
 the command again to include all selectable text.
 
+## Change the PDF reading theme
+
+In PDF Normal mode, press `Space r t` to open Zotero's Appearance popup.
+Press `f` to show letter hints, then type a hint to apply the theme.
+Press `Esc` to close the popup. To change the colors of Vim Plus panels
+and hints, use [Vim Plus settings](shortcuts.md#run-commands-and-open-settings-from-the-keyboard).
+
 ## Read EPUBs and snapshots
 
 Click inside an EPUB or web snapshot to scroll with `j` / `k`. Use `/` and

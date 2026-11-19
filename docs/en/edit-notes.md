@@ -24,19 +24,23 @@ Notes sidebar. Click inside the editor and press `Esc`. Look for
   logical lines. A line that wraps on screen still counts as one logical line.
 - Use `u` / `Ctrl+r` in Note Normal to undo / redo.
 
-If the editor stays in ordinary typing mode, check **Zotero Vim Plus → Modes**
+If the editor stays in ordinary typing mode, check **Zotero Vim Plus → Notes**
 in Zotero's settings. Note Vim can be toggled independently of reader modes.
 See [Troubleshooting](troubleshooting.md#vim-commands-are-typed-into-a-note) if
 keys appear as text after **NOTE NORMAL** is visible.
 
 ## Find a note while reading
 
-In the library or PDF reader, press `Space n` to open the notes layout. The
-left pane lists notes for the current item and the library. The right pane
-previews the selected note. Use `j` / `k` to move and `Ctrl+j` / `Ctrl+k` to
-switch between the two lists. Press `Enter` to open a note, or `Shift+Enter`
-to open it in a separate tab. From a PDF, `Enter` prefers the reader's
-side-by-side note editor.
+In the library or PDF reader, press `Space n` to open the note picker.
+Use `Ctrl+k` for **Current item** or `Ctrl+j` for **All notes**. Each scope
+remembers its selected note and scroll position while the picker is open.
+
+- In the list, use `j` / `k` to select a note. Press `Ctrl+l` to focus its
+  preview, where `j` / `k` scroll instead. Press `Ctrl+h` to return to the list.
+- Press `Enter` to open the note in the sidebar when available, or
+  `Shift+Enter` to open it in a separate tab. Press `Esc` to close the picker.
+- Press `n` to create a child note under the selected note's parent, or `N`
+  to create one under the current item and open it in a new tab.
 
 Press `Space r n` to toggle the reader’s notes sidebar. The
 shortcut also works from **NOTE NORMAL** inside the sidebar. Closing it

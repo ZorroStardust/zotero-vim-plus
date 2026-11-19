@@ -16,7 +16,8 @@
 | --- | --- | --- |
 | PDF in Normal mode | `j` / `k`, `h` / `l` | Scroll, or jump to the previous / next page |
 | PDF in Normal mode | `/`, `Space f h` | Search PDF text, or search outline headings |
-| PDF Normal | `Space r t`, then `f` | Open PDF themes and type a hint to apply a theme |
+| PDF in Normal mode | `Space r t`, then `f` | Open [PDF themes](read-pdfs.md#change-the-pdf-reading-theme) and type a hint to apply a theme |
+| PDF or sidebar Note Normal | `Space r n` | Toggle the reader’s notes sidebar |
 | PDF in Normal mode | `v`, `c` | Enter Visual mode for a selection, or Cursor mode to move a text caret |
 | PDF in Visual mode | `y`, `zy` | Copy the selection, or highlight it in yellow |
 | Library item list | `j` / `k`, `Enter` | Move the selection, or open the selected item |
@@ -35,8 +36,8 @@
 4. Open the shortcut reference to confirm the change. If you reassigned
    `Space /`, use its new binding or check the settings table.
 
-Note editing commands such as `ci"` use fixed bindings. To disable Note Vim
-or change which reader modes are active, use **Modes** in the plugin settings.
+Note editing commands such as `ci"` use fixed bindings. To disable Note Vim,
+use the **Notes** tab. To enable or disable PDF modes, use the **Reader** tab.
 
 For the library’s search, tagging, and reading lists, see the
 [library guide](manage-library.md). For the PDF and note meanings of
@@ -54,6 +55,6 @@ settings overlay. Use `Shift+J` / `Shift+K` to change tabs, `Tab` to move focus,
 or `f` and a hint to select a control. `Esc` leaves the current field or closes
 the overlay. Apply keybinding edits with **Apply bindings**.
 
-The theme page previews presets and includes a **Custom** palette. Choose a
+The **Appearance** tab previews presets and includes a **Custom** palette. Choose a
 preset to change Vim Plus controls and hints, or enter six-digit hex colors
 in the custom editor and choose **Apply colors**.

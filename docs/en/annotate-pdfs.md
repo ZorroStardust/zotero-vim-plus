@@ -16,6 +16,10 @@ is in Normal mode.
 4. Press `z` then `y` to create a yellow highlight. Use `y` alone to copy the
    selected text, or `za` to highlight and open the annotation comment editor.
 
+The indicator at the lower right shows the selected character count as you
+adjust the selection and reminds you of `y` to copy, `i` to add a comment,
+`z` for annotation colors, and `t` to translate.
+
 While choosing hints, `Esc` backs up one level. When a selection is active, it
 exits Visual mode. To place a text caret first, press `c` in Normal mode,
 choose a hint, then press `v` from Cursor mode to start selecting there.

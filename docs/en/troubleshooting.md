@@ -23,7 +23,7 @@ in **Help → About Zotero** against the supported range in the
 
 ## Vim commands are typed into a note
 
-Confirm that **Zotero Vim Plus → Modes** has Note Vim enabled. If a note editor
+Confirm that **Zotero Vim Plus → Notes** has Note Vim enabled. If a note editor
 palette is open, the first `Esc` may close the palette. Press `Esc` again and
 check the mode indicator. If you see **NOTE NORMAL** and motion keys still insert
 letters, include whether the note was in a separate tab, the library item pane,
@@ -33,7 +33,7 @@ or the reader sidebar in your report.
 
 Try `v` on a page where Zotero can select individual words with the mouse.
 Scanned PDFs without a selectable text layer cannot supply text for hints.
-Also check under **Modes** that reader Visual mode is enabled.
+Also check that Visual mode is enabled in the plugin’s **Reader** tab.
 
 ## A shortcut differs from the guide
 

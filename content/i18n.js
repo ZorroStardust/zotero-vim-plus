@@ -15,6 +15,7 @@ const ZV_XUL_NS = "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul
 
 const ZV_I18N = {
   en: {
+    "zv.settings.notes": "Notes",
     "zv.lang.label":        "Language",
     "zv.modes":             "Modes",
     "zv.mode.visual":       "Enable Visual mode (v — select text and annotate)",
@@ -89,6 +90,7 @@ const ZV_I18N = {
     "zv.status.saved":      "Saved!",
   },
   "zh-CN": {
+    "zv.settings.notes": "笔记",
     "zv.lang.label":        "语言",
     "zv.modes":             "模式",
     "zv.mode.visual":       "启用可视模式（v — 选择文本并标注）",

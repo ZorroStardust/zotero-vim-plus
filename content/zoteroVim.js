@@ -121,6 +121,7 @@ var ZoteroVim = {
     'normal:ctrl+l':  'focusReaderSplitRight',
     'normal:escape':  'clearSearch',
     // Normal mode — space-chord bindings (delegate to main window)
+    'normal: p':    'openSettings',
     'normal: /':   'showShortcutHelp',
     'normal: e':   'toggleReaderSidebarOutline',
     'normal: -':   'toggleReaderSplitHorizontal',
@@ -231,6 +232,7 @@ var ZoteroVim = {
     'main: yy':   'mainYankCitekey',      // <space>yy  — copy citekey of selected item
     'main: o':    'mainOpenPDF',          // <space>o   — open selected item's PDF
     'main: q':    'mainClosePDF',         // <space>q   — close active PDF tab
+    'main: p':    'openSettings',
     'main: /':    'showShortcutHelp',     // <space>/   — all plugin shortcuts
     'main: wh':   'mainFocusLeft',        // <space>wh  — focus collection tree
     'main: wl':   'mainFocusRight',       // <space>wl  — focus detail pane
@@ -1332,6 +1334,7 @@ var ZoteroVim = {
     mainClosePDF: ['Close PDF tab', '关闭 PDF 标签页'],
     mainFocusSearch: ['Focus search', '聚焦搜索栏'],
     mainSearch: ['Search focused pane', '搜索当前栏'],
+    openSettings: ['Open settings', '打开设置'],
     showShortcutHelp: ['All plugin shortcuts', '快捷键总览'],
     mainFocusTree: ['Focus collections', '聚焦分类树'],
     mainFocusLeft: ['Focus collections', '聚焦分类树'],
@@ -2521,6 +2524,11 @@ var ZoteroVim = {
       this._closeReaderLinkHints?.(state);
       Zotero.debug('[ZoteroVim] Action: ' + action + ' (mode:' + state.mode + ', count:' + count + ')');
 
+      if (action === 'openSettings') {
+        this._openSettings(state, reader._window || reader._iframe?.ownerDocument?.defaultView,
+          pdfWin);
+        return;
+      }
       if (action === 'showShortcutHelp') {
         this._openShortcutHelp(state,
           reader._window || reader._iframe?.ownerDocument?.defaultView, pdfWin);

@@ -15,6 +15,7 @@ if command -v node >/dev/null 2>&1; then
   node --check content/i18n.js
   node --check content/keymapLabels.js
   node --check content/zoteroVimHelp.js
+  node --check content/zoteroVimSettings.js
   node --check content/zoteroVim.js
   node --check content/zoteroVimReader.js
   node --check content/zoteroVimFlash.js

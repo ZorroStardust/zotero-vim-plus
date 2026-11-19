@@ -49,6 +49,7 @@ async function startup({ id, version, rootURI }) {
   Services.scriptloader.loadSubScript(rootURI + 'content/zoteroVimLibrary.js');
   Services.scriptloader.loadSubScript(rootURI + 'content/zoteroVimFocus.js');
   Services.scriptloader.loadSubScript(rootURI + 'content/zoteroVimHelp.js');
+  Services.scriptloader.loadSubScript(rootURI + 'content/zoteroVimSettings.js');
   // The opt-in diagnostic package observes note input without changing it.
   // Stable builds never load its observers or diagnostic UI.
   if (version === '1.9.1pre3') {

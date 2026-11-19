@@ -64,12 +64,21 @@ function chord(f, suffix) {
 let passed = 0;
 function check(label, fn) { fn(); passed++; console.log('  ok  ' + label); }
 
+check('Space+p opens settings in the originating reader split', () => {
+  const f = fixture();
+  f.reader._window = {};
+  f.state.activePdfWin = f.secondary.win;
+  let args;
+  z._openSettings = (...source) => { args = source; };
+  chord(f, 'p');
+  assert.deepEqual(args, [f.state, f.reader._window, f.secondary.win]);
+  delete z._openSettings;
+});
+
 check('Space+s fits native odd spreads and restores zoom/scroll at the current page', () => {
   const f = fixture();
-  assert.equal(z.getBindings()['normal: p'], undefined);
   assert.equal(z.getBindings()['normal: P'], undefined);
   f.state.keyBuffer = ' ';
-  assert.equal(z._readerConsumesKey(f.state, 'p'), false);
   assert.equal(z._readerConsumesKey(f.state, 'P'), false);
   f.state.keyBuffer = '';
   chord(f, 's');

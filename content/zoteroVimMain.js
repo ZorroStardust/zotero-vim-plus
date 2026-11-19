@@ -423,6 +423,10 @@ Object.assign(ZoteroVim, {
 
   _executeMainAction(action, win, winState, count, libraryPanel = null) {
     this._cancelWindowSpacekeys(win);
+    if (action === 'openSettings') {
+      this._openSettings(winState, win);
+      return;
+    }
     if (action === 'showShortcutHelp') {
       this._openShortcutHelp(winState, win);
       return;

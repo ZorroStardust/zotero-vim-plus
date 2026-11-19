@@ -178,6 +178,7 @@ var ZV_KEYMAP_LABELS = {
     "readerCaptionPick": "Search PDF figure and table captions",
     "focusReaderSidebar": "Reader: focus or reopen outline sidebar",
     "toggleMarksExplorer": "Reader: toggle marks explorer overlay (<space>m)",
+    "openSettings": "Open Vim Plus settings",
     "showShortcutHelp": "Show all plugin shortcuts",
     "openCommandPalette": "Open command palette"
   },
@@ -357,6 +358,7 @@ var ZV_KEYMAP_LABELS = {
     "readerCaptionPick": "搜索 PDF 图表题注",
     "focusReaderSidebar": "阅读器：聚焦或重新打开目录侧栏",
     "toggleMarksExplorer": "阅读器：切换标记浏览浮层（<space>m）",
+    "openSettings": "打开 Vim Plus 设置",
     "showShortcutHelp": "显示插件快捷键总览",
     "openCommandPalette": "打开命令面板"
   }

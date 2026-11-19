@@ -320,7 +320,7 @@ Object.assign(ZoteroVim, {
   /** List commands independently of their bindings and any pending Vim key sequence. */
   _commandPaletteActions(ui) {
     const { owner, scope, sourceWin, win } = ui;
-    const actions = ['showShortcutHelp'];
+    const actions = ['showShortcutHelp', 'openSettings'];
     if (scope === 'normal') {
       // gg/G also work in snapshots, where they scroll to the document boundaries.
       actions.push('openSearch', 'firstPage', 'lastPage', 'scrollTop', 'scrollCenter', 'scrollBottom');
@@ -509,7 +509,7 @@ Object.assign(ZoteroVim, {
   },
 
   /** Own the popup on its originating state so closing a reader also removes it. */
-  _openShortcutHelp(owner, win, sourceWin = null, palette = false) {
+  _openShortcutHelp(owner, win, sourceWin = null, palette = false, settings = false) {
     if (!win?.document || !owner) return;
     const previous = this._shortcutHelpForWindow(win);
     if (previous) { previous.input.focus(); return; }
@@ -519,7 +519,7 @@ Object.assign(ZoteroVim, {
     const sourceDoc = sourceWin.document;
     const note = sourceDoc === owner._contextNoteEditorDoc;
     const scope = owner.reader ? owner.mode : note ? 'noteNormal' : 'main';
-    const ui = { owner, win, doc, sourceWin, sourceDoc, zh, scope, palette,
+    const ui = { owner, win, doc, sourceWin, sourceDoc, zh, scope, palette, settings,
       tabID: win.Zotero_Tabs?.selectedID, focus: sourceDoc.activeElement,
       category: 'all', composing: false, focusing: false, listeners: [], timer: null,
       handledKeys: new WeakSet(),
@@ -535,8 +535,10 @@ Object.assign(ZoteroVim, {
         }
         if (!this._shortcutHelpContextCurrent(ui)) return;
       }
-      ui.rows = palette ? this._commandPaletteRows(ui)
-        : this._compactShortcutHelpRows(this._shortcutHelpRows());
+      if (!settings) {
+        ui.rows = palette ? this._commandPaletteRows(ui)
+          : this._compactShortcutHelpRows(this._shortcutHelpRows());
+      }
       ui.orderedVisual = owner.reader ? this._orderedReaderVisual?.(owner, sourceWin) : null;
       const selection = sourceWin.getSelection?.();
       for (let i = 0; i < (selection?.rangeCount || 0); i++) {
@@ -557,7 +559,8 @@ Object.assign(ZoteroVim, {
         }
       }
       owner._shortcutHelp = ui;
-      this._createShortcutHelp(ui);
+      if (settings) this._createSettings(ui);
+      else this._createShortcutHelp(ui);
       const listen = (target, type, handler) => {
         if (!target?.addEventListener) return;
         target.addEventListener(type, handler, true);
@@ -571,8 +574,12 @@ Object.assign(ZoteroVim, {
       listen(ui.overlay, 'wheel', event => {
         if (!ui.list.contains(event.target)) event.preventDefault();
       });
-      listen(win, 'deactivate', () => this._closeShortcutHelp(owner, false));
-      this._renderShortcutHelp(ui);
+      if (settings) {
+        listen(win, 'resize', () => this._clearSettingsHints(ui));
+      } else {
+        listen(win, 'deactivate', () => this._closeShortcutHelp(owner, false));
+        this._renderShortcutHelp(ui);
+      }
       this._focusShortcutHelp(ui);
       ui.timer = setTimeout(() => {
         ui.timer = null;
@@ -586,16 +593,16 @@ Object.assign(ZoteroVim, {
     }
   },
 
-  _createShortcutHelp(ui) {
+  _createShortcutDialog(ui, titleText, onClose) {
     const h = tag => ui.doc.createElementNS('http://www.w3.org/1999/xhtml', tag);
     const overlay = h('div');
-    overlay.id = 'zv-shortcut-help';
+    overlay.id = ui.settings ? 'zv-settings-overlay' : 'zv-shortcut-help';
     overlay.style.cssText = 'position:fixed;inset:0;z-index:2147483646;background:#0006;'
       + 'display:flex;align-items:center;justify-content:center;padding:24px;box-sizing:border-box;';
     const panel = h('section');
     panel.setAttribute('role', 'dialog');
     panel.setAttribute('aria-modal', 'true');
-    panel.setAttribute('aria-labelledby', 'zv-shortcut-help-title');
+    panel.setAttribute('aria-labelledby', overlay.id + '-title');
     panel.style.cssText = (ui.palette ? 'width:min(640px,100%);' : 'width:min(1100px,100%);')
       + 'max-height:88vh;display:flex;flex-direction:column;'
       + 'background:#1e1e2e;color:#cdd6f4;border:1px solid #45475a;border-radius:12px;'
@@ -606,20 +613,36 @@ Object.assign(ZoteroVim, {
     const heading = h('div');
     heading.style.cssText = 'display:flex;align-items:baseline;flex-wrap:wrap;gap:2px 14px;';
     const title = h('h2');
-    title.id = 'zv-shortcut-help-title';
-    title.textContent = ui.palette ? (ui.zh ? '命令面板' : 'Command palette')
-      : (ui.zh ? '快捷键总览' : 'Keyboard shortcuts');
+    title.id = overlay.id + '-title';
+    title.textContent = titleText;
     title.style.cssText = 'margin:0;font-size:20px;color:#cdd6f4;';
     const subtitle = h('div');
     subtitle.style.cssText = 'color:#a6adc8;font-size:12px;';
     subtitle.textContent = (ui.zh ? '当前：' : 'Current: ') + this._shortcutScope(ui.scope, ui.zh);
-    heading.appendChild(title); heading.appendChild(subtitle);
+    heading.appendChild(title);
+    if (!ui.settings) heading.appendChild(subtitle);
     const close = h('button');
     close.type = 'button'; close.textContent = ui.zh ? '关闭 · Esc' : 'Close · Esc';
     close.style.cssText = 'background:#313244;color:#cdd6f4;border:1px solid #45475a;'
       + 'border-radius:6px;padding:5px 10px;cursor:pointer;';
-    close.addEventListener('click', () => this._closeShortcutHelp(ui.owner));
+    close.addEventListener('click', onClose);
     header.appendChild(heading); header.appendChild(close);
+    overlay.appendChild(panel);
+    overlay.addEventListener('mousedown', event => {
+      if (event.target === overlay) {
+        event.preventDefault();
+        event.stopPropagation();
+        onClose();
+      }
+    });
+    return { overlay, panel, header, close, h };
+  },
+
+  _createShortcutHelp(ui) {
+    const title = ui.palette ? (ui.zh ? '命令面板' : 'Command palette')
+      : (ui.zh ? '快捷键总览' : 'Keyboard shortcuts');
+    const { overlay, panel, header, h } = this._createShortcutDialog(ui, title,
+      () => this._closeShortcutHelp(ui.owner));
     const searchWrap = h('div');
     searchWrap.style.cssText = 'padding:0 18px 8px;flex-shrink:0;';
     const input = h('input');
@@ -687,14 +710,6 @@ Object.assign(ZoteroVim, {
     const sections = ui.palette ? [style, header, searchWrap, list, footer]
       : [style, header, searchWrap, tabs, list, footer];
     for (const node of sections) panel.appendChild(node);
-    overlay.appendChild(panel);
-    overlay.addEventListener('mousedown', event => {
-      if (event.target === overlay) {
-        event.preventDefault();
-        event.stopPropagation();
-        this._closeShortcutHelp(ui.owner);
-      }
-    });
     ui.overlay = overlay; ui.input = input; ui.list = list; ui.count = count;
     (ui.doc.body || ui.doc.documentElement).appendChild(overlay);
   },
@@ -843,6 +858,7 @@ Object.assign(ZoteroVim, {
     ui.handledKeys.add(event);
     event.stopImmediatePropagation();
     if (event.isComposing || ui.composing || event.keyCode === 229) return;
+    if (ui.settings) { this._onSettingsKeyDown(event, ui); return; }
     const key = this._keyString(event);
     if (key === 'escape') {
       event.preventDefault(); this._closeShortcutHelp(ui.owner); return;

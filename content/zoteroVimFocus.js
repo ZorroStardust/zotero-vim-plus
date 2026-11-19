@@ -431,8 +431,15 @@ Object.assign(ZoteroVim, {
   _setReaderFocusCueOwner(state, kind, win = null) {
     const cue = state?._focusCue;
     if (!cue) return;
-    if (kind === 'pdf' || kind === 'outline') state.activePdfWin = win;
-    else state._readerSplitFocus = null;
+    if (kind === 'pdf' || kind === 'outline') {
+      const changedPane = state.activePdfWin !== win;
+      state.activePdfWin = win;
+      if (changedPane && state.mode === 'visual' && !state._statusActive) {
+        this._updateIndicator(state);
+      }
+    } else {
+      state._readerSplitFocus = null;
+    }
     const ir = state.reader?._internalReader;
     const role = ['pdf', 'outline'].includes(kind)
       ? (ir?._secondaryView?._iframeWindow

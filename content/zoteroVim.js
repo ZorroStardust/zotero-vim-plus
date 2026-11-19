@@ -1096,6 +1096,8 @@ var ZoteroVim = {
               };
             }
             if (!sel || sel.isCollapsed) state.selectionParams = null;
+            if (state.mode === 'visual' && !state._statusActive
+                && viewWin === (state.activePdfWin || state.pdfWin)) this._updateIndicator(state);
           } catch (_) {}
         },
         scroll: () => {
@@ -1642,6 +1644,7 @@ var ZoteroVim = {
       'position:fixed', 'bottom:10px', 'right:14px', 'z-index:' + zIndex,
       'font:600 11px/1.5 monospace', 'color:var(--zv-theme-text, #edf0f5)',
       'background:var(--zv-theme-surface, #23262d)', 'padding:2px 8px',
+      'max-width:calc(100% - 28px)', 'box-sizing:border-box', 'overflow-wrap:anywhere',
       'border:1px solid var(--zv-theme-border, #49515e)', 'border-inline-start-width:3px',
       'border-radius:6px', 'box-shadow:0 1px 4px #0003', 'pointer-events:none',
       'display:none', 'user-select:none',
@@ -1776,6 +1779,39 @@ var ZoteroVim = {
     this._updateIndicator(state);
   },
 
+  /** Describe the selection in the active PDF pane and its available actions. */
+  _readerVisualIndicator(state, buffer) {
+    const pdfWin = state.activePdfWin || state.pdfWin;
+    if (!pdfWin) return '';
+    const text = this._readerSelectedText(state, pdfWin);
+    let count = 0;
+    for (const _ of text) count++;
+    const zh = this._isZhLocale();
+    const length = zh ? count + ' 字符' : count + (count === 1 ? ' char' : ' chars');
+    if (!count || buffer) return length;
+
+    const bindings = this.getBindings();
+    const visualKeys = Object.keys(bindings).filter(key => key.startsWith('visual:'));
+    const annotate = visualKeys.some(key => key.startsWith('visual:z')
+      && /^(highlight|underline|addNote)/.test(bindings[key]));
+    const hints = [];
+    for (const [preferred, action, en, cn] of [
+      ['y', 'copySelection', 'Copy', '复制'],
+      ['i', 'addNote', 'Comment', '批注'],
+      ['z', '', 'Annotate', '标注'],
+      ['t', 'translateSelection', 'Translate', '翻译'],
+    ]) {
+      let key = preferred;
+      if (action && bindings['visual:' + preferred] !== action) {
+        key = visualKeys.find(key => bindings[key] === action)?.slice('visual:'.length);
+      }
+      if (key && (action || annotate)) {
+        hints.push((this._shortcutKeyDisplay?.(key) || key) + ' ' + (zh ? cn : en));
+      }
+    }
+    return [length, ...hints].join(' · ');
+  },
+
   /** Refresh the mode indicator text (mode + any pending key buffer). */
   _updateIndicator(state, bufferOverride) {
     if (!state.indicatorEl) return;
@@ -1802,9 +1838,10 @@ var ZoteroVim = {
     const prefix = (state.countBuffer && mode === 'normal') ? state.countBuffer : '';
     const body = state._readerBodyText && (mode === 'visual' || mode === 'cursor')
       ? (this._isZhLocale() ? ' · 正文' : ' BODY') : '';
-    state.indicatorEl.textContent =
-      '-- ' + mode.toUpperCase() + body + ' --' + (prefix || buffer ? '  ' + prefix + buffer : '')
-      + (progress ? '  ·  ' + progress : '');
+    const visual = mode === 'visual' ? this._readerVisualIndicator(state, buffer) : '';
+    const label = '-- ' + mode.toUpperCase() + body + ' --' + (prefix || buffer ? '  ' + prefix + buffer : '')
+      + (visual ? '  ·  ' + visual : '') + (progress ? '  ·  ' + progress : '');
+    if (state.indicatorEl.textContent !== label) state.indicatorEl.textContent = label;
     state.indicatorEl.style.fontWeight = '600';
     const tone = { visual: 'accent', cursor: 'hint', insert: 'success' };
     this._setIndicatorTone(state.indicatorEl, tone[mode] || 'border');

@@ -626,17 +626,31 @@ check('Visual words, lines and character motions project onto the same left-colu
   const f = pdfTextFixture();
   const [, left, right, next] = f.addPage(0, 0, f.double);
   const state = f.start(left, 0, 4);
+  z._updateIndicator = realUpdateIndicator;
+  state.pdfWin = f.pdfWin;
+  state.indicatorEl = { style: {}, textContent: '' };
   z._extendByWord(state, f.pdfWin, 'forward', 2);
   assert.equal(z._readerSelectedText(state, f.pdfWin), 'Left one\nLeft');
   assert.equal(state._orderedVisual.focus.node, next);
   assert.equal(state._orderedVisual.focus.offset, 4);
   assert.equal(f.selection.rangeCount, 2);
   assert(!f.selection.toString().includes(right.data));
+  assert.match(state.indicatorEl.textContent, /13 chars · y Copy · i Comment · z Annotate · t Translate/);
+  z._updateIndicator(state, 'z');
+  assert.match(state.indicatorEl.textContent, /13 chars/);
+  assert.doesNotMatch(state.indicatorEl.textContent, /Copy|Comment|Annotate|Translate/);
   z._extendByChar(state, f.pdfWin, 1);
+  assert.match(state.indicatorEl.textContent, /14 chars/);
   assert.equal(state._orderedVisual.focus.offset, 5);
   z._extendByLine(state, f.pdfWin, 1);
   assert.equal(state._orderedVisual.focus.node.data, 'Left three');
   assert([4, 10].includes(state._orderedVisual.focus.offset));
+  for (const direction of [-1, 1]) {
+    z._extendByLine(state, f.pdfWin, direction);
+    const length = Array.from(z._readerSelectedText(state, f.pdfWin)).length;
+    assert.match(state.indicatorEl.textContent, new RegExp(length + ' chars · y Copy'));
+    assert.ok(!state._statusActive);
+  }
   z._swapVisualEnds(state, f.pdfWin);
   assert.equal(state._orderedVisual.focus.node, left);
   assert(!z._readerSelectedText(state, f.pdfWin).includes('Right'));

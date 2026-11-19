@@ -3486,6 +3486,7 @@ Object.assign(ZoteroVim, {
         { focusNode: focus.node, focusOffset: focus.offset }, state.visualPreferredX);
     }
     this._updateVisualCursor(state, pdfWin);
+    if (state.mode === 'visual') this._updateIndicator(state);
     return true;
   },
 
@@ -3916,9 +3917,7 @@ Object.assign(ZoteroVim, {
       const start = this._readerSnapshotPoint(objectRange.snapshot, objectRange.start);
       const end = this._readerSnapshotPoint(objectRange.snapshot, objectRange.end);
       if (!start || !end) return false;
-      if (!this._applyReaderVisualSelection(state, pdfWin, start, end)) return false;
-      this._showStatus(state, '▶ ' + this._readerSelectedText(state, pdfWin).length + ' chars', 600);
-      return true;
+      return this._applyReaderVisualSelection(state, pdfWin, start, end);
     } catch (e) {
       Zotero.debug('[ZoteroVim] _selectVisualTextObject error: ' + e);
       return false;
@@ -4722,12 +4721,7 @@ Object.assign(ZoteroVim, {
           wordAnchor: this._readerAnchorToken(keys, endpoints.anchor, endpoints.focus) };
       }
       const target = this._lineMoveTarget(doc, node, offset, direction, state.visualPreferredX, keys);
-      if (!target) return;
-      if (target.stopped) {
-        this._showStatus(state, direction > 0 ? '→ document end' : '→ document top', 900);
-        return;
-      }
-      if (!target.node) return;
+      if (!target?.node || target.stopped) return;
       let result = { anchor: endpoints.anchor, focus: { node: target.node, offset: target.offset } };
       let distance = Infinity;
       for (const token of this._readerLineTokens(target.line.source)) {
@@ -4742,11 +4736,8 @@ Object.assign(ZoteroVim, {
         }
       }
       state.visualPreferredX = target.preferredX;
-      if (this._applyReaderVisualSelection(state, pdfWin, result.anchor, result.focus,
-          { keys, wordAnchor: endpoints.wordAnchor, updatePreferredX: false })) {
-        const length = this._readerSelectedText(state, pdfWin).length;
-        this._showStatus(state, '▶ ' + length + ' chars', 400);
-      }
+      this._applyReaderVisualSelection(state, pdfWin, result.anchor, result.focus,
+        { keys, wordAnchor: endpoints.wordAnchor, updatePreferredX: false });
     } catch (e) {
       Zotero.debug('[ZoteroVim] _extendByLine error: ' + e);
     }
@@ -4802,10 +4793,7 @@ Object.assign(ZoteroVim, {
       }
       const node = paragraph.items[direction > 0 ? paragraph.end : paragraph.start].node;
       const offset = direction > 0 ? node.length : Math.max(0, node.data.search(/\S/));
-      if (this._setVisualSelectionFromAnchor(state, pdfWin, node, offset, { keys })) {
-        const length = this._readerSelectedText(state, pdfWin).length;
-        this._showStatus(state, '▶ ' + length + ' chars', 600);
-      }
+      this._setVisualSelectionFromAnchor(state, pdfWin, node, offset, { keys });
     } catch (e) {
       Zotero.debug('[ZoteroVim] _extendByParagraph error: ' + e);
     }
@@ -4930,10 +4918,7 @@ Object.assign(ZoteroVim, {
 
       if (!targetNode) return;
 
-      if (this._setVisualSelectionFromAnchor(state, pdfWin, targetNode, targetOffset)) {
-        const length = this._readerSelectedText(state, pdfWin).length;
-        this._showStatus(state, '▶ ' + length + ' chars', 600);
-      }
+      this._setVisualSelectionFromAnchor(state, pdfWin, targetNode, targetOffset);
     } catch (e) {
       Zotero.debug('[ZoteroVim] _extendBySentence error: ' + e);
     }

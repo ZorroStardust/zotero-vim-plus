@@ -52,10 +52,6 @@ Object.assign(ZoteroVim, {
       _notesListPane: null,
       _notesPreviewPane: null,
       _notesFocusPane: 'list',
-      _notesCurrentList: null,
-      _notesAllList: null,
-      _notesCurrentRows: [],
-      _notesAllRows: [],
       _notesNavRows: [],
       _notesSelected: 0,
       _notesHintBuffer: '',
@@ -5181,15 +5177,31 @@ Object.assign(ZoteroVim, {
   _onMainNotesKeyDown(e, win, winState) {
     if (!winState.notesLayoutOpen) return;
     const keyStr = this._keyString(e);
-    const key = String(e.key || '');
     const focusPane = winState._notesFocusPane || 'list';
+    if (keyStr === 'tab') {
+      e.preventDefault();
+      e.stopPropagation();
+      const stops = winState._notesOverlay.querySelectorAll('[data-notes-focus], button:enabled');
+      const index = Array.from(stops).indexOf(e.target);
+      const next = index < 0 ? (e.shiftKey ? stops.length - 1 : 0)
+        : (index + (e.shiftKey ? -1 : 1) + stops.length) % stops.length;
+      stops[next].focus({ preventScroll: true });
+      return;
+    }
+    if (e.target?.localName === 'button' && (keyStr === 'enter' || keyStr === ' ')) return;
+    if (keyStr === 'ctrl+j' || keyStr === 'ctrl+k') {
+      e.preventDefault();
+      e.stopPropagation();
+      this._mainNotesSwitchSection(win, winState, keyStr === 'ctrl+j' ? 'all' : 'current');
+      return;
+    }
 
     if (focusPane === 'preview') {
       switch (keyStr) {
         case 'escape':
           e.preventDefault();
           e.stopPropagation();
-          this._closeMainNotesLayout(win, winState);
+          this._closeMainNotesLayout(win, winState, true);
           return;
         case 'n':
           e.preventDefault();
@@ -5211,7 +5223,6 @@ Object.assign(ZoteroVim, {
           e.preventDefault();
           e.stopPropagation();
           this._mainNotesSetFocusPane(winState, 'list');
-          this._setMainNotesLayoutStatus(winState, 'Focus list');
           return;
         case 'j':
         case 'arrowdown':
@@ -5269,7 +5280,7 @@ Object.assign(ZoteroVim, {
     if (hintKey) {
       e.preventDefault();
       e.stopPropagation();
-      this._mainNotesSelectByHint(winState, hintKey);
+      this._mainNotesSelectByHint(win, winState, hintKey);
       return;
     }
 
@@ -5277,7 +5288,7 @@ Object.assign(ZoteroVim, {
       case 'escape':
         e.preventDefault();
         e.stopPropagation();
-        this._closeMainNotesLayout(win, winState);
+        this._closeMainNotesLayout(win, winState, true);
         return;
       case 'j':
       case 'arrowdown':
@@ -5296,23 +5307,11 @@ Object.assign(ZoteroVim, {
         e.preventDefault();
         e.stopPropagation();
         this._mainNotesSetFocusPane(winState, 'list');
-        this._setMainNotesLayoutStatus(winState, 'Focus list');
         return;
       case 'ctrl+l':
         e.preventDefault();
         e.stopPropagation();
         this._mainNotesSetFocusPane(winState, 'preview');
-        this._setMainNotesLayoutStatus(winState, 'Focus preview');
-        return;
-      case 'ctrl+j':
-        e.preventDefault();
-        e.stopPropagation();
-        this._mainNotesSwitchSection(win, winState, 'all');
-        return;
-      case 'ctrl+k':
-        e.preventDefault();
-        e.stopPropagation();
-        this._mainNotesSwitchSection(win, winState, 'current');
         return;
       case 'ctrl+d':
         e.preventDefault();
@@ -5350,26 +5349,31 @@ Object.assign(ZoteroVim, {
   },
 
   async _mainNotesCreateAndOpen(win, winState, opts = null) {
+    const overlay = winState._notesOverlay;
+    if (winState._notesCreating === overlay) return;
+    winState._notesCreating = overlay;
     try {
       const usePreviousItem = !!opts?.usePreviousItem;
       const openTarget = (opts?.openTarget === 'tab') ? 'tab' : 'context';
       const createdNoteID = usePreviousItem
         ? await this._createMainPreviousChildNote(win, winState)
-        : await this._createMainCurrentChildNote(win);
+        : await this._createMainCurrentChildNote(win, winState._notesBaseItem);
       if (!createdNoteID) return;
 
       if (openTarget === 'context' && await this._openNoteInReaderContextPane(win, createdNoteID)) {
-        this._closeMainNotesLayout(win, winState);
+        if (winState._notesOverlay === overlay) this._closeMainNotesLayout(win, winState);
         this._mainShowStatus(win, '✓ new child note', 1200);
         return;
       }
 
       await this._openNoteByTarget(win, createdNoteID, { openInWindow: false });
-      this._closeMainNotesLayout(win, winState);
+      if (winState._notesOverlay === overlay) this._closeMainNotesLayout(win, winState);
       this._mainShowStatus(win, '✓ new child note', 1200);
     } catch (e) {
       Zotero.debug('[ZoteroVim] _mainNotesCreateAndOpen error: ' + e);
       this._mainShowStatus(win, '✗ create note failed');
+    } finally {
+      if (winState._notesCreating === overlay) winState._notesCreating = null;
     }
   },
 
@@ -5393,146 +5397,209 @@ Object.assign(ZoteroVim, {
       'width:min(1100px, 92vw);height:min(760px, 88vh);background:var(--zv-theme-surface, #23262d);color:var(--zv-theme-text, #edf0f5);' +
       'border:1px solid var(--zv-theme-border, #49515e);border-radius:10px;overflow:hidden;' +
       'display:flex;flex-direction:column;box-shadow:0 22px 72px rgba(0,0,0,0.62);' +
-      'font:13px/1.45 monospace;color-scheme:var(--zv-theme-scheme, dark);';
+      'font:13px/1.45 system-ui,sans-serif;color-scheme:var(--zv-theme-scheme, dark);';
 
     const header = h('div');
     header.style.cssText =
       'padding:10px 14px;background:var(--zv-theme-control, #2d323b);border-bottom:1px solid var(--zv-theme-border, #49515e);' +
       'display:flex;justify-content:space-between;align-items:center;gap:10px;';
     const title = h('div');
-    title.textContent = 'Notes Layout';
-    title.style.cssText = 'font-weight:700;letter-spacing:0.2px;';
-    const hint = h('div');
-    hint.textContent = 'j/k move  ·  Ctrl+d/u fast  ·  Ctrl+j/k section  ·  Ctrl+h/l list/preview  ·  n/N new  ·  Enter/Shift+Enter open';
-    hint.style.cssText = 'font-size:11px;color:var(--zv-theme-muted, #b3bccb);';
+    title.id = 'zv-notes-layout-title';
+    title.textContent = 'Notes';
+    title.style.cssText = 'font-size:15px;font-weight:700;';
     header.appendChild(title);
-    header.appendChild(hint);
+    modal.setAttribute('role', 'dialog');
+    modal.setAttribute('aria-modal', 'true');
+    modal.setAttribute('aria-labelledby', title.id);
 
     const body = h('div');
-    body.style.cssText = 'display:grid;grid-template-columns:minmax(320px, 38%) 1fr;min-height:0;';
+    body.style.cssText = 'display:grid;grid-template-columns:minmax(0, 36%) minmax(0, 1fr);' +
+      'flex:1;min-height:0;';
 
-    const listPane = h('div');
-    listPane.style.cssText =
-      'display:grid;grid-template-rows:auto minmax(0,1fr) auto minmax(0,1fr);' +
-      'min-height:0;border-right:1px solid var(--zv-theme-border, #49515e);background:var(--zv-theme-recessed, #1b1e24);';
+    const listPane = h('section');
+    const previewPane = h('section');
+    const listStatus = h('div');
+    const previewStatus = h('div');
+    for (const [pane, status] of [[listPane, listStatus], [previewPane, previewStatus]]) {
+      pane.tabIndex = -1;
+      pane.setAttribute('data-notes-focus', '');
+      pane.style.cssText = 'display:flex;flex-direction:column;min-height:0;outline:none;';
+      status.style.cssText = 'padding:6px 12px;font-weight:600;';
+      pane.appendChild(status);
+    }
+    listPane.style.borderRight = '1px solid var(--zv-theme-border, #49515e)';
+    listPane.setAttribute('aria-label', 'Note list');
+    previewPane.setAttribute('aria-label', 'Note preview');
 
-    const currentWrap = h('section');
-    currentWrap.style.cssText = 'display:contents;';
-    const currentHead = h('div');
-    currentHead.textContent = 'Current item notes';
-    currentHead.style.cssText =
-      'padding:8px 12px;background:var(--zv-theme-control, #2d323b);color:var(--zv-theme-accent, #a7c3ed);font-weight:700;' +
-      'border-bottom:1px solid var(--zv-theme-border, #49515e);';
-    const currentList = h('div');
-    currentList.style.cssText = 'overflow:auto;padding:8px 8px 10px 8px;';
+    const controls = h('div');
+    controls.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px;padding:4px 8px;';
+    const makeButton = (label, action) => {
+      const button = h('button');
+      button.type = 'button';
+      button.textContent = label;
+      button.style.cssText = 'font:inherit;color:inherit;background:var(--zv-theme-control, #2d323b);' +
+        'border:1px solid var(--zv-theme-border, #49515e);border-radius:4px;padding:3px 7px;' +
+        'cursor:pointer;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+      button.addEventListener('click', action);
+      return button;
+    };
+    const scopeButtons = {
+      current: makeButton('Current item', () => this._mainNotesSwitchSection(win, winState, 'current')),
+      all: makeButton('All notes', () => this._mainNotesSwitchSection(win, winState, 'all')),
+    };
+    scopeButtons.current.title = 'Current item · Ctrl+k';
+    scopeButtons.all.title = 'All notes · Ctrl+j';
+    controls.append(scopeButtons.current, scopeButtons.all);
 
-    const allWrap = h('section');
-    allWrap.style.cssText = 'display:contents;';
-    const allHead = h('div');
-    allHead.textContent = 'All notes in library';
-    allHead.style.cssText =
-      'padding:8px 12px;background:var(--zv-theme-control, #2d323b);color:var(--zv-theme-accent, #a7c3ed);font-weight:700;' +
-      'border-top:1px solid var(--zv-theme-border, #49515e);border-bottom:1px solid var(--zv-theme-border, #49515e);';
-    const allList = h('div');
-    allList.style.cssText = 'overflow:auto;padding:8px 8px 10px 8px;';
+    const list = h('div');
+    list.style.cssText = 'flex:1;min-height:0;overflow:auto;padding:4px 8px;';
+    listPane.append(controls, list);
 
-    const previewPane = h('div');
-    previewPane.style.cssText = 'overflow:auto;padding:14px 16px 16px 16px;background:var(--zv-theme-surface, #23262d);';
+    const preview = h('div');
+    preview.style.cssText = 'flex:1;min-height:0;overflow:auto;padding:16px 20px;';
+    previewPane.appendChild(preview);
+    body.append(listPane, previewPane);
 
-    currentWrap.appendChild(currentHead);
-    currentWrap.appendChild(currentList);
-    allWrap.appendChild(allHead);
-    allWrap.appendChild(allList);
-    listPane.appendChild(currentWrap);
-    listPane.appendChild(allWrap);
+    const makeKey = (label) => {
+      const key = h('kbd');
+      key.style.cssText = 'font:11px/1.4 monospace;white-space:nowrap;' +
+        'padding:1px 4px;border-radius:3px;background:var(--zv-theme-recessed, #1b1e24);';
+      key.textContent = label;
+      return key;
+    };
 
-    body.appendChild(listPane);
-    body.appendChild(previewPane);
+    const createControls = h('div');
+    createControls.style.cssText = 'display:flex;align-items:center;justify-content:flex-end;' +
+      'flex-wrap:wrap;gap:5px;';
+    createControls.setAttribute('role', 'group');
+    createControls.setAttribute('aria-label', 'New note');
+    const createLabel = h('span');
+    createLabel.textContent = 'New note';
+    createLabel.style.cssText = 'font-size:12px;color:var(--zv-theme-muted, #b3bccb);';
+    createControls.appendChild(createLabel);
 
-    modal.appendChild(header);
-    modal.appendChild(body);
+    const makeCreateControl = (label, shortcut, options) => {
+      const wrapper = h('span');
+      const button = makeButton(label, () => {
+        void this._mainNotesCreateAndOpen(win, winState, options);
+      });
+      button.style.cssText += 'display:inline-flex;align-items:center;gap:5px;font-size:12px;';
+      button.appendChild(makeKey(shortcut));
+      wrapper.appendChild(button);
+      createControls.appendChild(wrapper);
+      return { wrapper, button };
+    };
+    const createForSelected = makeCreateControl('Note’s parent', 'n', {
+      usePreviousItem: true, openTarget: 'context',
+    });
+    const createForCurrent = makeCreateControl('Current item', 'N', {
+      usePreviousItem: false, openTarget: 'tab',
+    });
+    header.appendChild(createControls);
+
+    const footer = h('div');
+    footer.style.cssText = 'display:flex;align-items:center;flex-wrap:wrap;gap:4px 14px;' +
+      'padding:7px 12px;border-top:1px solid var(--zv-theme-border, #49515e);' +
+      'font-size:11px;color:var(--zv-theme-muted, #b3bccb);';
+    const addShortcut = (shortcut, label, tooltip = '') => {
+      const group = h('span');
+      group.style.cssText = 'display:inline-flex;align-items:center;gap:4px;white-space:nowrap;';
+      group.title = tooltip;
+      const key = makeKey(shortcut);
+      const description = h('span');
+      description.textContent = label;
+      group.append(key, description);
+      footer.appendChild(group);
+      return { key, description };
+    };
+    const move = addShortcut('j/k', 'Select');
+    const pane = addShortcut('Ctrl+l', 'Preview');
+    addShortcut('Ctrl+j/k', 'Switch scope', 'Ctrl+j: All notes · Ctrl+k: Current item');
+    addShortcut('Enter', 'Open', 'Open in sidebar when available, otherwise in a tab');
+    addShortcut('Shift+Enter', 'Open in tab');
+    addShortcut('Esc', 'Close');
+    const status = h('span');
+    status.setAttribute('role', 'status');
+    status.style.color = 'var(--zv-theme-accent, #a7c3ed)';
+    status.hidden = true;
+    footer.appendChild(status);
+    modal.append(header, body, footer);
     overlay.appendChild(modal);
-    root.appendChild(overlay);
 
     overlay.addEventListener('mousedown', (ev) => {
-      if (ev.target === overlay) this._closeMainNotesLayout(win, winState);
+      if (ev.target === overlay) {
+        ev.preventDefault();
+        this._closeMainNotesLayout(win, winState, true);
+      }
     });
+    listPane.addEventListener('focusin', () => this._mainNotesSetFocusPane(winState, 'list', false));
+    previewPane.addEventListener('focusin', () => this._mainNotesSetFocusPane(winState, 'preview', false));
+    previewPane.addEventListener('mousedown', () => this._mainNotesSetFocusPane(winState, 'preview'));
 
+    const focusedDoc = Services.focus?.focusedWindow?.document;
+    winState._notesReturnFocus = focusedDoc?.activeElement || doc.activeElement;
+    root.appendChild(overlay);
     winState.notesLayoutOpen = true;
     winState._notesOverlay = overlay;
-    winState._notesStatusEl = hint;
+    winState._notesStatusEl = status;
+    winState._notesShortcutLabels = { move, pane };
     winState._notesListPane = listPane;
     winState._notesPreviewPane = previewPane;
-    winState._notesFocusPane = 'list';
-    winState._notesCurrentList = currentList;
-    winState._notesAllList = allList;
-    winState._notesCurrentRows = [];
-    winState._notesAllRows = [];
+    winState._notesPaneLabels = { list: listStatus, preview: previewStatus };
+    winState._notesList = list;
+    winState._notesPreview = preview;
+    winState._notesScopeButtons = scopeButtons;
+    winState._notesCreateButtons = { selected: createForSelected, current: createForCurrent };
+    winState._notesScope = 'current';
+    winState._notesScopes = {
+      current: { rows: [], selected: 0, scrollTop: 0 },
+      all: { rows: [], selected: 0, scrollTop: 0 },
+    };
     winState._notesNavRows = [];
     winState._notesSelected = 0;
     this._clearMainNotesHintBuffer(winState, false);
     this._clearMainNotesCmdBuffer(winState, false);
+    winState._notesBaseItem = this._getMainCurrentBaseItem(win);
+    winState._notesLoading = true;
+    this._refreshMainNotesLayout(win, winState);
     this._mainNotesSetFocusPane(winState, 'list');
 
-    this._renderMainNotesSection(currentList, [{
-      title: 'Loading current item notes...',
-      text: '',
-      meta: '',
-    }], { loading: true });
-    this._renderMainNotesSection(allList, [{
-      title: 'Loading all notes...',
-      text: '',
-      meta: '',
-    }], { loading: true });
-    this._renderMainNotesPreview(winState._notesPreviewPane, null, {
-      loading: true,
-      message: 'Loading note preview...',
-    });
-
-    try { overlay.focus?.(); } catch (_) {}
-
     try {
-      const payload = await this._collectMainNotesRows(win);
-      if (!winState.notesLayoutOpen) return;
-      winState._notesCurrentRows = Array.from(payload.current || []);
-      winState._notesAllRows = Array.from(payload.all || []);
+      const payload = await this._collectMainNotesRows(win, winState._notesBaseItem);
+      if (winState._notesOverlay !== overlay) return;
+      winState._notesLoading = false;
+      winState._notesScopes.current.rows = payload.current;
+      winState._notesScopes.all.rows = payload.all;
       this._refreshMainNotesLayout(win, winState);
       if (payload.filteredMachineCount > 0) {
         this._mainShowStatus(win, '→ hidden ' + payload.filteredMachineCount + ' machine notes', 1800);
       }
     } catch (e) {
       Zotero.debug('[ZoteroVim] _openMainNotesLayout error: ' + e);
-      if (!winState.notesLayoutOpen) return;
-      winState._notesCurrentRows = [];
-      winState._notesAllRows = [];
-      this._renderMainNotesSection(currentList, [], {
-        emptyMessage: 'Failed to load current item notes.',
-      });
-      this._renderMainNotesSection(allList, [], {
-        emptyMessage: 'Failed to load library notes.',
-      });
-      this._renderMainNotesPreview(winState._notesPreviewPane, null, {
-        message: 'Failed to load note preview.',
-      });
-      this._mainShowStatus(win, '✗ failed to load notes');
+      if (winState._notesOverlay !== overlay) return;
+      winState._notesLoading = false;
+      winState._notesLoadError = true;
+      this._refreshMainNotesLayout(win, winState);
     }
   },
 
   _notesLayoutHintAlphabet() {
-    return this._readerOutlineExplorerHintAlphabet();
+    // Lowercase n always creates a note in this dialog.
+    return this._readerOutlineExplorerHintAlphabet().replace('n', '');
   },
 
   _buildMainNotesHints(count) {
     const alphabet = this._notesLayoutHintAlphabet();
     const base = alphabet.length;
-    if (count <= base) return alphabet.slice(0, count).split('');
-    const hints = [];
-    for (let i = 0; i < count; i++) {
-      const first = Math.floor(i / base);
-      const second = i % base;
-      hints.push(alphabet[first] + alphabet[second]);
-    }
-    return hints;
+    const width = Math.max(1, Math.ceil(Math.log(Math.max(1, count)) / Math.log(base)));
+    return Array.from({ length: count }, (_, index) => {
+      let hint = '';
+      for (let i = 0; i < width; i++) {
+        hint = alphabet[index % base] + hint;
+        index = Math.floor(index / base);
+      }
+      return hint;
+    });
   },
 
   _mainNotesHintKey(event) {
@@ -5543,31 +5610,43 @@ Object.assign(ZoteroVim, {
 
   _setMainNotesLayoutStatus(winState, text = null) {
     if (!winState?._notesStatusEl) return;
-    winState._notesStatusEl.textContent = text ||
-      'j/k move  ·  Ctrl+d/u fast  ·  Ctrl+j/k section  ·  Ctrl+h/l list/preview  ·  n/N new  ·  Enter/Shift+Enter open';
+    const preview = winState._notesFocusPane === 'preview';
+    const { move, pane } = winState._notesShortcutLabels;
+    move.description.textContent = preview ? 'Scroll' : 'Select';
+    pane.key.textContent = preview ? 'Ctrl+h' : 'Ctrl+l';
+    pane.description.textContent = preview ? 'List' : 'Preview';
+    winState._notesStatusEl.textContent = text || '';
+    winState._notesStatusEl.hidden = !text;
   },
 
-  _mainNotesSetFocusPane(winState, pane) {
-    const focusPane = pane === 'preview' ? 'preview' : 'list';
-    winState._notesFocusPane = focusPane;
-    const listPane = winState._notesListPane;
-    const previewPane = winState._notesPreviewPane;
-    if (listPane) {
-      listPane.style.boxShadow = focusPane === 'list' ? 'inset 0 0 0 1px var(--zv-theme-accent, rgba(98,156,236,0.75))' : 'none';
+  _mainNotesSetFocusPane(winState, pane, moveFocus = true) {
+    const changed = winState._notesFocusPane !== pane;
+    winState._notesFocusPane = pane;
+    for (const [name, label] of Object.entries(winState._notesPaneLabels)) {
+      const active = name === pane;
+      label.textContent = (name === 'list' ? 'List' : 'Preview') + (active ? ' · Keyboard focus' : '');
+      label.style.color = active ? 'var(--zv-theme-accent, #a7c3ed)' : 'var(--zv-theme-muted, #b3bccb)';
+      label.style.background = active ? 'var(--zv-theme-selected, #363f50)' : '';
     }
-    if (previewPane) {
-      previewPane.style.boxShadow = focusPane === 'preview' ? 'inset 0 0 0 1px var(--zv-theme-accent, rgba(98,156,236,0.75))' : 'none';
+    if (changed) {
+      this._clearMainNotesHintBuffer(winState, false);
+      this._clearMainNotesCmdBuffer(winState, false);
+    }
+    this._setMainNotesLayoutStatus(winState);
+    if (moveFocus) {
+      const target = pane === 'list' ? winState._notesListPane : winState._notesPreviewPane;
+      target.focus({ preventScroll: true });
     }
   },
 
   _mainNotesPreviewStep(winState) {
-    const el = winState?._notesPreviewPane;
+    const el = winState?._notesPreview;
     if (!el) return 240;
     return Math.max(120, Math.floor((el.clientHeight || 480) * 0.55));
   },
 
   _mainNotesScrollPreview(winState, delta) {
-    const el = winState?._notesPreviewPane;
+    const el = winState?._notesPreview;
     if (!el || !delta) return;
     try { el.scrollBy({ top: delta, behavior: 'auto' }); } catch (_) { el.scrollTop += delta; }
   },
@@ -5587,75 +5666,81 @@ Object.assign(ZoteroVim, {
   },
 
   _refreshMainNotesLayout(win, winState) {
-    const currentRows = Array.from(winState._notesCurrentRows || []);
-    const allRows = Array.from(winState._notesAllRows || []);
-    const navRows = [];
-    for (const row of currentRows) navRows.push({ section: 'current', row });
-    for (const row of allRows) navRows.push({ section: 'all', row });
-    winState._notesNavRows = navRows;
-    if (!navRows.length) {
-      winState._notesSelected = 0;
-      this._renderMainNotesSection(winState._notesCurrentList, currentRows, {
-        emptyMessage: 'No notes under current item.',
+    const section = winState._notesScope;
+    const scope = winState._notesScopes[section];
+    const list = winState._notesList;
+    const rowsChanged = winState._notesRenderedRows !== scope.rows;
+    if (rowsChanged) {
+      winState._notesRenderedRows = scope.rows;
+      winState._notesNavRows = scope.rows;
+      const hints = this._buildMainNotesHints(scope.rows.length);
+      this._renderMainNotesSection(list, scope.rows, {
+        hints,
+        showParent: section === 'all',
+        emptyMessage: winState._notesLoading ? 'Loading notes…' :
+          (section === 'current' ? 'No notes under current item.' : 'No notes found in library.'),
+        onPick: (index) => {
+          winState._notesSelected = index;
+          this._mainNotesSetFocusPane(winState, 'list');
+          this._refreshMainNotesLayout(win, winState);
+        },
+        onOpen: () => this._mainNotesOpenSelected(win, winState),
       });
-      this._renderMainNotesSection(winState._notesAllList, allRows, {
-        emptyMessage: 'No notes found in library.',
-      });
-      this._renderMainNotesPreview(winState._notesPreviewPane, null, {
-        message: 'No note selected.',
-      });
-      return;
+      for (const [name, button] of Object.entries(winState._notesScopeButtons)) {
+        const active = name === section;
+        button.setAttribute('aria-pressed', String(active));
+        button.style.color = active ? 'var(--zv-theme-accent, #a7c3ed)' : '';
+        button.style.fontWeight = active ? '700' : '';
+        button.style.borderColor = active ? 'var(--zv-theme-accent, #a7c3ed)' : '';
+      }
+    }
+    if (winState._notesLoadError) {
+      this._renderMainNotesSection(list, [], { emptyMessage: 'Failed to load notes.' });
     }
 
-    winState._notesSelected = Math.max(0, Math.min(winState._notesSelected || 0, navRows.length - 1));
-    const hints = this._buildMainNotesHints(navRows.length);
-    const hintByID = new Map();
-    const selectedID = navRows[winState._notesSelected]?.row?.id;
-    const selectedEntry = navRows[winState._notesSelected] || null;
-
-    for (let i = 0; i < navRows.length; i++) {
-      const id = navRows[i]?.row?.id;
-      if (!id) continue;
-      hintByID.set(id, hints[i] || '');
+    const selected = scope.rows[winState._notesSelected];
+    const selectedEl = selected ? list.children[winState._notesSelected] : null;
+    const previousEl = list.querySelector('[aria-current="true"]');
+    if (previousEl && previousEl !== selectedEl) {
+      previousEl.removeAttribute('aria-current');
+      previousEl.style.background = '';
+      previousEl.style.borderLeftColor = 'transparent';
     }
+    if (selectedEl) {
+      selectedEl.setAttribute('aria-current', 'true');
+      selectedEl.style.background = 'var(--zv-theme-selected, #363f50)';
+      selectedEl.style.borderLeftColor = 'var(--zv-theme-accent, #a7c3ed)';
+      if (!rowsChanged) selectedEl.scrollIntoView({ block: 'nearest' });
+    }
+    if (rowsChanged) list.scrollTop = scope.scrollTop;
 
-    this._renderMainNotesSection(winState._notesCurrentList, currentRows, {
-      emptyMessage: 'No notes under current item.',
-      selectedID,
-      hintByID,
-      onPick: (rowID) => {
-        const idx = navRows.findIndex(entry => entry.row?.id === rowID);
-        if (idx >= 0) {
-          winState._notesSelected = idx;
-          this._refreshMainNotesLayout(win, winState);
-        }
-      },
-      onOpen: async (rowID) => {
-        const idx = navRows.findIndex(entry => entry.row?.id === rowID);
-        if (idx >= 0) winState._notesSelected = idx;
-        await this._mainNotesOpenSelected(win, winState);
-      },
-    });
-
-    this._renderMainNotesSection(winState._notesAllList, allRows, {
-      emptyMessage: 'No notes found in library.',
-      selectedID,
-      hintByID,
-      onPick: (rowID) => {
-        const idx = navRows.findIndex(entry => entry.row?.id === rowID);
-        if (idx >= 0) {
-          winState._notesSelected = idx;
-          this._refreshMainNotesLayout(win, winState);
-        }
-      },
-      onOpen: async (rowID) => {
-        const idx = navRows.findIndex(entry => entry.row?.id === rowID);
-        if (idx >= 0) winState._notesSelected = idx;
-        await this._mainNotesOpenSelected(win, winState);
-      },
-    });
-
-    this._renderMainNotesPreview(winState._notesPreviewPane, selectedEntry, null);
+    const preview = winState._notesPreview;
+    if (rowsChanged || winState._notesPreviewRow !== selected || winState._notesLoadError) {
+      winState._notesPreviewRow = selected;
+      this._renderMainNotesPreview(preview, selected, {
+        message: winState._notesLoadError ? 'Failed to load note preview.' :
+          (winState._notesLoading ? 'Loading note preview…' : 'No note selected.'),
+      });
+      preview.scrollTop = 0;
+    }
+    const currentItem = winState._notesBaseItem;
+    const currentTitle = currentItem && !currentItem.isNote?.() && !currentItem.isAttachment?.()
+      ? currentItem.getDisplayTitle?.() || currentItem.getField?.('title') || 'Current item'
+      : '';
+    const buttons = winState._notesCreateButtons;
+    for (const [{ button, wrapper }, title, location, unavailable] of [
+      [buttons.selected, selected?.parentTitle, 'sidebar when available',
+        'Select a note with a parent item to create a sibling note'],
+      [buttons.current, currentTitle, 'tab',
+        'Open a reader or select a parent item to create a child note'],
+    ]) {
+      button.disabled = !title;
+      button.style.opacity = title ? '' : '0.55';
+      button.style.cursor = title ? 'pointer' : 'default';
+      wrapper.title = title ? 'New note under ' + title + ' · Open in ' + location : unavailable;
+      button.setAttribute('aria-label', wrapper.title);
+    }
+    this._setMainNotesLayoutStatus(winState);
   },
 
   _mainNotesMoveSelection(win, winState, direction, step) {
@@ -5669,26 +5754,15 @@ Object.assign(ZoteroVim, {
   },
 
   _mainNotesSwitchSection(win, winState, section) {
-    const rows = winState._notesNavRows || [];
-    if (!rows.length) return;
-    this._clearMainNotesHintBuffer(winState, false);
-    this._clearMainNotesCmdBuffer(winState, false);
-
-    const current = rows[winState._notesSelected];
-    if (current?.section === section) return;
-
-    const targetRows = rows.filter(r => r.section === section);
-    if (!targetRows.length) return;
-
-    const sameSectionRows = rows.filter(r => r.section === (current?.section || 'current'));
-    const localIndex = Math.max(0, sameSectionRows.findIndex(r => r.row?.id === current?.row?.id));
-    const target = targetRows[Math.min(localIndex, targetRows.length - 1)];
-    const nextIndex = rows.findIndex(r => r.row?.id === target.row?.id);
-    if (nextIndex >= 0) {
-      winState._notesSelected = nextIndex;
-      this._mainNotesSetFocusPane(winState, 'list');
+    const scope = winState._notesScopes[winState._notesScope];
+    if (winState._notesScope !== section) {
+      scope.selected = winState._notesSelected;
+      scope.scrollTop = winState._notesList.scrollTop;
+      winState._notesScope = section;
+      winState._notesSelected = winState._notesScopes[section].selected;
       this._refreshMainNotesLayout(win, winState);
     }
+    this._mainNotesSetFocusPane(winState, 'list');
   },
 
   _mainNotesFastStep(winState) {
@@ -5696,7 +5770,7 @@ Object.assign(ZoteroVim, {
     return Math.max(5, Math.floor(total / 10) || 10);
   },
 
-  _mainNotesSelectByHint(winState, key) {
+  _mainNotesSelectByHint(win, winState, key) {
     const rows = winState._notesNavRows || [];
     if (!rows.length) return;
 
@@ -5709,6 +5783,7 @@ Object.assign(ZoteroVim, {
     if (!matches.length) {
       this._clearMainNotesHintBuffer(winState, false);
       this._setMainNotesLayoutStatus(winState, 'Hint not found');
+      winState._notesHintTimer = setTimeout(() => this._clearMainNotesHintBuffer(winState), 1200);
       return;
     }
 
@@ -5720,7 +5795,7 @@ Object.assign(ZoteroVim, {
     if (exact) {
       winState._notesSelected = exact.idx;
       this._clearMainNotesHintBuffer(winState, false);
-      this._setMainNotesLayoutStatus(winState, 'Selected ' + exact.hint + '  ·  Enter open');
+      this._refreshMainNotesLayout(win, winState);
     } else {
       this._setMainNotesLayoutStatus(winState, 'Hint: ' + buffer);
     }
@@ -5729,7 +5804,7 @@ Object.assign(ZoteroVim, {
   async _mainNotesOpenSelected(win, winState, opts = null) {
     const rows = winState._notesNavRows || [];
     if (!rows.length) return;
-    const selected = rows[winState._notesSelected]?.row;
+    const selected = rows[winState._notesSelected];
     const noteID = selected?.id;
     if (!noteID) return;
     const openTarget = (opts?.openTarget === 'tab') ? 'tab' : 'context';
@@ -5765,16 +5840,17 @@ Object.assign(ZoteroVim, {
   },
 
   _getMainCurrentBaseItem(win) {
-    const selected = Array.from(win?.ZoteroPane?.getSelectedItems?.() || []);
-    let currentBaseItem = selected[0] || null;
+    const tabID = win?.Zotero_Tabs?.selectedID;
+    const reader = tabID ? Zotero.Reader?.getByTabID?.(tabID) : null;
+    const selected = win?.ZoteroPane?.getSelectedItems?.() || [];
+    let currentBaseItem = (reader?.itemID && Zotero.Items.get(reader.itemID)) || selected[0];
     if (currentBaseItem?.isAttachment?.() && currentBaseItem.parentItemID) {
       currentBaseItem = Zotero.Items.get(currentBaseItem.parentItemID) || currentBaseItem;
     }
     return currentBaseItem || null;
   },
 
-  async _createMainCurrentChildNote(win) {
-    const currentBaseItem = this._getMainCurrentBaseItem(win);
+  async _createMainCurrentChildNote(win, currentBaseItem) {
     if (!currentBaseItem) {
       this._mainShowStatus(win, '✗ no current item selected');
       return null;
@@ -5807,19 +5883,24 @@ Object.assign(ZoteroVim, {
   _getMainNotesSelectedBaseItem(winState) {
     try {
       const rows = winState?._notesNavRows || [];
-      const selected = rows[winState?._notesSelected]?.row;
+      const selected = rows[winState?._notesSelected];
       const noteID = selected?.id;
       if (!noteID) return null;
       const note = Zotero.Items.get(noteID);
       if (!note?.isNote?.()) return null;
-      let baseItem = note.parentID ? Zotero.Items.get(note.parentID) : null;
-      if (baseItem?.isAttachment?.() && baseItem.parentItemID) {
-        baseItem = Zotero.Items.get(baseItem.parentItemID) || baseItem;
-      }
-      return baseItem || null;
+      return this._getMainNotesParentItem(note);
     } catch (_) {
       return null;
     }
+  },
+
+  /** Resolve the parent used for the note's source label and sibling creation. */
+  _getMainNotesParentItem(note) {
+    let item = note.parentID ? Zotero.Items.get(note.parentID) : null;
+    if (item?.isAttachment?.() && item.parentItemID) {
+      item = Zotero.Items.get(item.parentItemID) || item;
+    }
+    return item && !item.isNote?.() && !item.isAttachment?.() ? item : null;
   },
 
   async _createMainPreviousChildNote(win, winState) {
@@ -5848,8 +5929,8 @@ Object.assign(ZoteroVim, {
     }
   },
 
-  async _collectMainNotesRows(win) {
-    const rowsFromNotes = (notes, label = '', opts = null) => {
+  async _collectMainNotesRows(win, currentBaseItem) {
+    const rowsFromNotes = (notes, opts = null) => {
       const out = [];
       let filteredMachineCount = 0;
       for (const note of notes) {
@@ -5862,18 +5943,19 @@ Object.assign(ZoteroVim, {
           filteredMachineCount++;
           continue;
         }
+        const parent = this._getMainNotesParentItem(note);
+        const parentTitle = parent && (parent.getDisplayTitle?.() || parent.getField?.('title') || 'Untitled item');
         out.push({
           id: note.id,
+          parentTitle,
           title,
           text: noteText || '(empty)',
-          meta: label || (tags.length ? ('tags: ' + tags.slice(0, 4).join(', ')) : ''),
+          meta: parentTitle || (tags.length ? ('tags: ' + tags.slice(0, 4).join(', ')) : ''),
           dateModified: String(note.dateModified || ''),
         });
       }
       return { rows: out, filteredMachineCount };
     };
-
-    const currentBaseItem = this._getMainCurrentBaseItem(win);
 
     let currentNotes = [];
     if (currentBaseItem?.isNote?.()) {
@@ -5884,10 +5966,7 @@ Object.assign(ZoteroVim, {
         .filter(Boolean);
     }
 
-    const currentLabel = currentBaseItem
-      ? ((currentBaseItem.getDisplayTitle?.() || currentBaseItem.getField?.('title') || '').trim() || 'Current item')
-      : '';
-    const currentRows = rowsFromNotes(currentNotes, currentLabel ? ('from: ' + currentLabel) : '').rows;
+    const currentRows = rowsFromNotes(currentNotes).rows;
 
     const libID = Zotero.Libraries.userLibraryID;
     await Zotero.Schema.schemaUpdatePromise;
@@ -5896,7 +5975,7 @@ Object.assign(ZoteroVim, {
     s.addCondition('itemType', 'is', 'note');
     const noteIDs = await s.search();
     const allNotes = Zotero.Items.get(noteIDs).filter(item => item?.isNote?.() && !item.deleted);
-    const allNoteRows = rowsFromNotes(allNotes, '', { hideMachineRecords: true });
+    const allNoteRows = rowsFromNotes(allNotes, { hideMachineRecords: true });
     const allRows = allNoteRows.rows
       .sort((a, b) => (Date.parse(b.dateModified) || 0) - (Date.parse(a.dateModified) || 0))
       .slice(0, 400);
@@ -6043,14 +6122,6 @@ Object.assign(ZoteroVim, {
     const H = 'http://www.w3.org/1999/xhtml';
     const h = (tag) => doc.createElementNS(H, tag);
 
-    if (opts?.loading) {
-      const loading = h('div');
-      loading.style.cssText = 'padding:10px;color:var(--zv-theme-muted, #b3bccb);';
-      loading.textContent = rows?.[0]?.title || 'Loading...';
-      container.appendChild(loading);
-      return;
-    }
-
     if (!rows?.length) {
       const empty = h('div');
       empty.style.cssText = 'padding:10px;color:var(--zv-theme-muted, #b3bccb);';
@@ -6060,51 +6131,44 @@ Object.assign(ZoteroVim, {
     }
 
     const frag = doc.createDocumentFragment();
-    for (const row of rows) {
-      const card = h('article');
-      const isSelected = opts?.selectedID && row.id === opts.selectedID;
-      const hint = opts?.hintByID?.get?.(row.id) || '';
-      card.style.cssText =
-        'border:1px solid ' + (isSelected ? 'var(--zv-theme-accent, #a7c3ed)' : 'var(--zv-theme-border, #49515e)') + ';' +
-        'background:' + (isSelected ? 'var(--zv-theme-selected, #363f50)' : 'var(--zv-theme-recessed, #1b1e24)') + ';border-radius:6px;' +
-        'padding:6px 8px;margin:0 0 6px 0;';
-      card.tabIndex = -1;
-      card.dataset.noteId = String(row.id || '');
+    rows.forEach((row, index) => {
+      const item = h('div');
+      item.style.cssText = 'display:flex;align-items:baseline;gap:8px;cursor:pointer;' +
+        'padding:5px 7px;border-left:2px solid transparent;border-radius:3px;';
 
-      const t = h('div');
-      t.style.cssText = 'display:flex;align-items:center;gap:8px;font-weight:700;color:var(--zv-theme-text, #edf0f5);';
+      const hint = opts?.hints?.[index];
       if (hint) {
-        const badge = h('span');
-        badge.style.cssText =
-          'display:inline-block;min-width:20px;padding:0 5px;border-radius:4px;' +
-          'background:var(--zv-theme-hint, #e5c58e);color:var(--zv-theme-on-hint, #2c251b);' +
-          'border:1px solid var(--zv-theme-hint-border, #a88f66);font-size:11px;line-height:1.6;text-align:center;';
-        badge.textContent = hint;
-        t.appendChild(badge);
+        const code = h('kbd');
+        code.style.cssText = 'min-width:2ch;color:var(--zv-theme-muted, #b3bccb);font-size:11px;';
+        code.textContent = hint;
+        item.appendChild(code);
       }
-      const titleText = h('span');
-      titleText.style.cssText = 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
-      titleText.textContent = row.title || 'Untitled note';
-      t.appendChild(titleText);
 
-      card.appendChild(t);
-      card.addEventListener('click', () => {
-        if (typeof opts?.onPick === 'function') opts.onPick(row.id);
-      });
-      card.addEventListener('dblclick', () => {
-        if (typeof opts?.onOpen === 'function') void opts.onOpen(row.id);
-      });
-      frag.appendChild(card);
-    }
+      const text = h('div');
+      text.style.minWidth = '0';
+      const title = h('div');
+      title.style.cssText = 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+      title.textContent = row.title || 'Untitled note';
+      item.title = title.textContent;
+      text.appendChild(title);
+      if (opts?.showParent) {
+        const parent = h('div');
+        parent.style.cssText = title.style.cssText +
+          'font-size:11px;color:var(--zv-theme-muted, #b3bccb);';
+        parent.textContent = row.parentTitle || 'Standalone note';
+        item.title += '\n' + parent.textContent;
+        text.appendChild(parent);
+      }
+
+      item.appendChild(text);
+      item.addEventListener('click', () => opts?.onPick?.(index));
+      item.addEventListener('dblclick', () => void opts?.onOpen?.());
+      frag.appendChild(item);
+    });
     container.appendChild(frag);
-
-    if (opts?.selectedID) {
-      const selectedEl = container.querySelector('article[data-note-id="' + opts.selectedID + '"]');
-      selectedEl?.scrollIntoView?.({ block: 'nearest' });
-    }
   },
 
-  _renderMainNotesPreview(container, selectedEntry, opts = null) {
+  _renderMainNotesPreview(container, row, opts = null) {
     if (!container) return;
     while (container.firstChild) container.removeChild(container.firstChild);
 
@@ -6112,15 +6176,6 @@ Object.assign(ZoteroVim, {
     const H = 'http://www.w3.org/1999/xhtml';
     const h = (tag) => doc.createElementNS(H, tag);
 
-    if (opts?.loading) {
-      const loading = h('div');
-      loading.style.cssText = 'padding:12px;color:var(--zv-theme-muted, #b3bccb);';
-      loading.textContent = opts.message || 'Loading preview...';
-      container.appendChild(loading);
-      return;
-    }
-
-    const row = selectedEntry?.row || null;
     if (!row) {
       const empty = h('div');
       empty.style.cssText = 'padding:12px;color:var(--zv-theme-muted, #b3bccb);';
@@ -6128,12 +6183,6 @@ Object.assign(ZoteroVim, {
       container.appendChild(empty);
       return;
     }
-
-    const section = h('div');
-    section.style.cssText =
-      'display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;' +
-      'border:1px solid var(--zv-theme-border, #49515e);color:var(--zv-theme-accent, #a7c3ed);background:var(--zv-theme-control, #2d323b);margin-bottom:10px;';
-    section.textContent = selectedEntry.section === 'current' ? 'Current item note' : 'All notes';
 
     const title = h('h3');
     title.style.cssText = 'margin:0 0 8px 0;font-size:18px;line-height:1.35;color:var(--zv-theme-text, #edf0f5);';
@@ -6144,18 +6193,19 @@ Object.assign(ZoteroVim, {
     meta.textContent = row.meta || '';
 
     const body = h('div');
-    body.style.cssText =
-      'white-space:pre-wrap;color:var(--zv-theme-text, #edf0f5);line-height:1.6;background:var(--zv-theme-recessed, #1b1e24);' +
-      'border:1px solid var(--zv-theme-border, #49515e);border-radius:8px;padding:12px 14px;min-height:120px;';
-    body.textContent = row.text || '(empty)';
+    body.style.cssText = 'white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.65;';
+    const noteText = row.text || '(empty)';
+    const firstLine = noteText.split('\n', 1)[0].trim();
+    body.textContent = firstLine === row.title && noteText.includes('\n')
+      ? noteText.slice(noteText.indexOf('\n') + 1).trimStart()
+      : noteText;
 
-    container.appendChild(section);
     container.appendChild(title);
     if (meta.textContent) container.appendChild(meta);
     container.appendChild(body);
   },
 
-  _closeMainNotesLayout(win, winState) {
+  _closeMainNotesLayout(win, winState, restoreFocus = false) {
     if (!winState?.notesLayoutOpen) return;
     winState.notesLayoutOpen = false;
     this._clearMainNotesHintBuffer(winState, false);
@@ -6166,14 +6216,27 @@ Object.assign(ZoteroVim, {
     } catch (_) {}
     winState._notesOverlay = null;
     winState._notesStatusEl = null;
+    winState._notesShortcutLabels = null;
     winState._notesListPane = null;
     winState._notesPreviewPane = null;
     winState._notesFocusPane = 'list';
-    winState._notesCurrentList = null;
-    winState._notesAllList = null;
-    winState._notesCurrentRows = [];
-    winState._notesAllRows = [];
+    winState._notesList = null;
+    winState._notesPreview = null;
+    winState._notesScopes = null;
+    winState._notesPaneLabels = null;
+    winState._notesScopeButtons = null;
+    winState._notesCreateButtons = null;
+    winState._notesRenderedRows = null;
+    winState._notesPreviewRow = null;
+    winState._notesBaseItem = null;
+    winState._notesLoading = false;
+    winState._notesLoadError = false;
     winState._notesNavRows = [];
     winState._notesSelected = 0;
+    const returnFocus = winState._notesReturnFocus;
+    winState._notesReturnFocus = null;
+    if (restoreFocus && returnFocus?.isConnected) {
+      try { returnFocus.focus({ preventScroll: true }); } catch (_) {}
+    }
   },
 });

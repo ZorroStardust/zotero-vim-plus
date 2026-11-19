@@ -287,7 +287,8 @@ Object.assign(ZoteroVim, {
     marker.style.cssText =
       'position:absolute!important;display:none;width:6px;height:6px;' +
       'min-width:0;min-height:0;margin:0!important;padding:0!important;border:0!important;' +
-      'border-radius:50%;background:CanvasText;box-shadow:0 0 0 1px Canvas;' +
+      'border-radius:50%;background:var(--zv-theme-accent, CanvasText);' +
+      'box-shadow:0 0 0 1px var(--zv-theme-surface, Canvas);' +
       'opacity:0.72;pointer-events:none!important;user-select:none;';
     element.appendChild(marker);
     (doc.body || doc.documentElement).appendChild(style);
@@ -546,9 +547,9 @@ Object.assign(ZoteroVim, {
     // derive the neutral ink from that surface's actual foreground color.
     const inkSurface = surface || cue.win.document.documentElement;
     const ink = inkSurface.ownerDocument.defaultView.getComputedStyle(inkSurface).color;
-    if (ink) style.setProperty('--zv-focus-ink', ink);
-    else style.removeProperty('--zv-focus-ink');
-    style.boxShadow = 'inset 0 0 0 1px color-mix(in srgb,' + (ink || 'CanvasText')
+    const focusInk = 'var(--zv-theme-accent, ' + (ink || 'CanvasText') + ')';
+    style.setProperty('--zv-focus-ink', focusInk);
+    style.boxShadow = 'inset 0 0 0 1px color-mix(in srgb,' + focusInk
       + ' 24%,transparent)';
     style.left = (box.left + inset) + 'px';
     style.top = (box.top + inset) + 'px';

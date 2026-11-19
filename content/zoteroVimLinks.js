@@ -406,10 +406,10 @@ Object.assign(ZoteroVim, {
         badge.el.setAttribute('data-zv-link-hint', '');
         if (item.target.annotationKey) {
           badge.el.setAttribute('data-zv-annotation-hint', '');
-          badge.el.style.background = '#2563eb';
-          badge.el.style.color = '#fff';
-          badge.el.style.borderColor = '#1d4ed8';
-          badge.prefixEl.style.color = '#bfdbfe';
+          badge.el.style.background = 'var(--zv-theme-accent, #2563eb)';
+          badge.el.style.color = 'var(--zv-theme-surface, #fff)';
+          badge.el.style.borderColor = 'var(--zv-theme-border, #1d4ed8)';
+          badge.prefixEl.style.color = 'var(--zv-theme-control, #bfdbfe)';
         } else if (this._readerLinkHasPreview(item.target)) {
           badge.restEl.textContent += ' ›';
         }
@@ -556,8 +556,8 @@ Object.assign(ZoteroVim, {
       choice.restEl.textContent = choice.label.slice(ui.prefix.length)
         + (!preview && this._readerLinkHasPreview(choice.target) ? ' ›' : '');
       if (preview) {
-        choice.el.style.background = preview.selected === choice ? '#313244' : '';
-        choice.el.style.boxShadow = preview.marked.has(choice) ? 'inset 3px 0 #a6e3a1' : '';
+        choice.el.style.background = preview.selected === choice ? 'var(--zv-theme-control, #313244)' : '';
+        choice.el.style.boxShadow = preview.marked.has(choice) ? 'inset 3px 0 var(--zv-theme-success, #a6e3a1)' : '';
       }
     }
     if (preview) this._updateReaderLinkPreviewFooter(ui);
@@ -579,14 +579,14 @@ Object.assign(ZoteroVim, {
       el.setAttribute('aria-label', titleText);
       el.style.cssText = 'position:fixed;right:14px;bottom:14px;z-index:100001;'
         + 'width:min(540px,calc(100vw - 28px));box-sizing:border-box;'
-        + 'padding:10px;border:1px solid #585b70;border-radius:8px;background:#1e1e2e;'
-        + 'color:#cdd6f4;box-shadow:0 3px 16px #0006;font:13px/1.45 sans-serif;pointer-events:none;';
+        + 'padding:10px;border:1px solid var(--zv-theme-border, #585b70);border-radius:8px;background:var(--zv-theme-surface, #1e1e2e);'
+        + 'color:var(--zv-theme-text, #cdd6f4);box-shadow:0 3px 16px #0006;font:13px/1.45 sans-serif;pointer-events:none;';
       const title = doc.createElement('div');
       title.textContent = titleText;
       title.style.cssText = 'font-weight:bold;margin-bottom:6px;';
       const list = doc.createElement('div');
       list.style.cssText = 'max-height:40vh;overflow:auto;color-scheme:dark;'
-        + 'scrollbar-width:thin;scrollbar-color:#585b70 transparent;';
+        + 'scrollbar-width:thin;scrollbar-color:var(--zv-theme-border, #585b70) transparent;';
       const entries = target.references?.map(ref => ({ text: ref.text,
         target: { source: target.source, position: ref.position } }))
         || [{ text: target.text || target.url, target }];
@@ -596,7 +596,7 @@ Object.assign(ZoteroVim, {
         const row = doc.createElement('div');
         row.style.cssText = 'padding:5px;border-radius:4px;overflow-wrap:anywhere;';
         const badge = doc.createElement('kbd');
-        badge.style.cssText = 'color:#f9e2af;font-weight:bold;margin-right:8px;';
+        badge.style.cssText = 'color:var(--zv-theme-hint-text, #f9e2af);font-weight:bold;margin-right:8px;';
         const prefixEl = doc.createElement('span');
         prefixEl.style.opacity = '0.48';
         const restEl = doc.createElement('span');
@@ -613,7 +613,7 @@ Object.assign(ZoteroVim, {
       });
       const footer = doc.createElement('div');
       footer.setAttribute('aria-live', 'polite');
-      footer.style.cssText = 'margin-top:6px;color:#a6adc8;font-size:11px;';
+      footer.style.cssText = 'margin-top:6px;color:var(--zv-theme-muted, #a6adc8);font-size:11px;';
       el.appendChild(title);
       el.appendChild(list);
       el.appendChild(footer);

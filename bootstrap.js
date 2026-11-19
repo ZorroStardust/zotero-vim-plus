@@ -1,4 +1,4 @@
-/* global Zotero, Services, Components */
+/* global Zotero, Services, Components, ZV_THEME */
 /* eslint-disable no-unused-vars */
 
 var ZoteroVim;
@@ -40,6 +40,7 @@ async function startup({ id, version, rootURI }) {
   zvLogFile('startup called (app process +' + (T0 - APP_START_TS) + 'ms)');
 
   Services.scriptloader.loadSubScript(rootURI + 'content/keymapLabels.js');
+  Services.scriptloader.loadSubScript(rootURI + 'content/theme.js');
   Services.scriptloader.loadSubScript(rootURI + 'content/zoteroVim.js');
   Services.scriptloader.loadSubScript(rootURI + 'content/zoteroVimReader.js');
   Services.scriptloader.loadSubScript(rootURI + 'content/zoteroVimFlash.js');
@@ -110,6 +111,7 @@ function onMainWindowUnload({ window }) {
 function shutdown() {
   log('Shutting down');
   ZoteroVim?.shutdown();
+  ZV_THEME.shutdown();
   ZoteroVim = undefined;
 }
 

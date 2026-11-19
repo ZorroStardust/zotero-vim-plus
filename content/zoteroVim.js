@@ -1,4 +1,4 @@
-/* global Zotero, Components, Services */
+/* global Zotero, Components, Services, ZV_THEME */
 /* eslint-disable no-unused-vars */
 
 /**
@@ -344,6 +344,10 @@ var ZoteroVim = {
     if (s) { try { s.cleanup(); } catch (_) {} this._mainWindowState.delete(win); }
   },
 
+  _attachTheme(doc) {
+    if (typeof ZV_THEME !== 'undefined') ZV_THEME.attach(doc);
+  },
+
   // ── Preferences ──────────────────────────────────────────────────────────
 
   _registerPrefsPane() {
@@ -359,7 +363,8 @@ var ZoteroVim = {
       pluginID: this.id,
       src:      this.rootURI + 'content/preferences.xhtml',
       scripts:  [this.rootURI + 'content/keymapLabels.js',
-        this.rootURI + 'content/i18n.js', this.rootURI + 'content/prefs.js'],
+        this.rootURI + 'content/i18n.js', this.rootURI + 'content/theme.js',
+        this.rootURI + 'content/prefs.js'],
       label:    'Zotero Vim Plus',
       image:    this.rootURI + 'icons/icon-64x64.png',
     });
@@ -817,7 +822,9 @@ var ZoteroVim = {
     this._loadPersistedMarks(state, reader);
 
     const outerDoc = reader._iframeWindow?.document;
+    this._attachTheme(reader._window?.document || reader._iframe?.ownerDocument);
     if (outerDoc) {
+      this._attachTheme(outerDoc);
       state.indicatorEl = this._createModeIndicator(outerDoc);
     }
 
@@ -1559,14 +1566,14 @@ var ZoteroVim = {
         ui.el.style.cssText =
           'position:fixed;right:14px;bottom:42px;z-index:99998;box-sizing:border-box;'
           + 'max-width:calc(100vw - 28px);width:max-content;max-height:calc(100vh - 64px);'
-          + 'overflow:hidden;padding:10px 14px;border:1px solid #45475a;border-radius:8px;'
-          + 'background:rgba(30,30,46,.97);color:#cdd6f4;box-shadow:0 8px 28px #0005;'
+          + 'overflow:hidden;padding:10px 14px;border:1px solid var(--zv-theme-selected, #45475a);border-radius:8px;'
+          + 'background:var(--zv-theme-surface, rgba(30,30,46,.97));color:var(--zv-theme-text, #cdd6f4);box-shadow:0 8px 28px #0005;'
           + 'font:12px/1.6 sans-serif;pointer-events:none;user-select:none;';
         (ui.doc.body || ui.doc.documentElement).appendChild(ui.el);
       }
       while (ui.el.firstChild) ui.el.removeChild(ui.el.firstChild);
       const header = h('div');
-      header.style.cssText = 'font:bold 12px/1.5 monospace;color:#89b4fa;margin-bottom:6px;';
+      header.style.cssText = 'font:bold 12px/1.5 monospace;color:var(--zv-theme-accent, #89b4fa);margin-bottom:6px;';
       const zh = this._isZhLocale();
       let title = 'Spacekeys';
       if (ui.buffer.startsWith('z')) title = zh ? '标注' : 'Annotations';
@@ -1578,7 +1585,7 @@ var ZoteroVim = {
         + 'gap:2px 18px;max-width:360px;';
       for (const row of ui.rows) {
         const key = h('kbd');
-        key.style.cssText = 'font:bold 12px/1.6 monospace;color:#f9e2af;';
+        key.style.cssText = 'font:bold 12px/1.6 monospace;color:var(--zv-theme-hint-text, #f9e2af);';
         key.textContent = row.key === ' ' ? 'Space' : row.key;
         const label = h('span');
         label.style.cssText = 'overflow-wrap:anywhere;';
@@ -1601,7 +1608,7 @@ var ZoteroVim = {
       }
       ui.el.appendChild(grid);
       const footer = h('div');
-      footer.style.cssText = 'color:#a6adc8;font-size:11px;margin-top:6px;';
+      footer.style.cssText = 'color:var(--zv-theme-muted, #a6adc8);font-size:11px;margin-top:6px;';
       footer.textContent = zh
         ? 'Esc 取消 · 继续输入组合键' : 'Esc cancel · Keep typing a chord';
       ui.el.appendChild(footer);
@@ -1618,8 +1625,8 @@ var ZoteroVim = {
     el.id = 'zotero-vim-mode-indicator';
     el.setAttribute('style', [
       'position:fixed', 'bottom:10px', 'right:14px', 'z-index:9999',
-      'font:bold 12px/1.4 monospace', 'color:#fff',
-      'background:rgba(0,0,0,0.65)', 'padding:2px 8px',
+      'font:bold 12px/1.4 monospace', 'color:var(--zv-theme-text, #fff)',
+      'background:var(--zv-theme-surface, rgba(0,0,0,0.65))', 'padding:2px 8px',
       'border-radius:3px', 'pointer-events:none',
       'display:none', 'user-select:none',
     ].join(';'));
@@ -1631,6 +1638,7 @@ var ZoteroVim = {
   _injectSelectionCSS(pdfWin) {
     try {
       const doc = pdfWin.document;
+      this._attachTheme(doc);
       if (doc.getElementById('zv-sel-css')) return;
       const s = doc.createElement('style');
       s.id = 'zv-sel-css';
@@ -1639,9 +1647,9 @@ var ZoteroVim = {
         '.textLayer { user-select: text !important; -moz-user-select: text !important; }',
         '.textLayer span { user-select: text !important; cursor: text !important; }',
         // Use the same colors for native selection and the Flash preview.
-        ':root { --zv-selection-rgb: 0, 140, 255; --zv-selection-opacity: 0.6; }',
+        ':root { --zv-selection-rgb: var(--zv-theme-selection-rgb, 0, 140, 255); --zv-selection-opacity: var(--zv-theme-selection-opacity, 0.6); }',
         '@media (prefers-color-scheme: dark) {',
-        '  :root { --zv-selection-rgb: 255, 180, 0; --zv-selection-opacity: 0.75; }',
+        '  :root { --zv-selection-rgb: var(--zv-theme-selection-rgb, 255, 180, 0); --zv-selection-opacity: var(--zv-theme-selection-opacity, 0.75); }',
         '}',
         '.textLayer ::selection {',
         '  background-color: rgba(var(--zv-selection-rgb), var(--zv-selection-opacity)) !important;',
@@ -1659,8 +1667,8 @@ var ZoteroVim = {
         '.page[data-zv-jump-cue]::before {',
         '  content: ""; display: block; position: absolute; inset: var(--zv-jump-cue-inset);',
         '  pointer-events: none; z-index: 8; border-radius: 7px;',
-        '  background: rgba(68,196,185,.08); outline: 2px solid #208d86; outline-offset: 4px;',
-        '  box-shadow: 0 0 0 6px rgba(247,255,254,.78), 0 0 15px rgba(26,119,114,.25);',
+        '  background: var(--zv-theme-accent-faint, rgba(68,196,185,.08)); outline: 2px solid var(--zv-theme-accent, #208d86); outline-offset: 4px;',
+        '  box-shadow: 0 0 0 6px var(--zv-theme-control, rgba(247,255,254,.78)), 0 0 15px var(--zv-theme-accent-tint, rgba(26,119,114,.25));',
         '  animation: zv-jump-cue-fade 1.4s ease-out both;',
         '}',
         '@keyframes zv-jump-cue-fade { 0%,55% { opacity: 1; } 100% { opacity: 0; } }',
@@ -1688,10 +1696,10 @@ var ZoteroVim = {
     el.style.fontWeight = 'bold';
     state._statusActive = true;
     el.style.background =
-      msg.startsWith('✓') ? 'rgba(50,150,50,0.9)'    :  // green  — success
-      msg.startsWith('→') ? 'rgba(60,100,180,0.9)'   :  // blue   — info/navigation
-      msg.startsWith('▶') ? 'rgba(60,100,180,0.9)'   :  // blue   — action in progress
-                            'rgba(180,40,40,0.9)';       // red    — error (✗ / other)
+      msg.startsWith('✓') ? 'var(--zv-theme-success-tint, rgba(50,150,50,0.9))'    :  // green  — success
+      msg.startsWith('→') ? 'var(--zv-theme-accent-tint, rgba(60,100,180,0.9))'   :  // blue   — info/navigation
+      msg.startsWith('▶') ? 'var(--zv-theme-accent-tint, rgba(60,100,180,0.9))'   :  // blue   — action in progress
+                            'var(--zv-theme-danger-tint, rgba(180,40,40,0.9))';       // red    — error (✗ / other)
     clearTimeout(state._statusTimer);
     state._statusTimer = setTimeout(() => {
       state._statusActive = false;
@@ -1759,7 +1767,7 @@ var ZoteroVim = {
       }
       state.indicatorEl.style.display = 'block';
       state.indicatorEl.textContent = progress;
-      state.indicatorEl.style.background = 'rgba(0,0,0,0.42)';
+      state.indicatorEl.style.background = 'var(--zv-theme-surface, rgba(0,0,0,0.42))';
       state.indicatorEl.style.fontWeight = 'normal';
       return;
     }
@@ -1772,9 +1780,9 @@ var ZoteroVim = {
       + (progress ? '  ·  ' + progress : '');
     state.indicatorEl.style.fontWeight = 'bold';
     state.indicatorEl.style.background =
-      mode === 'visual' ? 'rgba(80,120,200,0.85)' :
-      mode === 'cursor' ? 'rgba(180,120,40,0.9)'  :
-      mode === 'insert' ? 'rgba(50,150,80,0.85)'  : 'rgba(0,0,0,0.65)';
+      mode === 'visual' ? 'var(--zv-theme-accent-tint, rgba(80,120,200,0.85))' :
+      mode === 'cursor' ? 'var(--zv-theme-hint-tint, rgba(180,120,40,0.9))'  :
+      mode === 'insert' ? 'var(--zv-theme-success-tint, rgba(50,150,80,0.85))'  : 'var(--zv-theme-surface, rgba(0,0,0,0.65))';
   },
 
   _readerProgressText(state) {

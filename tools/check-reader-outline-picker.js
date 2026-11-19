@@ -875,7 +875,7 @@ async function main() {
       assert.equal(key(f, value, mods).prevented, true);
       assert.equal(popup.selected, expected);
       assert.deepEqual([...popup.rows], rows);
-      assert.equal(rows.filter(row => row.style.backgroundColor === '#313244').length, 1);
+      assert.equal(rows.filter(row => row.style.backgroundColor === 'var(--zv-theme-control, #313244)').length, 1);
     }
     assert.equal(key(f, 'Tab').prevented, true);
     assert.equal(f.primary.doc.activeElement, popup.input);
@@ -1505,10 +1505,10 @@ async function main() {
     const annotations = ui.badges.filter(badge => badge.target.annotationKey);
     assert.deepEqual(Array.from(annotations, badge => badge.target.annotationKey),
       ['HIGHLIGHT', 'NOTE', 'UNDERLINE', 'TEXT', 'AREA']);
-    assert.ok(annotations.every(badge => badge.el.style.background === '#2563eb'
+    assert.ok(annotations.every(badge => badge.el.style.background === 'var(--zv-theme-accent, #2563eb)'
       && 'data-zv-annotation-hint' in badge.el.attributes));
     const link = ui.badges.find(badge => badge.target.url === nativeURL);
-    assert.ok(link.el.style.cssText.includes('background:#FFD400'));
+    assert.ok(link.el.style.cssText.includes('background:var(--zv-theme-hint, #FFD400)'));
     assert.notEqual(link.label, annotations[0].label);
     assert.notEqual(link.el.style.left, annotations[0].el.style.left,
       'overlapping link and annotation should have separate badge positions');

@@ -105,7 +105,7 @@ Object.assign(ZoteroVim, {
       const style = doc.createElementNS('http://www.w3.org/1999/xhtml', 'style');
       style.textContent = '.row.zv-workset-member::before {'
         + "content:'';position:absolute;left:2px;top:2px;bottom:2px;width:3px;"
-        + 'border-radius:2px;background:#89b4fa;box-shadow:0 0 0 1px #33476c;'
+        + 'border-radius:2px;background:var(--zv-theme-accent, #89b4fa);box-shadow:0 0 0 1px var(--zv-theme-border, #33476c);'
         + 'pointer-events:none;z-index:4;}';
       (doc.head || doc.documentElement).appendChild(style);
       const refresh = () => this._syncWorksetMarkers(win, state);

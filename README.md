@@ -1076,6 +1076,12 @@ arrow keys in dropdowns and numeric fields, `Tab` to move focus, and `Esc` to le
 a field or close the overlay. On the Keybindings tab, filter by action or key,
 then use **Apply bindings** or `Ctrl+Enter` (`Cmd+Enter` on macOS) to save changes.
 
+Open **Appearance** to change the plugin palette. Themes update Vim Plus panels,
+controls, hints, indicators and temporary PDF selection immediately. **Classic**
+uses the original palette, and **Follow system** switches between Catppuccin
+Latte and Mocha with the system color scheme. PDF annotation colors are set
+through the annotation controls.
+
 Open **Edit → Preferences** (macOS: **Zotero → Settings**) and navigate to the
 **Zotero Vim** tab.
 

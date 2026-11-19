@@ -605,7 +605,8 @@ Object.assign(ZoteroVim, {
     panel.setAttribute('aria-labelledby', overlay.id + '-title');
     panel.style.cssText = (ui.palette ? 'width:min(640px,100%);' : 'width:min(1100px,100%);')
       + 'max-height:88vh;display:flex;flex-direction:column;'
-      + 'background:#1e1e2e;color:#cdd6f4;border:1px solid #45475a;border-radius:12px;'
+      + 'color-scheme:var(--zv-theme-scheme, normal);'
+      + 'background:var(--zv-theme-surface, #1e1e2e);color:var(--zv-theme-text, #cdd6f4);border:1px solid var(--zv-theme-selected, #45475a);border-radius:12px;'
       + 'box-shadow:0 20px 70px #0006;font:13px/1.6 sans-serif;overflow:hidden;';
     const header = h('div');
     header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;'
@@ -615,15 +616,15 @@ Object.assign(ZoteroVim, {
     const title = h('h2');
     title.id = overlay.id + '-title';
     title.textContent = titleText;
-    title.style.cssText = 'margin:0;font-size:20px;color:#cdd6f4;';
+    title.style.cssText = 'margin:0;font-size:20px;color:var(--zv-theme-text, #cdd6f4);';
     const subtitle = h('div');
-    subtitle.style.cssText = 'color:#a6adc8;font-size:12px;';
+    subtitle.style.cssText = 'color:var(--zv-theme-muted, #a6adc8);font-size:12px;';
     subtitle.textContent = (ui.zh ? '当前：' : 'Current: ') + this._shortcutScope(ui.scope, ui.zh);
     heading.appendChild(title);
     if (!ui.settings) heading.appendChild(subtitle);
     const close = h('button');
     close.type = 'button'; close.textContent = ui.zh ? '关闭 · Esc' : 'Close · Esc';
-    close.style.cssText = 'background:#313244;color:#cdd6f4;border:1px solid #45475a;'
+    close.style.cssText = 'background:var(--zv-theme-control, #313244);color:var(--zv-theme-text, #cdd6f4);border:1px solid var(--zv-theme-selected, #45475a);'
       + 'border-radius:6px;padding:5px 10px;cursor:pointer;';
     close.addEventListener('click', onClose);
     header.appendChild(heading); header.appendChild(close);
@@ -650,8 +651,8 @@ Object.assign(ZoteroVim, {
     input.placeholder = ui.palette ? (ui.zh ? '搜索命令或按键…' : 'Search commands or keys…')
       : (ui.zh ? '搜索按键、功能或模式，例如：Space、标注、删除…' : 'Search keys, actions or modes…');
     input.setAttribute('aria-label', input.placeholder);
-    input.style.cssText = 'width:100%;box-sizing:border-box;background:#313244;color:#cdd6f4;'
-      + 'border:1px solid #585b70;border-radius:7px;padding:6px 10px;font:inherit;';
+    input.style.cssText = 'width:100%;box-sizing:border-box;background:var(--zv-theme-control, #313244);color:var(--zv-theme-text, #cdd6f4);'
+      + 'border:1px solid var(--zv-theme-border, #585b70);border-radius:7px;padding:6px 10px;font:inherit;';
     input.addEventListener('input', () => this._renderShortcutHelp(ui));
     input.addEventListener('compositionstart', () => { ui.composing = true; });
     input.addEventListener('compositionend', () => { ui.composing = false; });
@@ -691,14 +692,14 @@ Object.assign(ZoteroVim, {
       + '#zv-shortcut-help .zv-shortcut-row {'
       + 'display:grid;grid-template-columns:fit-content(44%) minmax(0,1fr);'
       + 'column-gap:8px;align-items:start;min-width:0;padding:3px 0;'
-      + 'border-bottom:1px solid #313244;}'
+      + 'border-bottom:1px solid var(--zv-theme-control, #313244);}'
       + '#zv-shortcut-help .zv-shortcut-key {'
-      + 'color:#f9e2af;font:12px/1.6 monospace;white-space:pre-wrap;overflow-wrap:anywhere;}'
+      + 'color:var(--zv-theme-hint-text, #f9e2af);font:12px/1.6 monospace;white-space:pre-wrap;overflow-wrap:anywhere;}'
       + '#zv-shortcut-help .zv-shortcut-description {min-width:0;overflow-wrap:anywhere;}'
       + '@media(max-width:760px) {'
       + '#zv-shortcut-help .zv-shortcut-grid {grid-template-columns:minmax(0,1fr);}}';
     const footer = h('div');
-    footer.style.cssText = 'padding:8px 18px;border-top:1px solid #45475a;color:#a6adc8;'
+    footer.style.cssText = 'padding:8px 18px;border-top:1px solid var(--zv-theme-selected, #45475a);color:var(--zv-theme-muted, #a6adc8);'
       + 'font-size:11px;display:flex;flex-wrap:wrap;justify-content:space-between;gap:8px;flex-shrink:0;';
     const count = h('span'); count.setAttribute('aria-live', 'polite');
     const hint = h('span');
@@ -738,9 +739,9 @@ Object.assign(ZoteroVim, {
     for (const { category, button } of ui.categories) {
       const selected = category === ui.category;
       button.setAttribute('aria-pressed', String(selected));
-      button.style.cssText = 'border:1px solid #45475a;border-radius:6px;padding:3px 10px;'
-        + 'font:inherit;cursor:pointer;background:' + (selected ? '#89b4fa' : '#313244')
-        + ';color:' + (selected ? '#11111b' : '#cdd6f4') + ';';
+      button.style.cssText = 'border:1px solid var(--zv-theme-selected, #45475a);border-radius:6px;padding:3px 10px;'
+        + 'font:inherit;cursor:pointer;background:' + (selected ? 'var(--zv-theme-accent, #89b4fa)' : 'var(--zv-theme-control, #313244)')
+        + ';color:' + (selected ? 'var(--zv-theme-recessed, #11111b)' : 'var(--zv-theme-text, #cdd6f4)') + ';';
     }
     while (ui.list.firstChild) ui.list.removeChild(ui.list.firstChild);
     const scopes = new Map();
@@ -755,7 +756,7 @@ Object.assign(ZoteroVim, {
         .includes(scope) ? !this.isNoteEditorVimEnabled()
         : ['visual', 'cursor', 'insert'].includes(scope) && !this.isModeEnabled(scope);
       if (disabled) heading.textContent += ui.zh ? '（设置中已关闭）' : ' (disabled in settings)';
-      heading.style.cssText = 'font-size:12px;letter-spacing:.04em;color:#89b4fa;margin:10px 0 4px;';
+      heading.style.cssText = 'font-size:12px;letter-spacing:.04em;color:var(--zv-theme-accent, #89b4fa);margin:10px 0 4px;';
       ui.list.appendChild(heading);
       const grid = h('div');
       grid.className = 'zv-shortcut-grid';
@@ -780,7 +781,7 @@ Object.assign(ZoteroVim, {
       const empty = h('p');
       empty.textContent = ui.zh ? '没有匹配的快捷键，请尝试其他按键或功能名称。'
         : 'No matching shortcuts. Try another key or action name.';
-      empty.style.cssText = 'padding:24px 0;color:#a6adc8;';
+      empty.style.cssText = 'padding:24px 0;color:var(--zv-theme-muted, #a6adc8);';
       ui.list.appendChild(empty);
     }
     ui.filtered = filtered;
@@ -833,7 +834,7 @@ Object.assign(ZoteroVim, {
     ui.filtered.forEach((_, i) => {
       const entry = ui.list.children[i];
       entry.setAttribute('aria-selected', String(entry === selected));
-      entry.style.backgroundColor = entry === selected ? '#45475a' : '';
+      entry.style.backgroundColor = entry === selected ? 'var(--zv-theme-selected, #45475a)' : '';
     });
     selected?.scrollIntoView?.({ block: 'nearest' });
   },

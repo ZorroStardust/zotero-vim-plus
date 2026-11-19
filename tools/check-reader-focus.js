@@ -506,11 +506,13 @@ async function main() {
     assertRing(f, 'outline', [1, 1, 178, 648]);
     assert.equal(f.state._focusCue.element.parentNode, f.primary.document.body);
     assert.match(f.state._focusCue.element.style.cssText, /z-index:100001/);
-    assert.equal(f.state._focusCue.element.style['--zv-focus-ink'], tree.ink);
+    assert.equal(f.state._focusCue.element.style['--zv-focus-ink'],
+      'var(--zv-theme-accent, ' + tree.ink + ')');
     assert.equal(f.state._outlineExplorerHeader.textContent, 'Outline');
     f.z._focusReaderPdfWindow(f.primary, f.state); f.win.flush();
     assertRing(f, 'pdf', [181, 1, 268, 648]);
-    assert.equal(f.state._focusCue.element.style['--zv-focus-ink'], 'rgb(30, 30, 30)');
+    assert.equal(f.state._focusCue.element.style['--zv-focus-ink'],
+      'var(--zv-theme-accent, rgb(30, 30, 30))');
     assert.equal(tree.style.borderRightColor, undefined);
   });
 

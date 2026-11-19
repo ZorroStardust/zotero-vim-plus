@@ -438,7 +438,7 @@ Object.assign(ZoteroVim, {
     const modal = h('div');
     modal.style.cssText =
       'width:min(680px,90%);max-height:75vh;display:flex;flex-direction:column;' +
-      'background:#1e1e2e;color:#cdd6f4;border-radius:8px;overflow:hidden;' +
+      'background:var(--zv-theme-surface, #1e1e2e);color:var(--zv-theme-text, #cdd6f4);border-radius:8px;overflow:hidden;' +
       'box-shadow:0 16px 48px rgba(0,0,0,0.6);font:13px/1.4 sans-serif;';
     const input = h('input');
     input.type = 'text';
@@ -446,13 +446,13 @@ Object.assign(ZoteroVim, {
       : (zh ? '搜索 PDF 目录标题…' : 'Search PDF headings…');
     input.setAttribute('aria-label', input.placeholder);
     input.style.cssText =
-      'box-sizing:border-box;width:100%;padding:12px;background:#313244;' +
-      'color:#cdd6f4;border:0;outline:none;font:inherit;flex-shrink:0;';
+      'box-sizing:border-box;width:100%;padding:12px;background:var(--zv-theme-control, #313244);' +
+      'color:var(--zv-theme-text, #cdd6f4);border:0;outline:none;font:inherit;flex-shrink:0;';
     const list = h('div');
     list.style.cssText = 'overflow:auto;min-height:0;max-height:55vh;';
     const status = h('div');
     status.style.cssText =
-      'padding:8px 12px;border-top:1px solid #313244;color:#a6adc8;font-size:11px;';
+      'padding:8px 12px;border-top:1px solid var(--zv-theme-control, #313244);color:var(--zv-theme-muted, #a6adc8);font-size:11px;';
     status.textContent = zh
       ? '输入筛选 · Ctrl+j/k 或 ↑/↓ 选择 · Enter 跳转 · Esc 返回'
       : 'Type to filter · Ctrl+j/k or ↑/↓ select · Enter jump · Esc back';
@@ -557,7 +557,7 @@ Object.assign(ZoteroVim, {
     popup.rows = [];
     if (popup.loading || popup.error || !popup.filtered.length) {
       const message = h('div');
-      message.style.cssText = 'padding:14px;color:#a6adc8;';
+      message.style.cssText = 'padding:14px;color:var(--zv-theme-muted, #a6adc8);';
       const messages = popup.captions
         ? (popup.zh ? ['正在索引题注…', '无匹配题注', '未找到图表题注']
           : ['Indexing captions…', 'No matching captions', 'No figure or table captions found'])
@@ -575,7 +575,7 @@ Object.assign(ZoteroVim, {
       const title = h('div');
       title.textContent = item.entry.title;
       const context = h('div');
-      context.style.cssText = 'font-size:11px;color:#a6adc8;overflow-wrap:anywhere;';
+      context.style.cssText = 'font-size:11px;color:var(--zv-theme-muted, #a6adc8);overflow-wrap:anywhere;';
       const page = typeof item.entry.pageIndex === 'number'
         ? (popup.zh ? '第 ' + (item.entry.pageIndex + 1) + ' 页' : 'p. ' + (item.entry.pageIndex + 1))
         : '';
@@ -596,8 +596,8 @@ Object.assign(ZoteroVim, {
   /** Moving selection changes styles only; a stationary mouse cannot reset it. */
   _updateReaderOutlinePickerSelection(popup) {
     popup.rows.forEach((row, index) => {
-      row.style.backgroundColor = index === popup.selected ? '#313244' : 'transparent';
-      row.style.borderLeftColor = index === popup.selected ? '#89b4fa' : 'transparent';
+      row.style.backgroundColor = index === popup.selected ? 'var(--zv-theme-control, #313244)' : 'transparent';
+      row.style.borderLeftColor = index === popup.selected ? 'var(--zv-theme-accent, #89b4fa)' : 'transparent';
     });
     const selected = popup.rows[popup.selected];
     if (selected) {
@@ -1483,20 +1483,20 @@ Object.assign(ZoteroVim, {
     overlay.tabIndex = -1;
     overlay.style.cssText =
       'position:fixed;top:0;left:0;bottom:0;box-sizing:border-box;width:' + width + ';' +
-      'z-index:99998;background:#181825;color:#cdd6f4;border-right:1px solid #313244;' +
+      'z-index:99998;background:var(--zv-theme-recessed, #181825);color:var(--zv-theme-text, #cdd6f4);border-right:1px solid var(--zv-theme-control, #313244);' +
       'outline:none!important;display:flex;flex-direction:column;' +
       'font:13px/1.35 monospace;';
 
     const header = h('div');
-    header.style.cssText = 'padding:12px 14px;border-bottom:1px solid #313244;font-weight:bold;letter-spacing:0.04em;';
+    header.style.cssText = 'padding:12px 14px;border-bottom:1px solid var(--zv-theme-control, #313244);font-weight:bold;letter-spacing:0.04em;';
     header.textContent = 'Outline Explorer';
 
     const list = h('div');
     list.style.cssText = 'flex:1;overflow:auto;padding:8px 0;';
 
     const status = h('div');
-    status.style.cssText = 'padding:6px 12px;border-top:1px solid #313244;' +
-      'color:#6c7086;font-size:11px;overflow-wrap:anywhere;';
+    status.style.cssText = 'padding:6px 12px;border-top:1px solid var(--zv-theme-control, #313244);' +
+      'color:var(--zv-theme-muted, #6c7086);font-size:11px;overflow-wrap:anywhere;';
     status.textContent =
       'j/k move  ·  Ctrl+d/u fast  ·  gg/G top/bottom  ·  R/M expand/collapse all  ·  ' +
       '/ search headings  ·  Ctrl+h/l focus  ·  Enter jump';
@@ -1754,7 +1754,7 @@ Object.assign(ZoteroVim, {
 
     if (state.outlineExplorerLoading) {
       const loading = h('div');
-      loading.style.cssText = 'padding:12px 14px;color:#6c7086;';
+      loading.style.cssText = 'padding:12px 14px;color:var(--zv-theme-muted, #6c7086);';
       loading.textContent = 'Loading outline...';
       list.appendChild(loading);
       return;
@@ -1763,7 +1763,7 @@ Object.assign(ZoteroVim, {
     const items = state.outlineExplorerVisible || [];
     if (!items.length) {
       const empty = h('div');
-      empty.style.cssText = 'padding:12px 14px;color:#6c7086;';
+      empty.style.cssText = 'padding:12px 14px;color:var(--zv-theme-muted, #6c7086);';
       empty.textContent = 'No outline available';
       list.appendChild(empty);
       return;
@@ -1776,15 +1776,15 @@ Object.assign(ZoteroVim, {
       const isSel = idx === state.outlineExplorerSelected;
       row.style.cssText =
         'display:flex;align-items:center;gap:8px;padding:6px 12px 6px ' + (12 + item.depth * 16) + 'px;' +
-        'cursor:pointer;border-left:3px solid ' + (isSel ? '#89b4fa' : 'transparent') + ';' +
-        'background:' + (isSel ? '#313244' : 'transparent') + ';';
+        'cursor:pointer;border-left:3px solid ' + (isSel ? 'var(--zv-theme-accent, #89b4fa)' : 'transparent') + ';' +
+        'background:' + (isSel ? 'var(--zv-theme-control, #313244)' : 'transparent') + ';';
 
       const twisty = h('span');
-      twisty.style.cssText = 'display:inline-block;width:10px;color:#89b4fa;flex:0 0 10px;';
+      twisty.style.cssText = 'display:inline-block;width:10px;color:var(--zv-theme-accent, #89b4fa);flex:0 0 10px;';
       twisty.textContent = hasChildren ? (item.expanded ? '▾' : '▸') : '·';
 
       const hint = h('span');
-      hint.style.cssText = 'display:inline-block;min-width:22px;color:#f9e2af;flex:0 0 auto;font-weight:bold;';
+      hint.style.cssText = 'display:inline-block;min-width:22px;color:var(--zv-theme-hint-text, #f9e2af);flex:0 0 auto;font-weight:bold;';
       hint.textContent = item.hint || '';
 
       const title = h('span');
@@ -2350,8 +2350,8 @@ Object.assign(ZoteroVim, {
     }
     const target = items[next];
     target.setAttribute('data-zv-outline-selected', '1');
-    target.style.outline = '1px solid rgba(137,180,250,0.9)';
-    target.style.background = 'rgba(137,180,250,0.15)';
+    target.style.outline = '1px solid var(--zv-theme-accent, rgba(137,180,250,0.9))';
+    target.style.background = 'var(--zv-theme-accent-faint, rgba(137,180,250,0.15))';
     target.scrollIntoView({ block: 'nearest' });
     state.sidebarOutlineIndex = next;
     try { target.focus(); } catch (_) {}
@@ -4017,7 +4017,7 @@ Object.assign(ZoteroVim, {
     const prefix = doc.createElement('span');
     prefix.setAttribute('data-zv-hint-part', 'prefix');
     prefix.textContent = '';
-    prefix.style.color = '#8f7d1c';
+    prefix.style.color = 'var(--zv-theme-hint-border, #8f7d1c)';
     const rest = doc.createElement('span');
     rest.setAttribute('data-zv-hint-part', 'rest');
     rest.textContent = label;
@@ -4025,11 +4025,11 @@ Object.assign(ZoteroVim, {
     badge.appendChild(rest);
     badge.style.cssText =
       'position:fixed;left:0;top:0;' +
-      'background:#FFD400;color:#000;' +
+      'background:var(--zv-theme-hint, #FFD400);color:var(--zv-theme-on-hint, #000);' +
       'font:bold 10px/1.2 monospace;white-space:nowrap;' +
       'padding:1px 3px;border-radius:2px;' +
       'z-index:99999;pointer-events:none;' +
-      'border:1px solid #b8960c;';
+      'border:1px solid var(--zv-theme-hint-border, #b8960c);';
     doc.body.appendChild(badge);
     return {
       label,
@@ -4312,7 +4312,7 @@ Object.assign(ZoteroVim, {
       'top:'    + Math.round(rect.top)    + 'px;' +
       'width:2px;' +
       'height:' + Math.round(rect.height) + 'px;' +
-      'background:#ff4500;' +
+      'background:var(--zv-theme-danger, #ff4500);' +
       'z-index:99998;' +
       'pointer-events:none;' +
       'animation:zv-cursor-blink 1s step-end infinite;';
@@ -5464,7 +5464,9 @@ Object.assign(ZoteroVim, {
     overlay.style.cssText =
       'position:fixed;right:20px;bottom:48px;width:min(540px,calc(100% - 40px));' +
       'max-height:calc(100vh - 64px);z-index:99998;display:flex;flex-direction:column;' +
-      'color-scheme:light dark;background:Canvas;color:CanvasText;border:1px solid GrayText;' +
+      'color-scheme:var(--zv-theme-scheme, light dark);' +
+      'background:var(--zv-theme-surface, Canvas);color:var(--zv-theme-text, CanvasText);' +
+      'border:1px solid var(--zv-theme-border, GrayText);' +
       'border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,0.35);' +
       'font:14px/1.6 sans-serif;overflow:hidden;';
 
@@ -5481,7 +5483,7 @@ Object.assign(ZoteroVim, {
     const body = h('div');
     body.style.cssText = 'min-height:0;overflow:auto;padding:0 14px 14px;';
     const sourceLabel = h('h3');
-    sourceLabel.style.cssText = 'margin:4px 0;font-size:12px;color:GrayText;';
+    sourceLabel.style.cssText = 'margin:4px 0;font-size:12px;color:var(--zv-theme-muted, GrayText);';
     sourceLabel.textContent = zh ? '原文' : 'Original';
     const source = h('div');
     source.style.cssText =
@@ -5489,9 +5491,9 @@ Object.assign(ZoteroVim, {
     source.textContent = text;
     const phonetics = h('div');
     phonetics.style.cssText =
-      'display:none;margin-top:4px;color:GrayText;overflow-wrap:anywhere;';
+      'display:none;margin-top:4px;color:var(--zv-theme-muted, GrayText);overflow-wrap:anywhere;';
     const resultLabel = h('h3');
-    resultLabel.style.cssText = 'margin:14px 0 4px;font-size:12px;color:GrayText;';
+    resultLabel.style.cssText = 'margin:14px 0 4px;font-size:12px;color:var(--zv-theme-muted, GrayText);';
     resultLabel.textContent = zh ? '译文' : 'Translation';
     const result = h('div');
     result.style.cssText = 'white-space:pre-wrap;overflow-wrap:anywhere;user-select:text;';
@@ -5501,9 +5503,9 @@ Object.assign(ZoteroVim, {
     const footer = h('div');
     footer.style.cssText =
       'display:flex;flex-shrink:0;align-items:center;gap:12px;padding:8px 14px;' +
-      'border-top:1px solid GrayText;';
+      'border-top:1px solid var(--zv-theme-border, GrayText);';
     const hint = h('div');
-    hint.style.cssText = 'flex:1;font-size:12px;color:GrayText;';
+    hint.style.cssText = 'flex:1;font-size:12px;color:var(--zv-theme-muted, GrayText);';
     hint.textContent = zh ? 'j/k 滚动 · y 复制译文 · Esc 关闭'
       : 'j/k scroll · y copy translation · Esc close';
     const copyButton = h('button');
@@ -5512,8 +5514,9 @@ Object.assign(ZoteroVim, {
     copyButton.disabled = true;
     for (const button of [closeButton, copyButton]) {
       button.style.cssText =
-        'padding:3px 9px;border:1px solid GrayText;border-radius:4px;' +
-        'background:ButtonFace;color:ButtonText;font:inherit;cursor:pointer;';
+        'padding:3px 9px;border:1px solid var(--zv-theme-border, GrayText);border-radius:4px;' +
+        'background:var(--zv-theme-control, ButtonFace);' +
+        'color:var(--zv-theme-text, ButtonText);font:inherit;cursor:pointer;';
       // Clicking a control must not collapse the PDF selection.
       button.addEventListener('mousedown', event => event.preventDefault());
     }
@@ -5763,7 +5766,7 @@ Object.assign(ZoteroVim, {
         user-select: none;
       }
       .find-popup ${optionsSelector}:focus {
-        outline: 2px solid var(--color-focus-search, Highlight);
+        outline: 2px solid var(--zv-theme-accent, var(--color-focus-search, Highlight));
         outline-offset: 2px;
       }
     `;
@@ -6679,13 +6682,13 @@ Object.assign(ZoteroVim, {
     overlay.tabIndex = -1;
     overlay.style.cssText =
       'position:fixed;top:0;left:0;bottom:0;width:320px;z-index:99998;' +
-      'background:rgba(24,24,37,0.96);color:#cdd6f4;border-right:1px solid #313244;' +
+      'background:var(--zv-theme-recessed, rgba(24,24,37,0.96));color:var(--zv-theme-text, #cdd6f4);border-right:1px solid var(--zv-theme-control, #313244);' +
       'display:flex;flex-direction:column;box-shadow:12px 0 40px rgba(0,0,0,0.35);' +
       'font:13px/1.35 monospace;';
 
     const header = h('div');
     header.style.cssText =
-      'padding:12px 14px;border-bottom:1px solid #313244;font-weight:bold;letter-spacing:0.04em;';
+      'padding:12px 14px;border-bottom:1px solid var(--zv-theme-control, #313244);font-weight:bold;letter-spacing:0.04em;';
     header.textContent = 'Marks';
 
     const list = h('div');
@@ -6693,7 +6696,7 @@ Object.assign(ZoteroVim, {
 
     const status = h('div');
     status.style.cssText =
-      'padding:6px 12px;border-top:1px solid #313244;color:#6c7086;font-size:11px;';
+      'padding:6px 12px;border-top:1px solid var(--zv-theme-control, #313244);color:var(--zv-theme-muted, #6c7086);font-size:11px;';
     status.textContent =
       'type a mark char to jump  ·  j/k move  ·  Enter jump  ·  d delete  ·  x delete all  ·  Esc close';
 
@@ -6717,7 +6720,7 @@ Object.assign(ZoteroVim, {
     const chars = Object.keys(state.marks).sort();
     if (chars.length === 0) {
       const empty = doc.createElementNS(H, 'div');
-      empty.style.cssText = 'padding:10px 14px;color:#6c7086;';
+      empty.style.cssText = 'padding:10px 14px;color:var(--zv-theme-muted, #6c7086);';
       empty.textContent = 'No marks — press m<x> in Normal mode to set one';
       list.appendChild(empty);
       return 0;
@@ -6727,8 +6730,8 @@ Object.assign(ZoteroVim, {
       const row = doc.createElementNS(H, 'div');
       row.style.cssText = 'padding:6px 14px;cursor:pointer;white-space:nowrap;';
       if (idx === state.marksExplorerSelected) {
-        row.style.background = 'rgba(138,173,244,0.22)';
-        row.style.color = '#a6d189';
+        row.style.background = 'var(--zv-theme-accent-tint, rgba(138,173,244,0.22))';
+        row.style.color = 'var(--zv-theme-success, #a6d189)';
       }
       const pageLabel = mark.pageIndex !== null ? 'p.' + (mark.pageIndex + 1) : '—';
       const pct = mark.pageIndex !== null ? '  ' + Math.round((mark.ratio || 0) * 100) + '%' : '';
@@ -6781,15 +6784,15 @@ Object.assign(ZoteroVim, {
     overlay.id = 'zv-annotation-comment';
     overlay.style.cssText =
       'position:fixed;left:50%;bottom:14px;transform:translateX(-50%);' +
-      'width:min(560px,92%);z-index:99998;background:rgba(24,24,37,0.97);' +
-      'color:#cdd6f4;border:1px solid #313244;border-radius:8px;' +
+      'width:min(560px,92%);z-index:99998;background:var(--zv-theme-recessed, rgba(24,24,37,0.97));' +
+      'color:var(--zv-theme-text, #cdd6f4);border:1px solid var(--zv-theme-control, #313244);border-radius:8px;' +
       'box-shadow:0 8px 32px rgba(0,0,0,0.45);display:flex;flex-direction:column;' +
       'font:13px/1.4 sans-serif;';
 
     if (quotedText) {
       const quote = h('div');
       quote.style.cssText =
-        'padding:8px 12px;color:#6c7086;font-size:12px;white-space:nowrap;' +
+        'padding:8px 12px;color:var(--zv-theme-muted, #6c7086);font-size:12px;white-space:nowrap;' +
         'overflow:hidden;text-overflow:ellipsis;';
       quote.textContent = quotedText;
       overlay.appendChild(quote);
@@ -6800,14 +6803,14 @@ Object.assign(ZoteroVim, {
     ta.value = commentText || '';
     ta.style.cssText =
       'width:100%;box-sizing:border-box;min-height:72px;max-height:220px;' +
-      'padding:10px 12px;background:transparent;color:#cdd6f4;border:0;' +
+      'padding:10px 12px;background:transparent;color:var(--zv-theme-text, #cdd6f4);border:0;' +
       'outline:none;resize:none;font:13px/1.5 sans-serif;';
     ta.setAttribute('spellcheck', 'false');
     overlay.appendChild(ta);
 
     const hint = h('div');
     hint.style.cssText =
-      'padding:5px 12px;border-top:1px solid #313244;color:#6c7086;font-size:11px;';
+      'padding:5px 12px;border-top:1px solid var(--zv-theme-control, #313244);color:var(--zv-theme-muted, #6c7086);font-size:11px;';
     const zh = this._isZhLocale();
     hint.textContent = zh ? 'Enter 换行 · Esc 保存并关闭' : 'Enter newline · Esc save & close';
     overlay.appendChild(hint);

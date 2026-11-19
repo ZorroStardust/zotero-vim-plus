@@ -1,5 +1,5 @@
 /* global Zotero, Components, Services, document, window, MutationObserver, dump,
-  ZV_SETTINGS_PANE, ZV_KEYMAP_LABELS, ZV_I18N_CURRENT_LANG, ZV_I18N_APPLY, ZV_I18N_STR, ZV_I18N_ACTION */
+  ZV_SETTINGS_PANE, ZV_THEME, ZV_KEYMAP_LABELS, ZV_I18N_CURRENT_LANG, ZV_I18N_APPLY, ZV_I18N_STR, ZV_I18N_ACTION */
 "use strict";
 
 // ── Pref helpers ─────────────────────────────────────────────────────────────
@@ -291,7 +291,7 @@ function _zvClampInt(value, fallback, min, max) {
 function _zvFlashStatus(el, text, color) {
   if (!el) return;
   el.textContent = text;
-  if (color) el.style.color = color;
+  if (color) el.style.color = "var(--zv-theme-success, " + color + ")";
   window.setTimeout(() => { el.textContent = ""; }, 1800);
 }
 
@@ -419,6 +419,18 @@ function _zvInit() {
       });
     }
     ZV_I18N_APPLY(document, lang);
+  });
+
+  _zvSection("appearance", () => {
+    if (typeof ZV_THEME !== "undefined") ZV_THEME.attach(document);
+    const select = document.getElementById("zv-theme");
+    if (!select) return;
+    const saved = _zvGet("theme", "classic");
+    select.value = ["classic", "system", "mocha", "latte", "nord", "gruvbox"].includes(saved)
+      ? saved : "classic";
+    _zvOnSelect(select, () => {
+      if (!_zvSet("theme", select.value)) select.value = _zvGet("theme", "classic");
+    });
   });
 
   // ── Modes ──────────────────────────────────────────────────────────────────

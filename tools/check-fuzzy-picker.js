@@ -235,8 +235,8 @@ async function main() {
         rows[0].emit('mousemove', { screenX: 100, screenY: 100 });
         assert.equal(f.state._pickerSelected, expected);
         assert.deepEqual(f.state._pickerResults.children, rows);
-        assert.equal(rows[expected].style.backgroundColor, '#313244');
-        assert.equal(rows.filter(row => row.style.backgroundColor === '#313244').length, 1);
+        assert.equal(rows[expected].style.backgroundColor, 'var(--zv-theme-control, #313244)');
+        assert.equal(rows.filter(row => row.style.backgroundColor === 'var(--zv-theme-control, #313244)').length, 1);
       }
       key(f, 'Escape');
     }

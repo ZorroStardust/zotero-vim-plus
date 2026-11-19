@@ -228,14 +228,14 @@ Object.assign(ZoteroVim, {
     panel.setAttribute('aria-label', 'Flash');
     panel.style.cssText = 'position:fixed;right:14px;bottom:14px;'
       + 'z-index:100001;width:min(420px,85vw);box-sizing:border-box;padding:8px 10px;'
-      + 'border:1px solid #585b70;border-radius:7px;background:#1e1e2e;color:#cdd6f4;'
+      + 'border:1px solid var(--zv-theme-border, #585b70);border-radius:7px;background:var(--zv-theme-surface, #1e1e2e);color:var(--zv-theme-text, #cdd6f4);'
       + 'box-shadow:0 2px 12px #0005;font:13px sans-serif';
     const input = doc.createElement('input');
     input.type = 'text';
     input.placeholder = zh ? '输入可见的词句' : 'Type visible text';
     input.setAttribute('aria-label', input.placeholder);
-    input.style.cssText = 'width:100%;box-sizing:border-box;background:#313244;'
-      + 'color:#cdd6f4;border:1px solid #585b70;border-radius:4px;padding:5px;';
+    input.style.cssText = 'width:100%;box-sizing:border-box;background:var(--zv-theme-control, #313244);'
+      + 'color:var(--zv-theme-text, #cdd6f4);border:1px solid var(--zv-theme-border, #585b70);border-radius:4px;padding:5px;';
     const status = doc.createElement('div');
     status.setAttribute('aria-live', 'polite');
     status.style.cssText = 'margin-top:5px;';

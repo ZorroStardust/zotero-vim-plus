@@ -20,8 +20,8 @@ Object.assign(ZoteroVim, {
     const panel = doc.createElementNS(html, 'div');
     panel.setAttribute('style', [
       'position:fixed', 'bottom:10px', 'left:12px', 'z-index:100000',
-      'background:#242424', 'color:#fff', 'padding:8px 10px',
-      'border:1px solid #777', 'border-radius:5px', 'font:12px/1.5 sans-serif',
+      'background:var(--zv-theme-surface, #242424)', 'color:var(--zv-theme-text, #fff)', 'padding:8px 10px',
+      'border:1px solid var(--zv-theme-muted, #777)', 'border-radius:5px', 'font:12px/1.5 sans-serif',
       'max-width:440px', 'box-shadow:0 2px 8px #0005',
     ].join(';'));
     const label = doc.createElementNS(html, 'div');

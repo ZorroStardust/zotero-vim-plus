@@ -21,14 +21,15 @@ Object.assign(ZoteroVim, {
 
   _injectIntoMainWindow(win) {
     Zotero.debug('[ZoteroVim] Injecting into main window');
+    this._attachTheme(win.document);
 
     // Main window is a XUL document — must use HTML namespace for HTML elements.
     const _H = 'http://www.w3.org/1999/xhtml';
     const statusEl = win.document.createElementNS(_H, 'div');
     statusEl.setAttribute('style', [
       'position:fixed', 'bottom:10px', 'right:14px', 'z-index:99999',
-      'font:bold 12px/1.4 monospace', 'color:#fff',
-      'background:rgba(0,0,0,0.65)', 'padding:2px 8px',
+      'font:bold 12px/1.4 monospace', 'color:var(--zv-theme-text, #fff)',
+      'background:var(--zv-theme-surface, rgba(0,0,0,0.65))', 'padding:2px 8px',
       'border-radius:3px', 'pointer-events:none',
       'display:none', 'user-select:none',
     ].join(';'));
@@ -1040,6 +1041,7 @@ Object.assign(ZoteroVim, {
     this._clearMainContextNoteListener(winState);
 
     if (!noteWin || !winState) return;
+    this._attachTheme(noteDoc);
     const handler = (event) => this._onMainContextNoteKeyDown(event, win, winState);
     try { noteWin.addEventListener('keydown', handler, true); } catch (_) { return; }
     try { noteDoc?.addEventListener('keydown', handler, true); } catch (_) {}
@@ -1413,13 +1415,13 @@ Object.assign(ZoteroVim, {
         root.style.cssText = 'position:fixed;bottom:8px;left:8px;z-index:2147483646;'
           + 'display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;'
           + 'max-width:calc(100% - 16px);box-sizing:border-box;padding:5px 8px;'
-          + 'background:var(--color-background,var(--material-background,#f4f4f4));'
-          + 'color:var(--fill-primary,#222);border:1px solid rgba(128,128,128,.55);'
+          + 'background:var(--zv-theme-surface, var(--color-background,var(--material-background,#f4f4f4)));'
+          + 'color:var(--zv-theme-text, var(--fill-primary,#222));border:1px solid var(--zv-theme-border, rgba(128,128,128,.55));'
           + 'border-radius:5px;box-shadow:0 2px 8px #0002;font:12px/1.4 sans-serif;'
           + 'pointer-events:none;user-select:none;';
         const command = doc.createElement('kbd');
         command.style.cssText = 'font:bold 12px/1.4 monospace;padding:1px 5px;'
-          + 'border-radius:3px;background:rgba(96,150,255,.18);overflow-wrap:anywhere;';
+          + 'border-radius:3px;background:var(--zv-theme-accent-tint, rgba(96,150,255,.18));overflow-wrap:anywhere;';
         const description = doc.createElement('span');
         description.style.cssText = 'min-width:0;overflow-wrap:anywhere;';
         const cancel = doc.createElement('span');
@@ -1498,24 +1500,24 @@ Object.assign(ZoteroVim, {
       style.textContent = [
         'html.zv-note-normal-mode, html.zv-note-normal-mode body,',
         'html.zv-note-normal-mode [contenteditable="true"], html.zv-note-normal-mode textarea, html.zv-note-normal-mode input {',
-        '  caret-color: rgb(96, 150, 255) !important;',
+        '  caret-color: var(--zv-theme-accent, rgb(96, 150, 255)) !important;',
         '  caret-animation: auto !important;',
         '}',
         'html.zv-note-visual-mode [contenteditable="true"],',
-        'html.zv-note-visual-mode textarea { caret-color: rgb(170, 130, 240) !important; }',
+        'html.zv-note-visual-mode textarea { caret-color: var(--zv-theme-accent, rgb(170, 130, 240)) !important; }',
         'html.zv-note-insert-mode, html.zv-note-insert-mode body,',
         'html.zv-note-insert-mode [contenteditable="true"], html.zv-note-insert-mode textarea, html.zv-note-insert-mode input {',
-        '  caret-color: rgb(255, 148, 77) !important;',
+        '  caret-color: var(--zv-theme-hint-text, rgb(255, 148, 77)) !important;',
         '  caret-animation: auto !important;',
         '}',
         '@media (prefers-color-scheme: dark) {',
         '  html.zv-note-normal-mode, html.zv-note-normal-mode body,',
         '  html.zv-note-normal-mode [contenteditable="true"], html.zv-note-normal-mode textarea, html.zv-note-normal-mode input {',
-        '    caret-color: rgb(180, 206, 255) !important;',
+        '    caret-color: var(--zv-theme-accent, rgb(180, 206, 255)) !important;',
         '  }',
         '  html.zv-note-insert-mode, html.zv-note-insert-mode body,',
         '  html.zv-note-insert-mode [contenteditable="true"], html.zv-note-insert-mode textarea, html.zv-note-insert-mode input {',
-        '    caret-color: rgb(255, 176, 118) !important;',
+        '    caret-color: var(--zv-theme-hint-text, rgb(255, 176, 118)) !important;',
         '  }',
         '}',
       ].join('\n');
@@ -1838,19 +1840,19 @@ Object.assign(ZoteroVim, {
       '}',
       '.zv-note-line-numbers > span {',
       '  position: absolute; box-sizing: border-box; text-align: right; padding-right: 4px;',
-      '  font: 12px monospace; color: var(--fill-tertiary, #777); border-radius: 3px;',
+      '  font: 12px monospace; color: var(--zv-theme-muted, var(--fill-tertiary, #777)); border-radius: 3px;',
       '}',
       '.zv-note-line-numbers > .zv-note-current-line {',
-      '  color: var(--accent-blue, #3975d5); background: var(--accent-blue10, #e5efff);',
+      '  color: var(--zv-theme-accent, var(--accent-blue, #3975d5)); background: var(--zv-theme-accent-tint, var(--accent-blue10, #e5efff));',
       '  font-weight: bold;',
       '}',
       '.zv-note-line-numbers > .zv-note-heading-line {',
       '  font-size: 9px; text-align: center; padding: 0 1px; border-radius: 2px;',
       '}',
       '@media (prefers-color-scheme: dark) {',
-      '  .zv-note-line-numbers > span { color: var(--fill-tertiary, #aaa); }',
+      '  .zv-note-line-numbers > span { color: var(--zv-theme-muted, var(--fill-tertiary, #aaa)); }',
       '  .zv-note-line-numbers > .zv-note-current-line {',
-      '    color: var(--accent-blue, #b4ceff); background: var(--accent-blue10, #263b57);',
+      '    color: var(--zv-theme-accent, var(--accent-blue, #b4ceff)); background: var(--zv-theme-accent-tint, var(--accent-blue10, #263b57));',
       '  }',
       '}',
       '@media print { .zv-note-line-numbers { display: none !important; } }',
@@ -3183,9 +3185,9 @@ Object.assign(ZoteroVim, {
       root.setAttribute('role', 'search');
       root.style.cssText = 'position:fixed;bottom:8px;left:8px;right:8px;z-index:2147483647;'
         + 'display:flex;align-items:center;gap:6px;padding:6px 8px;'
-        + 'background:var(--material-background,var(--color-background,#f4f4f4));'
-        + 'color:var(--fill-primary,#222);'
-        + 'border:1px solid #888;border-radius:5px;font:12px sans-serif;box-shadow:0 2px 8px #0003;';
+        + 'background:var(--zv-theme-surface, var(--material-background,var(--color-background,#f4f4f4)));'
+        + 'color:var(--zv-theme-text, var(--fill-primary,#222));'
+        + 'border:1px solid var(--zv-theme-border, #888);border-radius:5px;font:12px sans-serif;box-shadow:0 2px 8px #0003;';
       const label = doc.createElement('span');
       label.textContent = direction > 0 ? '/' : '?';
       const input = doc.createElement('input');
@@ -3290,8 +3292,8 @@ Object.assign(ZoteroVim, {
         if (right <= left || bottom <= top) continue;
         const marker = doc.createElement('span');
         marker.style.cssText = 'position:fixed;pointer-events:none;'
-          + 'background:rgba(255,190,40,.32);border-radius:2px;'
-          + 'box-shadow:inset 0 0 0 1px rgba(210,140,0,.55);'
+          + 'background:var(--zv-theme-hint-faint, rgba(255,190,40,.32));border-radius:2px;'
+          + 'box-shadow:inset 0 0 0 1px var(--zv-theme-hint-border, rgba(210,140,0,.55));'
           + 'left:' + left + 'px;top:' + top + 'px;'
           + 'width:' + (right - left) + 'px;height:' + (bottom - top) + 'px;';
         ui.highlight.appendChild(marker);
@@ -4345,10 +4347,10 @@ Object.assign(ZoteroVim, {
       el.style.display = 'block';
       el.textContent = msg;
       el.style.background =
-        msg.startsWith('✓') ? 'rgba(50,150,50,0.9)'   :
-        msg.startsWith('→') ? 'rgba(60,100,180,0.9)'  :
-        msg.startsWith('▶') ? 'rgba(60,100,180,0.9)'  :
-                              'rgba(180,40,40,0.9)';
+        msg.startsWith('✓') ? 'var(--zv-theme-success-tint, rgba(50,150,50,0.9))'   :
+        msg.startsWith('→') ? 'var(--zv-theme-accent-tint, rgba(60,100,180,0.9))'  :
+        msg.startsWith('▶') ? 'var(--zv-theme-accent-tint, rgba(60,100,180,0.9))'  :
+                              'var(--zv-theme-danger-tint, rgba(180,40,40,0.9))';
       clearTimeout(winState._statusTimer);
       winState._statusTimer = setTimeout(() => { el.style.display = 'none'; }, ms);
     } catch (e) {
@@ -4393,12 +4395,12 @@ Object.assign(ZoteroVim, {
 
     const modal = h('div');
     modal.style.cssText =
-      'background:#1e1e2e;color:#cdd6f4;width:60vw;max-height:70vh;' +
+      'background:var(--zv-theme-surface, #1e1e2e);color:var(--zv-theme-text, #cdd6f4);width:60vw;max-height:70vh;' +
       'border-radius:8px;overflow:hidden;display:flex;flex-direction:column;' +
       'box-shadow:0 20px 60px rgba(0,0,0,0.8);font:13px/1.4 monospace;';
 
     const inputWrap = h('div');
-    inputWrap.style.cssText = 'padding:10px 12px;border-bottom:1px solid #313244;';
+    inputWrap.style.cssText = 'padding:10px 12px;border-bottom:1px solid var(--zv-theme-control, #313244);';
 
     const input = h('input');
     input.type = 'text';
@@ -4410,19 +4412,19 @@ Object.assign(ZoteroVim, {
       : scope === 'collections' ? (zh ? '搜索分类…' : 'Search collections...')
       : (zh ? '搜索条目…' : 'Search items...');
     input.style.cssText =
-      'width:100%;box-sizing:border-box;background:#313244;color:#cdd6f4;' +
+      'width:100%;box-sizing:border-box;background:var(--zv-theme-control, #313244);color:var(--zv-theme-text, #cdd6f4);' +
       'border:none;outline:none;border-radius:4px;padding:6px 10px;font:13px/1 monospace;';
 
     const results = h('div');
     results.style.cssText = 'overflow-y:auto;flex:1;max-height:55vh;';
     const loadingMsg = h('div');
-    loadingMsg.style.cssText = 'padding:12px;color:#6c7086';
+    loadingMsg.style.cssText = 'padding:12px;color:var(--zv-theme-muted, #6c7086)';
     loadingMsg.textContent = zh ? '正在加载…' : 'Loading…';
     results.appendChild(loadingMsg);
 
     const hintBar = h('div');
     hintBar.style.cssText =
-      'padding:4px 12px;font-size:11px;color:#6c7086;border-top:1px solid #313244;flex-shrink:0;';
+      'padding:4px 12px;font-size:11px;color:var(--zv-theme-muted, #6c7086);border-top:1px solid var(--zv-theme-control, #313244);flex-shrink:0;';
     hintBar.textContent = choices ? choices.hint : scope === 'tabs'
       ? (zh ? '按提示选择标签页或搜索标题 · Ctrl+j/k 导航 · Enter 选择 · Esc 关闭'
         : 'Type hint letter (empty query) or search title · Ctrl+j/k navigate · Enter select · Esc close')
@@ -4505,7 +4507,7 @@ Object.assign(ZoteroVim, {
       Zotero.debug('[ZoteroVim] _openFuzzyPicker load error: ' + e);
       while (results.firstChild) results.removeChild(results.firstChild);
       const errEl = doc.createElementNS('http://www.w3.org/1999/xhtml', 'div');
-      errEl.style.cssText = 'padding:12px;color:#f38ba8';
+      errEl.style.cssText = 'padding:12px;color:var(--zv-theme-danger, #f38ba8)';
       errEl.textContent = (zh ? '加载失败：' : 'Error loading items: ') + String(e).slice(0, 80);
       results.appendChild(errEl);
       return;
@@ -4545,7 +4547,7 @@ Object.assign(ZoteroVim, {
     }
     results.removeChild(results.firstChild);
     const details = h('div');
-    details.style.cssText = 'color:#bac2de;padding:4px 12px 12px;white-space:pre-wrap;'
+    details.style.cssText = 'color:var(--zv-theme-muted, #bac2de);padding:4px 12px 12px;white-space:pre-wrap;'
       + 'overflow-wrap:anywhere;';
     details.textContent = form.details || '';
     if (details.textContent) results.appendChild(details);
@@ -4562,9 +4564,9 @@ Object.assign(ZoteroVim, {
       controls.appendChild(el);
       return el;
     };
-    state._pickerCancelButton = button(zh ? '取消' : 'Cancel', '#cdd6f4', '#313244',
+    state._pickerCancelButton = button(zh ? '取消' : 'Cancel', 'var(--zv-theme-text, #cdd6f4)', 'var(--zv-theme-control, #313244)',
       () => this._closeFuzzyPicker(win, state, true));
-    const submit = button(form.confirm, '#1e1e2e', form.destructive ? '#f38ba8' : '#89b4fa',
+    const submit = button(form.confirm, 'var(--zv-theme-surface, #1e1e2e)', form.destructive ? 'var(--zv-theme-danger, #f38ba8)' : 'var(--zv-theme-accent, #89b4fa)',
       () => this._submitPickerForm(win, state));
     if (form.field !== undefined) {
       const validate = () => { submit.disabled = !input.value.trim(); };
@@ -4621,14 +4623,14 @@ Object.assign(ZoteroVim, {
       group.setAttribute('aria-label', label);
       group.style.cssText = 'display:flex;flex-wrap:wrap;align-items:center;gap:4px;margin-top:6px;';
       const caption = h('span');
-      caption.style.cssText = 'color:#a6adc8;font-size:11px;margin-right:4px;';
+      caption.style.cssText = 'color:var(--zv-theme-muted, #a6adc8);font-size:11px;margin-right:4px;';
       caption.textContent = label + ' · ' + keys;
       group.appendChild(caption);
       search.buttons[setting] = choices.map((choice, index) => {
         const button = h('button');
         button.type = 'button';
         button.textContent = choice[search.zh ? 2 : 1];
-        button.style.cssText = 'cursor:pointer;color:#cdd6f4;border:1px solid #45475a;' +
+        button.style.cssText = 'cursor:pointer;color:var(--zv-theme-text, #cdd6f4);border:1px solid var(--zv-theme-selected, #45475a);' +
           'border-radius:4px;padding:2px 6px;font:inherit;font-size:11px;';
         button.addEventListener('click', () => this._setItemPickerOption(winState, setting, index));
         group.appendChild(button);
@@ -4643,8 +4645,8 @@ Object.assign(ZoteroVim, {
     search.buttons[setting].forEach((button, index) => {
       const active = search[setting] === index;
       button.setAttribute('aria-pressed', String(active));
-      button.style.backgroundColor = active ? '#45475a' : 'transparent';
-      button.style.borderColor = active ? '#89b4fa' : '#45475a';
+      button.style.backgroundColor = active ? 'var(--zv-theme-selected, #45475a)' : 'transparent';
+      button.style.borderColor = active ? 'var(--zv-theme-accent, #89b4fa)' : 'var(--zv-theme-selected, #45475a)';
     });
   },
 
@@ -4922,7 +4924,7 @@ Object.assign(ZoteroVim, {
 
     if (items.length === 0) {
       const noEl = h('div');
-      noEl.style.cssText = 'padding:12px;color:#6c7086';
+      noEl.style.cssText = 'padding:12px;color:var(--zv-theme-muted, #6c7086)';
       const zh = winState._pickerItemSearch?.zh ?? this._isZhLocale();
       noEl.textContent = message || (zh ? '无结果' : 'No results');
       container.appendChild(noEl);
@@ -4941,7 +4943,7 @@ Object.assign(ZoteroVim, {
 
       const line1 = h('div');
       const cite  = h('span');
-      cite.style.cssText = 'color:#89b4fa;font-weight:bold;margin-right:8px;';
+      cite.style.cssText = 'color:var(--zv-theme-accent, #89b4fa);font-weight:bold;margin-right:8px;';
       if (isTabPicker) {
         const hint = this._pickerHintForIndex(i);
         cite.textContent = hint ? '[' + hint + ']' : '[' + String(i + 1) + ']';
@@ -4951,7 +4953,7 @@ Object.assign(ZoteroVim, {
         cite.textContent = item.citekey ? '@' + item.citekey : '';
       }
       const titleSpan = h('span');
-      titleSpan.style.cssText = 'color:#cdd6f4;';
+      titleSpan.style.cssText = 'color:var(--zv-theme-text, #cdd6f4);';
       titleSpan.textContent   = item.title.length > 72
         ? item.title.slice(0, 72) + '…' : item.title;
       if (isTabPicker || isCollectionPicker) line1.appendChild(cite);
@@ -4963,7 +4965,7 @@ Object.assign(ZoteroVim, {
       }
 
       const meta = h('div');
-      meta.style.cssText = 'color:#6c7086;font-size:11px;margin-top:1px;padding-left:2px;';
+      meta.style.cssText = 'color:var(--zv-theme-muted, #6c7086);font-size:11px;margin-top:1px;padding-left:2px;';
       meta.textContent = isCollectionPicker ? item.path : isTabPicker
         ? [item.kind, item.selected ? 'selected' : ''].filter(Boolean).join(' · ')
         : [[item.author, item.year].filter(Boolean).join(', '), item.kind, item.parent]
@@ -4990,8 +4992,8 @@ Object.assign(ZoteroVim, {
     const selected = winState._pickerSelected;
     for (let i = 0; i < container.children.length; i++) {
       const row = container.children[i];
-      row.style.borderLeftColor = i === selected ? '#89b4fa' : 'transparent';
-      row.style.backgroundColor = i === selected ? '#313244' : 'transparent';
+      row.style.borderLeftColor = i === selected ? 'var(--zv-theme-accent, #89b4fa)' : 'transparent';
+      row.style.backgroundColor = i === selected ? 'var(--zv-theme-control, #313244)' : 'transparent';
     }
     if (scroll) container.children[selected]?.scrollIntoView({ block: 'nearest' });
   },
@@ -5402,21 +5404,21 @@ Object.assign(ZoteroVim, {
 
     const modal = h('div');
     modal.style.cssText =
-      'width:min(1100px, 92vw);height:min(760px, 88vh);background:#10141b;color:#e8edf5;' +
-      'border:1px solid #2b3442;border-radius:10px;overflow:hidden;' +
+      'width:min(1100px, 92vw);height:min(760px, 88vh);background:var(--zv-theme-surface, #10141b);color:var(--zv-theme-text, #e8edf5);' +
+      'border:1px solid var(--zv-theme-border, #2b3442);border-radius:10px;overflow:hidden;' +
       'display:flex;flex-direction:column;box-shadow:0 22px 72px rgba(0,0,0,0.62);' +
       'font:13px/1.45 monospace;';
 
     const header = h('div');
     header.style.cssText =
-      'padding:10px 14px;background:#16202d;border-bottom:1px solid #2b3442;' +
+      'padding:10px 14px;background:var(--zv-theme-control, #16202d);border-bottom:1px solid var(--zv-theme-border, #2b3442);' +
       'display:flex;justify-content:space-between;align-items:center;gap:10px;';
     const title = h('div');
     title.textContent = 'Notes Layout';
     title.style.cssText = 'font-weight:700;letter-spacing:0.2px;';
     const hint = h('div');
     hint.textContent = 'j/k move  ·  Ctrl+d/u fast  ·  Ctrl+j/k section  ·  Ctrl+h/l list/preview  ·  n/N new  ·  Enter/Shift+Enter open';
-    hint.style.cssText = 'font-size:11px;color:#9db0c9;';
+    hint.style.cssText = 'font-size:11px;color:var(--zv-theme-muted, #9db0c9);';
     header.appendChild(title);
     header.appendChild(hint);
 
@@ -5426,15 +5428,15 @@ Object.assign(ZoteroVim, {
     const listPane = h('div');
     listPane.style.cssText =
       'display:grid;grid-template-rows:auto minmax(0,1fr) auto minmax(0,1fr);' +
-      'min-height:0;border-right:1px solid #2b3442;background:#0f141d;';
+      'min-height:0;border-right:1px solid var(--zv-theme-border, #2b3442);background:var(--zv-theme-recessed, #0f141d);';
 
     const currentWrap = h('section');
     currentWrap.style.cssText = 'display:contents;';
     const currentHead = h('div');
     currentHead.textContent = 'Current item notes';
     currentHead.style.cssText =
-      'padding:8px 12px;background:#121a25;color:#7db1ff;font-weight:700;' +
-      'border-bottom:1px solid #2b3442;';
+      'padding:8px 12px;background:var(--zv-theme-control, #121a25);color:var(--zv-theme-accent, #7db1ff);font-weight:700;' +
+      'border-bottom:1px solid var(--zv-theme-border, #2b3442);';
     const currentList = h('div');
     currentList.style.cssText = 'overflow:auto;padding:8px 8px 10px 8px;';
 
@@ -5443,13 +5445,13 @@ Object.assign(ZoteroVim, {
     const allHead = h('div');
     allHead.textContent = 'All notes in library';
     allHead.style.cssText =
-      'padding:8px 12px;background:#121a25;color:#8fd4aa;font-weight:700;' +
-      'border-top:1px solid #2b3442;border-bottom:1px solid #2b3442;';
+      'padding:8px 12px;background:var(--zv-theme-control, #121a25);color:var(--zv-theme-success, #8fd4aa);font-weight:700;' +
+      'border-top:1px solid var(--zv-theme-border, #2b3442);border-bottom:1px solid var(--zv-theme-border, #2b3442);';
     const allList = h('div');
     allList.style.cssText = 'overflow:auto;padding:8px 8px 10px 8px;';
 
     const previewPane = h('div');
-    previewPane.style.cssText = 'overflow:auto;padding:14px 16px 16px 16px;background:#111825;';
+    previewPane.style.cssText = 'overflow:auto;padding:14px 16px 16px 16px;background:var(--zv-theme-recessed, #111825);';
 
     currentWrap.appendChild(currentHead);
     currentWrap.appendChild(currentList);
@@ -5565,10 +5567,10 @@ Object.assign(ZoteroVim, {
     const listPane = winState._notesListPane;
     const previewPane = winState._notesPreviewPane;
     if (listPane) {
-      listPane.style.boxShadow = focusPane === 'list' ? 'inset 0 0 0 1px rgba(98,156,236,0.75)' : 'none';
+      listPane.style.boxShadow = focusPane === 'list' ? 'inset 0 0 0 1px var(--zv-theme-accent, rgba(98,156,236,0.75))' : 'none';
     }
     if (previewPane) {
-      previewPane.style.boxShadow = focusPane === 'preview' ? 'inset 0 0 0 1px rgba(98,156,236,0.75)' : 'none';
+      previewPane.style.boxShadow = focusPane === 'preview' ? 'inset 0 0 0 1px var(--zv-theme-accent, rgba(98,156,236,0.75))' : 'none';
     }
   },
 
@@ -6057,7 +6059,7 @@ Object.assign(ZoteroVim, {
 
     if (opts?.loading) {
       const loading = h('div');
-      loading.style.cssText = 'padding:10px;color:#93a6bd;';
+      loading.style.cssText = 'padding:10px;color:var(--zv-theme-muted, #93a6bd);';
       loading.textContent = rows?.[0]?.title || 'Loading...';
       container.appendChild(loading);
       return;
@@ -6065,7 +6067,7 @@ Object.assign(ZoteroVim, {
 
     if (!rows?.length) {
       const empty = h('div');
-      empty.style.cssText = 'padding:10px;color:#93a6bd;';
+      empty.style.cssText = 'padding:10px;color:var(--zv-theme-muted, #93a6bd);';
       empty.textContent = opts?.emptyMessage || 'No notes.';
       container.appendChild(empty);
       return;
@@ -6077,19 +6079,19 @@ Object.assign(ZoteroVim, {
       const isSelected = opts?.selectedID && row.id === opts.selectedID;
       const hint = opts?.hintByID?.get?.(row.id) || '';
       card.style.cssText =
-        'border:1px solid ' + (isSelected ? '#5f93da' : '#293240') + ';' +
-        'background:' + (isSelected ? '#152236' : '#0f151f') + ';border-radius:6px;' +
+        'border:1px solid ' + (isSelected ? 'var(--zv-theme-accent, #5f93da)' : 'var(--zv-theme-border, #293240)') + ';' +
+        'background:' + (isSelected ? 'var(--zv-theme-selected, #152236)' : 'var(--zv-theme-recessed, #0f151f)') + ';border-radius:6px;' +
         'padding:6px 8px;margin:0 0 6px 0;';
       card.tabIndex = -1;
       card.dataset.noteId = String(row.id || '');
 
       const t = h('div');
-      t.style.cssText = 'display:flex;align-items:center;gap:8px;font-weight:700;color:#d7e5f8;';
+      t.style.cssText = 'display:flex;align-items:center;gap:8px;font-weight:700;color:var(--zv-theme-text, #d7e5f8);';
       if (hint) {
         const badge = h('span');
         badge.style.cssText =
           'display:inline-block;min-width:20px;padding:0 5px;border-radius:4px;' +
-          'border:1px solid #43617f;color:#9ec5ff;font-size:11px;line-height:1.6;text-align:center;';
+          'border:1px solid var(--zv-theme-border, #43617f);color:var(--zv-theme-accent, #9ec5ff);font-size:11px;line-height:1.6;text-align:center;';
         badge.textContent = hint;
         t.appendChild(badge);
       }
@@ -6125,7 +6127,7 @@ Object.assign(ZoteroVim, {
 
     if (opts?.loading) {
       const loading = h('div');
-      loading.style.cssText = 'padding:12px;color:#93a6bd;';
+      loading.style.cssText = 'padding:12px;color:var(--zv-theme-muted, #93a6bd);';
       loading.textContent = opts.message || 'Loading preview...';
       container.appendChild(loading);
       return;
@@ -6134,7 +6136,7 @@ Object.assign(ZoteroVim, {
     const row = selectedEntry?.row || null;
     if (!row) {
       const empty = h('div');
-      empty.style.cssText = 'padding:12px;color:#93a6bd;';
+      empty.style.cssText = 'padding:12px;color:var(--zv-theme-muted, #93a6bd);';
       empty.textContent = opts?.message || 'No note selected.';
       container.appendChild(empty);
       return;
@@ -6143,21 +6145,21 @@ Object.assign(ZoteroVim, {
     const section = h('div');
     section.style.cssText =
       'display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;' +
-      'border:1px solid #314860;color:#9ec5ff;background:#121f2f;margin-bottom:10px;';
+      'border:1px solid var(--zv-theme-border, #314860);color:var(--zv-theme-accent, #9ec5ff);background:var(--zv-theme-control, #121f2f);margin-bottom:10px;';
     section.textContent = selectedEntry.section === 'current' ? 'Current item note' : 'All notes';
 
     const title = h('h3');
-    title.style.cssText = 'margin:0 0 8px 0;font-size:18px;line-height:1.35;color:#e8edf5;';
+    title.style.cssText = 'margin:0 0 8px 0;font-size:18px;line-height:1.35;color:var(--zv-theme-text, #e8edf5);';
     title.textContent = row.title || 'Untitled note';
 
     const meta = h('div');
-    meta.style.cssText = 'font-size:12px;color:#8ea4bf;margin-bottom:12px;';
+    meta.style.cssText = 'font-size:12px;color:var(--zv-theme-muted, #8ea4bf);margin-bottom:12px;';
     meta.textContent = row.meta || '';
 
     const body = h('div');
     body.style.cssText =
-      'white-space:pre-wrap;color:#c8d6e8;line-height:1.6;background:#0f151f;' +
-      'border:1px solid #293240;border-radius:8px;padding:12px 14px;min-height:120px;';
+      'white-space:pre-wrap;color:var(--zv-theme-text, #c8d6e8);line-height:1.6;background:var(--zv-theme-recessed, #0f151f);' +
+      'border:1px solid var(--zv-theme-border, #293240);border-radius:8px;padding:12px 14px;min-height:120px;';
     body.textContent = row.text || '(empty)';
 
     container.appendChild(section);

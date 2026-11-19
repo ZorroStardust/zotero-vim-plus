@@ -6,41 +6,54 @@ Object.assign(ZoteroVim, {
   },
 
   _createSettings(ui) {
+    this._attachTheme(ui.doc);
     const { overlay, panel, header, close, h } = this._createShortcutDialog(ui,
       ui.zh ? 'Vim Plus 设置' : 'Vim Plus Settings', () => this._requestSettingsClose(ui));
     const style = h('style');
     style.textContent = `
-      #zv-settings-overlay { color-scheme: dark; }
+      #zv-settings-overlay { color-scheme: var(--zv-theme-scheme, dark); }
       #zv-settings-overlay button, #zv-settings-overlay select,
       #zv-settings-overlay input:not([type=checkbox]) {
-        background: #313244; color: #cdd6f4; border: 1px solid #585b70;
+        background: var(--zv-theme-control, #313244); color: var(--zv-theme-text, #cdd6f4); border: 1px solid var(--zv-theme-border, #585b70);
         border-radius: 5px; font: inherit; padding: 4px 8px;
       }
       #zv-settings-overlay button { cursor: pointer; }
       #zv-settings-overlay button[aria-selected=true] {
-        background: #45475a; border-color: #89b4fa;
+        background: var(--zv-theme-selected, #45475a); border-color: var(--zv-theme-accent, #89b4fa);
       }
-      #zv-settings-overlay :focus-visible { outline: 2px solid #89b4fa; outline-offset: 2px; }
+      #zv-settings-overlay :focus-visible { outline: 2px solid var(--zv-theme-accent, #89b4fa); outline-offset: 2px; }
       #zotero-vim-settings-form [hidden] { display: none !important; }
       #zotero-vim-settings-form fieldset {
         min-width: 0; margin: 0 0 12px; padding: 10px 12px;
-        border: 1px solid #45475a; border-radius: 7px;
+        border: 1px solid var(--zv-theme-selected, #45475a); border-radius: 7px;
       }
-      #zotero-vim-settings-form p { color: #a6adc8 !important; }
-      #zotero-vim-settings-form th { background: #313244; }
-      #zotero-vim-settings-form td { border-bottom: 1px solid #45475a; }
+      #zotero-vim-settings-form p { color: var(--zv-theme-muted, #a6adc8) !important; }
+      #zotero-vim-settings-form th { background: var(--zv-theme-control, #313244); }
+      #zotero-vim-settings-form td { border-bottom: 1px solid var(--zv-theme-selected, #45475a); }
       #zotero-vim-settings-form td select { max-width: 100%; }
+      #zotero-vim-settings-form tr[data-mode=normal] {
+        background: var(--zv-theme-accent-faint, transparent);
+      }
+      #zotero-vim-settings-form tr[data-mode=visual] {
+        background: var(--zv-theme-success-tint, transparent);
+      }
+      #zotero-vim-settings-form :is(tr[data-mode=cursor], tr[data-mode=insert]) {
+        background: var(--zv-theme-hint-tint, transparent);
+      }
+      #zotero-vim-settings-form tr[data-mode=main] {
+        background: var(--zv-theme-recessed, transparent);
+      }
       #zotero-vim-settings-form .zv-binding-error,
-      #zotero-vim-settings-form #zv-bindings-status { color: #ffb4ab; }
+      #zotero-vim-settings-form #zv-bindings-status { color: var(--zv-theme-danger, #ffb4ab); }
     `;
     const body = h('div');
-    body.style.cssText = 'display:flex;min-height:0;height:65vh;border-top:1px solid #45475a;';
+    body.style.cssText = 'display:flex;min-height:0;height:65vh;border-top:1px solid var(--zv-theme-selected, #45475a);';
     const tabs = h('div');
     tabs.setAttribute('role', 'tablist');
     tabs.setAttribute('aria-orientation', 'vertical');
     tabs.setAttribute('aria-label', ui.zh ? '设置分类' : 'Settings categories');
     tabs.style.cssText = 'flex:0 0 auto;padding:12px;display:flex;flex-direction:column;'
-      + 'gap:6px;border-right:1px solid #45475a;overflow:auto;';
+      + 'gap:6px;border-right:1px solid var(--zv-theme-selected, #45475a);overflow:auto;';
     const list = h('div');
     list.id = 'zotero-vim-settings-form';
     list.style.cssText = 'padding:12px 16px;flex:1;min-width:0;overflow:auto;'
@@ -48,7 +61,7 @@ Object.assign(ZoteroVim, {
     body.append(tabs, list);
 
     const footer = h('div');
-    footer.style.cssText = 'padding:8px 18px;border-top:1px solid #45475a;color:#a6adc8;';
+    footer.style.cssText = 'padding:8px 18px;border-top:1px solid var(--zv-theme-selected, #45475a);color:var(--zv-theme-muted, #a6adc8);';
     const status = h('span');
     status.setAttribute('role', 'status');
     const tips = ui.zh
@@ -105,6 +118,7 @@ Object.assign(ZoteroVim, {
     list.textContent = '';
     ui.pages = [
       ['general', 'General', '常规'],
+      ['appearance', 'Appearance', '外观'],
       ['reader', 'Reader', '阅读器'],
       ['notes', 'Notes', '笔记'],
       ['keys', 'Keybindings', '快捷键'],
@@ -286,7 +300,7 @@ Object.assign(ZoteroVim, {
       badge.setAttribute('aria-hidden', 'true');
       badge.textContent = labels[i];
       badge.style.cssText = 'position:fixed;pointer-events:none;z-index:1;'
-        + 'background:#f9e2af;color:#1e1e2e;border:1px solid #66542c;border-radius:3px;'
+        + 'background:var(--zv-theme-hint, #f9e2af);color:var(--zv-theme-on-hint, #1e1e2e);border:1px solid var(--zv-theme-hint-border, #66542c);border-radius:3px;'
         + 'padding:0 3px;font:bold 11px/1.3 monospace;'
         + 'left:' + rect.left + 'px;top:' + Math.max(0, rect.top - 8) + 'px;';
       ui.overlay.appendChild(badge);

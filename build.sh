@@ -13,6 +13,7 @@ if command -v node >/dev/null 2>&1; then
   echo "Checking JS syntax and binding-table sync ..."
   node --check bootstrap.js
   node --check content/i18n.js
+  node --check content/theme.js
   node --check content/keymapLabels.js
   node --check content/zoteroVimHelp.js
   node --check content/zoteroVimSettings.js

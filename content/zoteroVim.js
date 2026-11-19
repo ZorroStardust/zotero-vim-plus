@@ -216,6 +216,15 @@ var ZoteroVim = {
     // Space key produces ' ' from _keyString, so <space>ff → buffer ' ff' → key 'main: ff'
     'main: ff':   'mainFuzzyAll',         // <space>ff  — fuzzy picker, all items
     'main: fb':   'mainFuzzyCollection',  // <space>fb  — fuzzy picker, current collection
+    'main:s': 'mainToggleWorkset',
+    'main: ss': 'mainShowWorkset',
+    'main: sc': 'mainClearWorkset',
+    'main: bc': 'mainCreateReadingGroup',
+    'main: ba': 'mainAppendReadingGroup',
+    'main: bl': 'mainShowReadingGroups',
+    'main: ta': 'mainAddWorksetTag',
+    'main: tr': 'mainRemoveWorksetTag',
+    'main: ca': 'mainAddWorksetToCollection',
     'main: bj':   'mainTabPick',          // <space>bj  — pick/open tab by hint
     'main: n':    'mainNotesLayout',      // <space>n   — notes layout (current item + all notes)
     'main: e':    'mainFocusTree',        // <space>e   — focus collection tree
@@ -1373,8 +1382,10 @@ var ZoteroVim = {
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key).push({ action, rest, style });
     }
-    const names = zh ? { f: '搜索', b: '标签页', w: '窗口', y: '复制' }
-      : { f: 'Search', b: 'Tabs', w: 'Windows', y: 'Copy' };
+    const names = zh ? { f: '搜索', b: '标签页和阅读分组', w: '窗口', y: '复制',
+      s: '选择集', t: '标签', c: '分类' }
+      : { f: 'Search', b: 'Tabs and reading groups', w: 'Windows', y: 'Copy',
+        s: 'Selection set', t: 'Tags', c: 'Collections' };
     const rows = Array.from(groups, ([key, entries]) => {
       const exact = entries.find(entry => entry.rest === key);
       const grouped = entries.some(entry => entry.rest !== key);

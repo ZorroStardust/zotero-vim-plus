@@ -21,7 +21,7 @@ if (Get-Command node -ErrorAction SilentlyContinue) {
             'content/keymapLabels.js', 'content/zoteroVimHelp.js',
             'content/zoteroVimReader.js', 'content/zoteroVimFlash.js', 'content/zoteroVimMain.js',
             'content/zoteroVimLinks.js',
-            'content/zoteroVimSearch.js',
+            'content/zoteroVimSearch.js', 'content/zoteroVimLibrary.js',
             'content/zoteroVimFocus.js',
             'content/zoteroVimNoteDiagnostics.js', 'content/prefs.js'
         )) {

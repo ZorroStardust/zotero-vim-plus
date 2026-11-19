@@ -107,6 +107,7 @@ Object.assign(ZoteroVim, {
     const readerScanHandler = () => {
       this._syncShortcutHelp?.(mainWinState);
       this._syncSpacekeysContext(mainWinState);
+      this._syncWorksetMarkers?.(win, mainWinState);
       this._rescanSelectedReader(win);
       this._syncMainContextNoteListener(win, mainWinState);
     };
@@ -136,6 +137,8 @@ Object.assign(ZoteroVim, {
 
     mainWinState.cleanup = () => {
       this._cancelLibrarySearch?.(mainWinState);
+      mainWinState._libraryWorkset?.clear();
+      this._clearWorksetMarkers?.(mainWinState);
       this._closeShortcutHelp?.(mainWinState, false);
       this._cancelSpacekeys(mainWinState);
       win.clearInterval(readerScanTimer);
@@ -251,6 +254,10 @@ Object.assign(ZoteroVim, {
     const bindings = this.getBindings();
     const modePrefix = 'main:';
     const directAction = bindings[modePrefix + keyStr];
+    if (!winState.keyBuffer && directAction === 'mainToggleWorkset') {
+      if (this._mainDetectFocusedPanel(win, winState, { strict: true }) !== 'items') return;
+      if (e.repeat) { e.preventDefault(); e.stopPropagation(); return; }
+    }
     if (directAction === 'mainPrevTab' || directAction === 'mainNextTab') {
       // Skip tab switching while the user is actually editing text — the
       // side-panel note editor, Zotero's annotation-comment popup, or this
@@ -437,6 +444,9 @@ Object.assign(ZoteroVim, {
 
     this._mainSyncFocusedPanel(win, winState);
     Zotero.debug('[ZoteroVim] Main action: ' + action + ' count:' + count);
+    if (this._libraryActions?.includes(action)) {
+      return this._runLibraryAction(action, win, winState);
+    }
 
     // Colored-tag shortcuts (t1..t9 toggle position N, t0 clears all).
     // Routed before the switch so the ten actions share one implementation.
@@ -4344,7 +4354,7 @@ Object.assign(ZoteroVim, {
 
   // ── Fuzzy picker ──────────────────────────────────────────────────────────
 
-  async _openFuzzyPicker(win, winState, scope) {
+  async _openFuzzyPicker(win, winState, scope, choices = null) {
     if (winState.pickerOpen) return;
     if (winState.notesLayoutOpen) this._closeMainNotesLayout(win, winState);
     winState.pickerOpen  = true;
@@ -4388,9 +4398,10 @@ Object.assign(ZoteroVim, {
 
     const input = h('input');
     input.type = 'text';
+    const form = choices?.form;
     const isItemPicker = scope === 'all' || scope === 'collection';
     const zh = this._isZhLocale();
-    input.placeholder = scope === 'tabs'
+    input.placeholder = choices ? choices.placeholder : scope === 'tabs'
       ? (zh ? '按提示选择标签页或搜索标题…' : 'Pick tab by hint or search tab title...')
       : scope === 'collections' ? (zh ? '搜索分类…' : 'Search collections...')
       : (zh ? '搜索条目…' : 'Search items...');
@@ -4408,7 +4419,7 @@ Object.assign(ZoteroVim, {
     const hintBar = h('div');
     hintBar.style.cssText =
       'padding:4px 12px;font-size:11px;color:#6c7086;border-top:1px solid #313244;flex-shrink:0;';
-    hintBar.textContent = scope === 'tabs'
+    hintBar.textContent = choices ? choices.hint : scope === 'tabs'
       ? (zh ? '按提示选择标签页或搜索标题 · Ctrl+j/k 导航 · Enter 选择 · Esc 关闭'
         : 'Type hint letter (empty query) or search title · Ctrl+j/k navigate · Enter select · Esc close')
       : scope === 'collections' ? (zh ? 'Ctrl+j/k 导航 · Enter 选择分类 · Esc 关闭'
@@ -4418,7 +4429,11 @@ Object.assign(ZoteroVim, {
       : 'Ctrl+j/k navigate · Enter select · Ctrl+o open · Ctrl+y yank citation · ' +
         'Ctrl+Shift+y yank citekey · Esc close';
 
-    inputWrap.appendChild(input);
+    if (form) {
+      this._buildPickerForm(win, winState, modal, inputWrap, input, results, form, h);
+    } else {
+      inputWrap.appendChild(input);
+    }
     modal.appendChild(inputWrap);
     modal.appendChild(results);
     modal.appendChild(hintBar);
@@ -4433,13 +4448,14 @@ Object.assign(ZoteroVim, {
     winState._pickerItems    = [];
     winState._pickerPointer  = null;
     winState._pickerScope    = scope;
+    winState._pickerChoices  = choices;
     const itemSearch = isItemPicker ? { zh, mode: 0, type: 0, data: null, request: 0 } : null;
     winState._pickerItemSearch = itemSearch;
     if (itemSearch) this._buildItemPickerControls(winState, inputWrap);
 
     // Dismiss on backdrop click
     overlay.addEventListener('mousedown', (ev) => {
-      if (ev.target === overlay) this._closeFuzzyPicker(win, winState);
+      if (ev.target === overlay) this._closeFuzzyPicker(win, winState, true);
     });
     overlay.addEventListener('mousemove', (ev) => this._onPickerMouseMove(ev, winState));
 
@@ -4448,20 +4464,30 @@ Object.assign(ZoteroVim, {
       this._filterAndRenderPicker(winState, input.value);
     };
 
-    input.addEventListener('input', onInput);
+    if (!form) input.addEventListener('input', onInput);
 
     winState._pickerCleanup = () => {
       try { input.removeEventListener('input', onInput); } catch (_) {}
     };
 
     setTimeout(() => {
-      if (winState._pickerInput === input) input.focus();
+      if (winState._pickerInput !== input) return;
+      if (form && form.field === undefined) {
+        winState._pickerCancelButton.focus();
+      } else {
+        input.focus();
+        if (form) input.select?.();
+      }
     }, 30);
+
+    if (form) return;
 
     // ── Load items ──────────────────────────────────────────────────────────
     try {
       let pickerItems;
-      if (scope === 'tabs') {
+      if (choices) {
+        pickerItems = choices.rows;
+      } else if (scope === 'tabs') {
         pickerItems = this._buildTabPickerItems(win);
       } else if (scope === 'collections') {
         pickerItems = await this._buildCollectionPickerItems(zh);
@@ -4483,7 +4509,74 @@ Object.assign(ZoteroVim, {
 
     if (winState.pickerOpen && winState._pickerInput === input) {
       this._filterAndRenderPicker(winState, input.value);
+      if (choices?.initialID) {
+        const index = winState._pickerFiltered.findIndex(row => row.id === choices.initialID);
+        if (index >= 0) {
+          winState._pickerSelected = index;
+          this._updatePickerSelection(winState);
+        }
+      }
     }
+  },
+
+  _buildPickerForm(win, state, modal, inputWrap, input, results, form, h) {
+    const zh = this._isZhLocale();
+    modal.setAttribute('role', 'dialog');
+    modal.setAttribute('aria-modal', 'true');
+    modal.setAttribute('aria-label', form.title);
+    modal.style.width = 'min(520px, 90vw)';
+
+    const title = h('div');
+    title.style.cssText = 'font-size:15px;font-weight:bold;padding:14px 12px 0;';
+    title.textContent = form.title;
+    modal.appendChild(title);
+
+    inputWrap.style.borderBottom = 'none';
+    if (form.field !== undefined) {
+      input.value = form.initial || '';
+      input.setAttribute('aria-label', form.field);
+      inputWrap.appendChild(input);
+    } else {
+      inputWrap.hidden = true;
+    }
+    results.removeChild(results.firstChild);
+    const details = h('div');
+    details.style.cssText = 'color:#bac2de;padding:4px 12px 12px;white-space:pre-wrap;'
+      + 'overflow-wrap:anywhere;';
+    details.textContent = form.details || '';
+    if (details.textContent) results.appendChild(details);
+
+    const controls = h('div');
+    controls.style.cssText = 'display:flex;justify-content:flex-end;gap:8px;padding:8px 12px 12px;';
+    const button = (text, color, background, run) => {
+      const el = h('button');
+      el.type = 'button';
+      el.style.cssText = 'border:0;border-radius:4px;padding:5px 10px;cursor:pointer;'
+        + 'font:inherit;color:' + color + ';background:' + background + ';';
+      el.textContent = text;
+      el.addEventListener('click', run);
+      controls.appendChild(el);
+      return el;
+    };
+    state._pickerCancelButton = button(zh ? '取消' : 'Cancel', '#cdd6f4', '#313244',
+      () => this._closeFuzzyPicker(win, state, true));
+    const submit = button(form.confirm, '#1e1e2e', form.destructive ? '#f38ba8' : '#89b4fa',
+      () => this._submitPickerForm(win, state));
+    if (form.field !== undefined) {
+      const validate = () => { submit.disabled = !input.value.trim(); };
+      validate();
+      input.addEventListener('input', validate);
+    }
+    results.appendChild(controls);
+  },
+
+  async _submitPickerForm(win, state) {
+    const form = state._pickerChoices?.form;
+    if (!form) return;
+    const value = state._pickerInput.value.trim();
+    if (form.field !== undefined && !value) return;
+    this._closeFuzzyPicker(win, state);
+    try { await form.submit(value); } catch (e) { this._libraryActionError(win, e); }
   },
 
   _filterAndRenderPicker(winState, query) {
@@ -4687,6 +4780,30 @@ Object.assign(ZoteroVim, {
       e.stopPropagation();
       return;
     }
+    const form = winState._pickerChoices?.form;
+    if (form) {
+      e.stopPropagation();
+      if (k === 'Escape') {
+        e.preventDefault();
+        this._closeFuzzyPicker(win, winState, true);
+      } else if (k === 'Enter') {
+        e.preventDefault();
+        if (!e.repeat) {
+          if (e.target?.localName === 'button') e.target.click();
+          else this._submitPickerForm(win, winState);
+        }
+      } else if (k === 'Tab') {
+        const buttons = winState._pickerResults.querySelectorAll('button:not(:disabled)');
+        const input = winState._pickerInput;
+        const targets = form.field === undefined ? [...buttons] : [input, ...buttons];
+        const index = targets.indexOf(win.document.activeElement);
+        const next = index < 0 ? (e.shiftKey ? targets.length - 1 : 0)
+          : (index + (e.shiftKey ? -1 : 1) + targets.length) % targets.length;
+        e.preventDefault();
+        targets[next]?.focus();
+      }
+      return;
+    }
     if (itemSearch && e.ctrlKey && !e.altKey && !e.metaKey
         && (keyLower === 'h' || keyLower === 'l')) {
       e.preventDefault(); e.stopPropagation();
@@ -4705,6 +4822,12 @@ Object.assign(ZoteroVim, {
     if (k === 'Escape') {
       e.preventDefault(); e.stopPropagation();
       this._closeFuzzyPicker(win, winState);
+      return;
+    }
+    const choiceCommand = winState._pickerChoices?.commands?.[this._keyString(e)];
+    if (choiceCommand) {
+      e.preventDefault(); e.stopPropagation();
+      if (!e.repeat) this._pickerSelectItem(win, winState, false, choiceCommand);
       return;
     }
     if (k === 'Enter') {
@@ -4887,11 +5010,17 @@ Object.assign(ZoteroVim, {
     this._updatePickerSelection(winState, false);
   },
 
-  async _pickerSelectItem(win, winState, open = false) {
+  async _pickerSelectItem(win, winState, open = false, command) {
     const item = (winState._pickerFiltered || [])[winState._pickerSelected];
     if (!item) return;
     const input = winState._pickerInput;
+    const choices = winState._pickerChoices;
     try {
+      if (choices) {
+        this._closeFuzzyPicker(win, winState);
+        await (command || choices.select)(item);
+        return;
+      }
       if (winState._pickerScope === 'tabs') {
         this._mainSelectTab(win, item.id);
         Zotero.debug('[ZoteroVim] pickerSelectTab: id=' + item.id);
@@ -4921,6 +5050,7 @@ Object.assign(ZoteroVim, {
       }
     } catch (e) {
       Zotero.debug('[ZoteroVim] _pickerSelectItem error: ' + e);
+      if (choices) this._libraryActionError?.(win, e);
     }
     if (winState._pickerInput === input) this._closeFuzzyPicker(win, winState);
   },
@@ -5011,8 +5141,9 @@ Object.assign(ZoteroVim, {
     this._closeFuzzyPicker(win, winState);
   },
 
-  _closeFuzzyPicker(win, winState) {
+  _closeFuzzyPicker(win, winState, cancel = false) {
     if (!winState || !winState.pickerOpen) return;
+    const onCancel = cancel && winState._pickerChoices?.form?.cancel;
     winState.pickerOpen = false;
     try { winState._pickerCleanup?.(); } catch (_) {}
     try {
@@ -5027,6 +5158,8 @@ Object.assign(ZoteroVim, {
     winState._pickerCleanup  = null;
     winState._pickerPointer  = null;
     winState._pickerScope    = null;
+    winState._pickerChoices  = null;
+    winState._pickerCancelButton = null;
     clearTimeout(winState._pickerItemSearch?.timer);
     winState._pickerItemSearch = null;
 
@@ -5042,6 +5175,7 @@ Object.assign(ZoteroVim, {
       if (prevEl && prevEl.isConnected) prevEl.focus();
       else if (prevWin) prevWin.focus();
     } catch (_) {}
+    if (onCancel) Promise.resolve().then(onCancel).catch(e => this._libraryActionError(win, e));
   },
 
   _toggleMainNotesLayout(win, winState) {

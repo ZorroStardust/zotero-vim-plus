@@ -646,6 +646,28 @@ Vim engine. There is no `:` command line, substitution, Vim configuration file,
 named-register system, block Visual mode or custom note-command remapping yet.
 The internal yank buffer is not a full Vim register implementation.
 
+#### Library selection and reading groups
+
+| Key in the library | Action |
+|---|---|
+| `s` | Toggle the current item or native multi-selection in the temporary set |
+| `<space>ss` / `<space>sc` | Review or clear the set |
+| `<space>bc` / `<space>ba` | Create a reading group or append PDFs to one |
+| `<space>bl` | Browse saved reading groups and open a PDF |
+| `<space>ta` / `<space>tr` | Add or remove a tag |
+| `<space>ca` | Add top-level items to a collection in the same library |
+
+A blue bar marks items in the set. The set survives collection and filter changes
+in the current window. When empty,
+these batch actions use Zotero's current selection. In the set picker, Enter
+reveals an item and Delete removes it from the set.
+
+When an item has multiple PDFs, choose one before saving the group. Groups are
+stored in the local Zotero profile and survive restart. Saving a group leaves
+PDFs closed until you choose one with Enter. In the group picker, Ctrl+r renames
+and Delete removes a group. Inside a group, Delete removes a PDF reference and
+Alt+Up/Down moves it. Removing a group or member leaves the library items intact.
+
 #### Library tree navigation (left pane)
 
 These bindings act on Zotero's native left pane (collection tree and item

@@ -28,7 +28,7 @@ const context = vm.createContext({
   },
 });
 const root = path.join(__dirname, '..');
-for (const file of ['zoteroVim.js', 'zoteroVimMain.js']) {
+for (const file of ['zoteroVim.js', 'zoteroVimMain.js', 'zoteroVimLibrary.js']) {
   vm.runInContext(fs.readFileSync(path.join(root, 'content', file), 'utf8'), context);
 }
 const plugin = context.ZoteroVim;
@@ -422,6 +422,192 @@ async function main() {
     finishSelection();
     await new Promise(resolve => setImmediate(resolve));
     assert.deepEqual(f.opened, [highlighted]);
+  });
+  await check('selection markers follow virtual rows and are removed on clear or replacement',
+    async () => {
+      const f = await fixture();
+      plugin._closeFuzzyPicker(f.win, f.state);
+      const doc = f.win.document;
+      doc.head = element(doc);
+      const picked = makeItem(1, 'First', { libraryID: 1, key: 'SAME' });
+      const other = makeItem(2, 'Second', { libraryID: 2, key: 'SAME' });
+      const row = { id: 'item-tree-main-default-row-0', classList: {
+        toggle(_name, value) { row.marked = value; },
+        remove() { row.marked = false; },
+      } };
+      const root = element(doc);
+      root.querySelectorAll = () => [row];
+      let currentRoot = root;
+      let currentItem = picked;
+      doc.getElementById = () => currentRoot;
+      f.win.ZoteroPane.getSelectedItems = () => [picked];
+      f.win.ZoteroPane.itemsView = { getRow: () => ({ ref: currentItem }) };
+      let refresh;
+      let disconnected = 0;
+      f.win.MutationObserver = function (callback) {
+        refresh = callback;
+        this.observe = () => {};
+        this.disconnect = () => disconnected++;
+      };
+      plugin._toggleWorkset(f.win, f.state);
+      assert.equal(row.marked, true);
+      currentItem = other;
+      refresh();
+      assert.equal(row.marked, false);
+      currentItem = picked;
+      refresh();
+      assert.equal(row.marked, true);
+      currentRoot = null;
+      plugin._syncWorksetMarkers(f.win, f.state);
+      assert.equal(row.marked, false);
+      assert.equal(disconnected, 1);
+      assert.equal(doc.head.children.length, 0);
+      currentRoot = root;
+      plugin._syncWorksetMarkers(f.win, f.state);
+      assert.equal(row.marked, true);
+      await plugin._runLibraryAction('mainClearWorkset', f.win, f.state);
+      assert.equal(row.marked, false);
+      assert.equal(disconnected, 2);
+    });
+
+  await check('cross-collection selection creates, reopens and edits a saved PDF group', async () => {
+    const f = await fixture();
+    const win = f.win;
+    const state = f.state;
+    plugin._closeFuzzyPicker(win, state);
+    const first = makeItem(1, 'First paper', { libraryID: 1, key: 'FIRST',
+      getAttachments: () => [3, 4] });
+    const second = makeItem(2, 'Second paper', { libraryID: 2, key: 'SECOND',
+      getAttachments: () => [5] });
+    const pdf = (id, libraryID, key) => makeItem(id, 'PDF ' + id,
+      { itemType: 'attachment', attachmentContentType: 'application/pdf', libraryID, key });
+    const pdfs = [pdf(3, 1, 'SAME'), pdf(4, 1, 'OTHER'), pdf(5, 2, 'SAME')];
+    const items = [first, second, ...pdfs];
+    context.Zotero.Items.get = id => items.find(item => item.id === id);
+    context.Zotero.Items.getByLibraryAndKey = (libraryID, key) =>
+      items.find(item => item.libraryID === libraryID && item.key === key);
+    context.Zotero.Utilities = { randomString: () => 'group-1' };
+    let selected = first;
+    win.ZoteroPane.getSelectedItems = () => [selected];
+    win.ZoteroPane.itemsView = { rowCount: 1, getRow: () => ({ ref: selected }) };
+    plugin._toggleWorkset(win, state);
+    selected = second;
+    plugin._toggleWorkset(win, state);
+    assert.equal(plugin._libraryTargets(win, state).hidden, 1);
+
+    await plugin._runLibraryAction('mainCreateReadingGroup', win, state);
+    assert.equal(state._pickerFiltered.length, 2);
+    key(f, 'Escape');
+    assert.equal(plugin._readReadingGroups().length, 0);
+
+    await plugin._runLibraryAction('mainCreateReadingGroup', win, state);
+    await plugin._pickerSelectItem(win, state);
+    assert.match(state._pickerChoices.form.details, /1 outside the current list/);
+    key({ ...f, input: state._pickerInput }, 'R');
+    assert.equal(state._pickerInput.value, 'R');
+    key(f, 'Enter', { isComposing: true });
+    assert.equal(plugin._readReadingGroups().length, 0);
+    state._pickerInput.value = 'Reading sprint';
+    await plugin._submitPickerForm(win, state);
+    assert.deepEqual(Array.from(plugin._readReadingGroups()[0].members, item => item.libraryID),
+      [1, 2]);
+    assert.deepEqual(f.opened, []);
+
+    const fresh = { ...f, state: {} };
+    await plugin._runLibraryAction('mainShowReadingGroups', win, fresh.state);
+    await plugin._pickerSelectItem(win, fresh.state);
+    assert.equal(key(fresh, 'ArrowDown', { altKey: true }).prevented, true);
+    assert.equal(plugin._readReadingGroups()[0].members[0].libraryID, 2);
+    assert.equal(fresh.state._pickerSelected, 1);
+    await plugin._pickerSelectItem(win, fresh.state);
+    assert.deepEqual(f.opened, [pdfs[0]]);
+
+    await plugin._runLibraryAction('mainAppendReadingGroup', win, state);
+    await plugin._pickerSelectItem(win, state);
+    await plugin._pickerSelectItem(win, state);
+    assert.equal(plugin._readReadingGroups()[0].members.length, 2);
+    assert.equal(state.pickerOpen, false);
+    assert.deepEqual(f.opened, [pdfs[0]]);
+
+    await plugin._runLibraryAction('mainShowReadingGroups', win, fresh.state);
+    key(fresh, 'Delete');
+    assert.equal(fresh.state._pickerChoices.form.destructive, true);
+    key(fresh, 'Escape');
+    await Promise.resolve();
+    assert.equal(plugin._readReadingGroups().length, 1);
+    assert.equal(fresh.state._pickerScope, 'libraryChoices');
+    key(fresh, 'Delete');
+    await plugin._submitPickerForm(win, fresh.state);
+    assert.equal(plugin._readReadingGroups().length, 0);
+  });
+
+  await check('batch tag edits confirm hidden targets and reject read-only items', async () => {
+    const f = await fixture();
+    plugin._closeFuzzyPicker(f.win, f.state);
+    const changes = [];
+    const items = [1, 2].map(id => makeItem(id, 'Item ' + id, {
+      libraryID: 1, key: String(id), tags: new Set(),
+      hasTag(tag) { return this.tags.has(tag); },
+      addTag(tag) { this.tags.add(tag); },
+      removeTag(tag) { this.tags.delete(tag); },
+      async save() { changes.push(this.id); },
+    }));
+    let selected = items[0];
+    f.win.ZoteroPane.getSelectedItems = () => [selected];
+    f.win.ZoteroPane.itemsView = { rowCount: 1, getRow: () => ({ ref: selected }) };
+    context.Zotero.Items.getByLibraryAndKey = (_libraryID, key) =>
+      items.find(item => item.key === key);
+    plugin._toggleWorkset(f.win, f.state);
+    selected = items[1];
+    plugin._toggleWorkset(f.win, f.state);
+    let transactions = 0;
+    context.Zotero.DB = { executeTransaction: async fn => { transactions++; return fn(); } };
+    await plugin._runLibraryAction('mainAddWorksetTag', f.win, f.state);
+    assert.match(f.state._pickerChoices.form.details, /2 items · 1 outside/);
+    await plugin._submitPickerForm(f.win, f.state);
+    assert.equal(f.state.pickerOpen, true);
+    key(f, 'Escape');
+    assert.equal(transactions, 0);
+    await plugin._runLibraryAction('mainAddWorksetTag', f.win, f.state);
+    f.state._pickerInput.value = 'To read';
+    await plugin._submitPickerForm(f.win, f.state);
+    assert.deepEqual(changes, [1, 2]);
+    items[1].isEditable = () => false;
+    await plugin._runLibraryAction('mainRemoveWorksetTag', f.win, f.state);
+    f.state._pickerInput.value = 'To read';
+    await plugin._submitPickerForm(f.win, f.state);
+    assert.equal(transactions, 1);
+    assert(items.every(item => item.hasTag('To read')));
+  });
+  await check('batch collection adds only to a valid collection in the source library', async () => {
+    const f = await fixture();
+    plugin._closeFuzzyPicker(f.win, f.state);
+    const membership = new Set();
+    const item = makeItem(1, 'Article', {
+      libraryID: 1, key: 'ARTICLE', inCollection: id => membership.has(id),
+      addToCollection: id => membership.add(id), async save() {},
+    });
+    context.Zotero.Items.getByLibraryAndKey = () => item;
+    f.win.ZoteroPane.getSelectedItems = () => [item];
+    const collections = [{ id: 1, libraryID: 2 }, { id: 2, libraryID: 1 }];
+    context.Zotero.Collections = { get: id => collections.find(collection => collection.id === id) };
+    const oldBuild = plugin._buildCollectionPickerItems;
+    plugin._buildCollectionPickerItems = async () => [
+      { id: 'C1', title: 'Other library', path: 'Group' },
+      { id: 'C2', title: 'Reading', path: 'My Library' },
+      { id: 'S1', title: 'Saved search', path: 'My Library' },
+    ];
+    plugin._mainWindowState.set(f.win, f.state);
+    try {
+      await plugin._runLibraryAction('mainAddWorksetToCollection', f.win, f.state);
+      assert.deepEqual(Array.from(f.state._pickerFiltered, row => row.title), ['Reading']);
+      await plugin._pickerSelectItem(f.win, f.state);
+      await plugin._submitPickerForm(f.win, f.state);
+      assert.deepEqual([...membership], [2]);
+    } finally {
+      plugin._mainWindowState.delete(f.win);
+      plugin._buildCollectionPickerItems = oldBuild;
+    }
   });
   console.log('Fuzzy picker checks passed (' + passed + ' cases).');
 }

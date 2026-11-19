@@ -46,6 +46,7 @@ async function startup({ id, version, rootURI }) {
   Services.scriptloader.loadSubScript(rootURI + 'content/zoteroVimLinks.js');
   Services.scriptloader.loadSubScript(rootURI + 'content/zoteroVimMain.js');
   Services.scriptloader.loadSubScript(rootURI + 'content/zoteroVimSearch.js');
+  Services.scriptloader.loadSubScript(rootURI + 'content/zoteroVimLibrary.js');
   Services.scriptloader.loadSubScript(rootURI + 'content/zoteroVimFocus.js');
   Services.scriptloader.loadSubScript(rootURI + 'content/zoteroVimHelp.js');
   // The opt-in diagnostic package observes note input without changing it.

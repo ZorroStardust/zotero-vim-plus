@@ -361,6 +361,7 @@ Object.assign(ZoteroVim, {
       actions.push('mainFocusSearch', 'mainFocusTree', 'mainFocusItems', 'mainNotesLayout',
         'mainNavFirst', 'mainNavLast');
       if (ui.libraryPanel) actions.push('mainSearch');
+      actions.push(...(this._libraryActions || []));
     }
     if (win.Zotero_Tabs && (scope !== 'normal' || ui.mainState)) {
       actions.push('mainTabPick', 'mainPrevTab', 'mainNextTab');

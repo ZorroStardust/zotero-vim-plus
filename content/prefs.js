@@ -1,5 +1,5 @@
 /* global Zotero, Components, Services, document, window, MutationObserver, dump,
-  ZV_SETTINGS_PANE, ZV_SETTINGS_SELECT, ZV_THEME, ZV_KEYMAP_LABELS, ZV_I18N_CURRENT_LANG, ZV_I18N_APPLY, ZV_I18N_STR, ZV_I18N_ACTION */
+  ZV_SETTINGS_PANE, ZV_SETTINGS_SELECT, ZV_THEME, ZV_KEYMAP_LABELS, ZV_I18N_CURRENT_LANG, ZV_I18N_RESOLVE, ZV_I18N_APPLY, ZV_I18N_STR, ZV_I18N_ACTION */
 "use strict";
 
 // ── Pref helpers ─────────────────────────────────────────────────────────────
@@ -404,7 +404,7 @@ function _zvInit() {
     if (langSelect) {
       langSelect.value = lang;
       _zvOnSelect(langSelect, () => {
-        const next = langSelect.value === "zh-CN" ? "zh-CN" : "en";
+        const next = ZV_I18N_RESOLVE(langSelect.value) || "en";
         _zvSet("language", next);
         ZV_I18N_APPLY(document, next);
         document.getElementById("zv-theme")?._zvSyncThemeCards?.();

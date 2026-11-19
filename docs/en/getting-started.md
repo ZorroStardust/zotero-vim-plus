@@ -14,6 +14,8 @@ Zotero Vim Plus supports Zotero 7–10 on macOS, Linux, and Windows.
 
 To update manually, install the new XPI from the same menu.
 
+To change the plugin language, open **Zotero Vim Plus → General → Language** in Zotero’s settings.
+
 ## Try it on a PDF
 
 1. Open a PDF in Zotero and click the page to focus it.

@@ -1,6 +1,6 @@
 # Zotero Vim Plus
 
-[English](README.md) · [简体中文](README.zh-CN.md) · Español
+[English](README.md) · [简体中文](README.zh-CN.md) · Español · [日本語](README.ja.md) · [한국어](README.ko.md) · [Français](README.fr.md) · [Italiano](README.it.md) · [Deutsch](README.de.md) · [Русский](README.ru.md)
 
 <a name="requisitos"></a>
 <a name="características"></a>
@@ -9,7 +9,7 @@ Lee y anota artículos con teclas al estilo de Vim y sigue escribiendo en el edi
 de notas de Zotero. Compatible con **Zotero 7–10** en macOS, Linux y Windows.
 
 [Descargar el XPI](https://github.com/ZorroStardust/zotero-vim-plus/releases/latest/download/zoetero-vim-plus.xpi) ·
-[Guía rápida en inglés](docs/en/getting-started.md) ·
+[Guía en español](docs/es-ES/README.md) ·
 [Documentación](docs/README.md) ·
 [Versiones](https://github.com/ZorroStardust/zotero-vim-plus/releases)
 
@@ -36,9 +36,8 @@ Abre un PDF y haz clic en la página. Usa `j` / `k` para desplazarte. Pulsa
 
 ## Atajos de teclado predeterminados
 
-La guía actual está disponible en [inglés](docs/en/shortcuts.md) y
-[chino](docs/zh-CN/shortcuts.md). También puedes consultar la
-[guía de la biblioteca en inglés](docs/en/manage-library.md) y el
+La [guía en español](docs/es-ES/README.md) explica cómo leer y anotar PDF,
+organizar la biblioteca y editar notas. También está disponible el
 [README archivado en español](docs/archive/README.es-ES.md).
 
 <a name="compilación-desde-el-código-fuente"></a>

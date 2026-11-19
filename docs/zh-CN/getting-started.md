@@ -12,6 +12,8 @@ Zotero Vim Plus 支持 macOS、Linux 和 Windows 上的 Zotero 7–10。
 
 手动更新时，从同一菜单安装新版 XPI。
 
+要切换插件语言，在 Zotero 设置中打开 **Zotero Vim Plus → 常规 → 语言**。
+
 ## 在 PDF 中试用
 
 1. 在 Zotero 中打开一篇 PDF，点击页面，让阅读器获得焦点。

@@ -1,6 +1,6 @@
 # Zotero Vim Plus
 
-[English](README.md) · 简体中文 · [Español](README.es-ES.md)
+[English](README.md) · 简体中文 · [Español](README.es-ES.md) · [日本語](README.ja.md) · [한국어](README.ko.md) · [Français](README.fr.md) · [Italiano](README.it.md) · [Deutsch](README.de.md) · [Русский](README.ru.md)
 
 <a name="系统要求"></a>
 <a name="功能"></a>

@@ -8,7 +8,8 @@ Object.assign(ZoteroVim, {
   _createSettings(ui) {
     this._attachTheme(ui.doc);
     const { overlay, panel, header, close, h } = this._createShortcutDialog(ui,
-      ui.zh ? 'Vim Plus 设置' : 'Vim Plus Settings', () => this._requestSettingsClose(ui));
+      this._uiText('zv.ui.settings', ui.zh ? 'Vim Plus 设置' : 'Vim Plus Settings'),
+      () => this._requestSettingsClose(ui));
     const style = h('style');
     style.textContent = `
       #zv-settings-overlay { color-scheme: var(--zv-theme-scheme, dark); }
@@ -184,6 +185,7 @@ Object.assign(ZoteroVim, {
       const tab = h('button');
       tab.id = 'zv-settings-tab-' + id;
       tab.textContent = ui.zh ? zh : en;
+      tab.setAttribute('data-i18n', 'zv.settings.' + id);
       tab.setAttribute('role', 'tab');
       tab.setAttribute('aria-controls', section.id);
       section.setAttribute('aria-labelledby', tab.id);
@@ -207,7 +209,7 @@ Object.assign(ZoteroVim, {
       window: ui.win,
       document: {
         getElementById: id => list.querySelector('#' + id),
-        querySelectorAll: selector => list.querySelectorAll(selector),
+        querySelectorAll: selector => [...list.querySelectorAll(selector), ...tabs.querySelectorAll(selector)],
         createElement: h,
       },
     };

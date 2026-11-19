@@ -265,8 +265,8 @@ Object.assign(ZoteroVim, {
 
   /** Shared descriptions omit baked-in default-key hints after a remap. */
   _shortcutActionLabel(action, zh) {
-    const labels = ZV_KEYMAP_LABELS[zh ? 'zh-CN' : 'en'];
-    return (labels[action] || String(action).replace(/([a-z])([A-Z])/g, '$1 $2'))
+    const labels = ZV_KEYMAP_LABELS[zh ? 'zh-CN' : this._uiLanguage()];
+    return (labels?.[action] || ZV_KEYMAP_LABELS.en[action] || String(action).replace(/([a-z])([A-Z])/g, '$1 $2'))
       .split(/\s+\(|（/)[0]
       .replace(/^(?:(?:Main window|Reader):\s*|(?:主窗口|阅读器)：\s*)/, '');
   },
@@ -629,7 +629,8 @@ Object.assign(ZoteroVim, {
     heading.appendChild(title);
     if (!ui.settings) heading.appendChild(subtitle);
     const close = h('button');
-    close.type = 'button'; close.textContent = ui.zh ? '关闭 · Esc' : 'Close · Esc';
+    close.type = 'button';
+    close.textContent = this._uiText('zv.ui.close', ui.zh ? '关闭' : 'Close') + ' · Esc';
     close.style.cssText = 'background:var(--zv-theme-control, #313244);color:var(--zv-theme-text, #cdd6f4);border:1px solid var(--zv-theme-selected, #45475a);'
       + 'border-radius:6px;padding:5px 10px;cursor:pointer;';
     close.addEventListener('click', onClose);
@@ -646,16 +647,18 @@ Object.assign(ZoteroVim, {
   },
 
   _createShortcutHelp(ui) {
-    const title = ui.palette ? (ui.zh ? '命令面板' : 'Command palette')
-      : (ui.zh ? '快捷键总览' : 'Keyboard shortcuts');
+    const title = ui.palette ? this._uiText('zv.ui.commands', ui.zh ? '命令面板' : 'Command palette')
+      : this._uiText('zv.ui.shortcuts', ui.zh ? '快捷键总览' : 'Keyboard shortcuts');
     const { overlay, panel, header, h } = this._createShortcutDialog(ui, title,
       () => this._closeShortcutHelp(ui.owner));
     const searchWrap = h('div');
     searchWrap.style.cssText = 'padding:0 18px 8px;flex-shrink:0;';
     const input = h('input');
     input.type = 'text';
-    input.placeholder = ui.palette ? (ui.zh ? '搜索命令或按键…' : 'Search commands or keys…')
-      : (ui.zh ? '搜索按键、功能或模式，例如：Space、标注、删除…' : 'Search keys, actions or modes…');
+    input.placeholder = ui.palette
+      ? this._uiText('zv.ui.searchCommands', ui.zh ? '搜索命令或按键…' : 'Search commands or keys…')
+      : this._uiText('zv.ui.searchShortcuts', ui.zh
+        ? '搜索按键、功能或模式，例如：Space、标注、删除…' : 'Search keys, actions or modes…');
     input.setAttribute('aria-label', input.placeholder);
     input.style.cssText = 'width:100%;box-sizing:border-box;background:var(--zv-theme-control, #313244);color:var(--zv-theme-text, #cdd6f4);'
       + 'border:1px solid var(--zv-theme-border, #585b70);border-radius:7px;padding:6px 10px;font:inherit;';
@@ -670,7 +673,8 @@ Object.assign(ZoteroVim, {
       ['popups', 'Popups', '弹窗操作']];
     ui.categories = (ui.palette ? [] : categories).map(([category, en, zh]) => {
       const button = h('button'); button.type = 'button';
-      button.textContent = ui.zh ? zh : en;
+      const group = category === 'reader' || category === 'notes' ? 'settings' : 'ui';
+      button.textContent = this._uiText('zv.' + group + '.' + category, ui.zh ? zh : en);
       button.addEventListener('click', () => {
         ui.category = category;
         this._renderShortcutHelp(ui);

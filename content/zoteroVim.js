@@ -1,4 +1,4 @@
-/* global Zotero, Components, Services, ZV_THEME */
+/* global ZV_I18N_RESOLVE, ZV_I18N_STR, Zotero, Components, Services, ZV_THEME */
 /* eslint-disable no-unused-vars */
 
 /**
@@ -395,9 +395,22 @@ var ZoteroVim = {
 
   /** Use the plugin language when set, even if Zotero uses a different language. */
   _isZhLocale() {
+    if (typeof ZV_I18N_RESOLVE === 'function') return this._uiLanguage() === 'zh-CN';
     const language = this.getPref('language', '');
     if (language === 'en' || language === 'zh-CN') return language === 'zh-CN';
     return /^zh/i.test(Zotero.locale || '');
+  },
+
+  _uiLanguage() {
+    if (typeof ZV_I18N_RESOLVE !== 'function') return this._isZhLocale() ? 'zh-CN' : 'en';
+    return ZV_I18N_RESOLVE(this.getPref('language', ''))
+      || ZV_I18N_RESOLVE(Zotero.locale) || 'en';
+  },
+
+  _uiText(key, fallback) {
+    if (typeof ZV_I18N_STR !== 'function') return fallback;
+    const text = ZV_I18N_STR(key, this._uiLanguage());
+    return text === key ? fallback : text;
   },
 
   getBindings() {
@@ -1787,7 +1800,9 @@ var ZoteroVim = {
     let count = 0;
     for (const _ of text) count++;
     const zh = this._isZhLocale();
-    const length = zh ? count + ' 字符' : count + (count === 1 ? ' char' : ' chars');
+    const unit = count === 1 && this._uiLanguage() === 'en' ? 'char'
+      : this._uiText('zv.ui.characters', zh ? '字符' : 'chars');
+    const length = count + ' ' + unit;
     if (!count || buffer) return length;
 
     const bindings = this.getBindings();
@@ -1795,18 +1810,18 @@ var ZoteroVim = {
     const annotate = visualKeys.some(key => key.startsWith('visual:z')
       && /^(highlight|underline|addNote)/.test(bindings[key]));
     const hints = [];
-    for (const [preferred, action, en, cn] of [
-      ['y', 'copySelection', 'Copy', '复制'],
-      ['i', 'addNote', 'Comment', '批注'],
-      ['z', '', 'Annotate', '标注'],
-      ['t', 'translateSelection', 'Translate', '翻译'],
+    for (const [preferred, action, label, en, cn] of [
+      ['y', 'copySelection', 'copy', 'Copy', '复制'],
+      ['i', 'addNote', 'comment', 'Comment', '批注'],
+      ['z', '', 'annotate', 'Annotate', '标注'],
+      ['t', 'translateSelection', 'translate', 'Translate', '翻译'],
     ]) {
       let key = preferred;
       if (action && bindings['visual:' + preferred] !== action) {
         key = visualKeys.find(key => bindings[key] === action)?.slice('visual:'.length);
       }
       if (key && (action || annotate)) {
-        hints.push((this._shortcutKeyDisplay?.(key) || key) + ' ' + (zh ? cn : en));
+        hints.push((this._shortcutKeyDisplay?.(key) || key) + ' ' + this._uiText('zv.ui.' + label, zh ? cn : en));
       }
     }
     return [length, ...hints].join(' · ');
@@ -1837,7 +1852,8 @@ var ZoteroVim = {
     state.indicatorEl.style.display = 'block';
     const prefix = (state.countBuffer && mode === 'normal') ? state.countBuffer : '';
     const body = state._readerBodyText && (mode === 'visual' || mode === 'cursor')
-      ? (this._isZhLocale() ? ' · 正文' : ' BODY') : '';
+      ? (this._isZhLocale() ? ' · ' : ' ')
+        + this._uiText('zv.ui.body', this._isZhLocale() ? '正文' : 'BODY') : '';
     const visual = mode === 'visual' ? this._readerVisualIndicator(state, buffer) : '';
     const label = '-- ' + mode.toUpperCase() + body + ' --' + (prefix || buffer ? '  ' + prefix + buffer : '')
       + (visual ? '  ·  ' + visual : '') + (progress ? '  ·  ' + progress : '');

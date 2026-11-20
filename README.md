@@ -8,6 +8,8 @@ English · [简体中文](README.zh-CN.md) · [Español](README.es-ES.md) · [�
 Read and annotate papers with Vim-style keys, then keep typing in Zotero's rich-text
 note editor. Supports **Zotero 7–10** on macOS, Linux, and Windows.
 
+Visit the [official Zotero Vim Plus website](https://zorrostardust.github.io/zotero-vim-plus/) to watch the demo, download the plugin, and browse guides in nine languages.
+
 [Download the XPI](https://github.com/ZorroStardust/zotero-vim-plus/releases/latest/download/zoetero-vim-plus.xpi) ·
 [Quick start](docs/en/getting-started.md) ·
 [Documentation](docs/README.md) ·
@@ -34,7 +36,9 @@ to look up shortcuts. To make your first highlight, follow the
 <a name="customising-keybindings"></a>
 <a name="settings"></a>
 
-## Default keybindings
+<a name="default-keybindings"></a>
+
+## User guide
 
 [Read and navigate PDFs](docs/en/read-pdfs.md) ·
 [Create and edit annotations](docs/en/annotate-pdfs.md) ·

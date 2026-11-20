@@ -8,6 +8,8 @@
 用 Vim 按键在 Zotero 里读论文、做批注、编辑富文本笔记。
 支持 macOS、Linux 和 Windows 上的 **Zotero 7–10**。
 
+访问 [Zotero Vim Plus 官网](https://zorrostardust.github.io/zotero-vim-plus/zh-CN/)，可以观看演示、下载插件并浏览九种语言的使用指南。
+
 [下载 XPI](https://github.com/ZorroStardust/zotero-vim-plus/releases/latest/download/zoetero-vim-plus.xpi) ·
 [快速开始](docs/zh-CN/getting-started.md) ·
 [文档目录](docs/README.md) ·
@@ -34,7 +36,9 @@
 <a name="自定义按键绑定"></a>
 <a name="设置"></a>
 
-## 默认按键绑定
+<a name="默认按键绑定"></a>
+
+## 使用指南
 
 [阅读和定位 PDF](docs/zh-CN/read-pdfs.md) ·
 [选文和批注](docs/zh-CN/annotate-pdfs.md) ·

@@ -23,12 +23,12 @@ jobs:
         with:
           persist-credentials: false
       - uses: actions/configure-pages@v5
+      - name: Fetch and verify promotional media
+        run: node tools/fetch-demo-media.js docs/_data/demo_media.json docs/assets/demo
       - uses: actions/jekyll-build-pages@v1
         with:
           source: ./docs
           destination: ./_site
-      - name: Fetch and verify promotional media
-        run: node tools/fetch-demo-media.js docs/_data/demo_media.json _site/assets/demo
       - uses: actions/upload-pages-artifact@v3
         with:
           path: ./_site

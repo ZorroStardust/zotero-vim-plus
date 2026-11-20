@@ -3,6 +3,9 @@ zotero-vim.xpi
 zoetero-vim-plus.xpi
 dist/note-diagnostics/
 
+# Website demo assets downloaded from the promotional media release
+/docs/assets/demo/
+
 # AI session scratch data
 .sisyphus/
 

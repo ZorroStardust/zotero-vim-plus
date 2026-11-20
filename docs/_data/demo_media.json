@@ -1,0 +1,114 @@
+{
+  "repository": "ZorroStardust/zotero-vim-plus-media",
+  "tag": "promo-001",
+  "assets": {
+    "en.mp4": {
+      "bytes": 2954811,
+      "sha256": "cca474a8e59220c79e4c0df037646340ef02e4462881dd8303cc5997de5b4eaf"
+    },
+    "en.gif": {
+      "bytes": 2285614,
+      "sha256": "d66077eb0db10407485a4bd3fcdeda7224079a0674156a813e05898365d4e6e2"
+    },
+    "en.webp": {
+      "bytes": 20918,
+      "sha256": "0fd6ef531ebe0a9c943c161b4bb519528bb5f4dde70712277188d8500893a57c"
+    },
+    "zh-CN.mp4": {
+      "bytes": 3248360,
+      "sha256": "b9bfe61a0ab020c2f1aa5c76dffa6a7d8654228842bbc243ac0faa698397b2d5"
+    },
+    "zh-CN.gif": {
+      "bytes": 2294632,
+      "sha256": "220497a4d8e231f6d6913bdacdc5d8e3ab4006dc6789af3f982907054c2d6384"
+    },
+    "zh-CN.webp": {
+      "bytes": 21924,
+      "sha256": "6b9b84f28fc3c0476b340efe012954cfe602e6d25d52033857f227e1cc4421a0"
+    },
+    "es-ES.mp4": {
+      "bytes": 2978045,
+      "sha256": "9ea702cc0b1152e620eb7fc66dc73515c48e284b0c71e0e0dab6c8ea696963de"
+    },
+    "es-ES.gif": {
+      "bytes": 2267804,
+      "sha256": "69587204908686f18f11970b98270e79d62a3009045e5dfe4a142e2daee6ad23"
+    },
+    "es-ES.webp": {
+      "bytes": 21262,
+      "sha256": "9bae7fdecc9e53f100b958e8a653c02805f44f459ed4f2c6bd259c5453accbe6"
+    },
+    "ja.mp4": {
+      "bytes": 3001038,
+      "sha256": "430a0c2ca7d7466765b99b5ebf11fce701a41391d71f1fad5245498b8702ddc6"
+    },
+    "ja.gif": {
+      "bytes": 2377895,
+      "sha256": "fdce2eea32626c3a5d4f476afa214638880265683258be52be101ead55b569f3"
+    },
+    "ja.webp": {
+      "bytes": 20848,
+      "sha256": "16e72102e225908eda76fcd8f7c8fa3f330f82a3a5d6f68d1e4e3e224d1ed81a"
+    },
+    "ko.mp4": {
+      "bytes": 2881522,
+      "sha256": "60b3e2f47416aab1eab2f9272d57f84bb046104024541208a82001bfc55cc755"
+    },
+    "ko.gif": {
+      "bytes": 2305096,
+      "sha256": "3e01b3ba2b103d254dd44cfa848b5b896122d9d09643d8db25254070947d2f72"
+    },
+    "ko.webp": {
+      "bytes": 19054,
+      "sha256": "726f31faaadfe50ad6b5bff7cb8c8758237fd05af45ace19a13270ee1751b935"
+    },
+    "fr.mp4": {
+      "bytes": 3021331,
+      "sha256": "2ed24c1a515182a6e4be8b09382e591176dd526d29afe3ea50f4f7f0a307e9d5"
+    },
+    "fr.gif": {
+      "bytes": 2293194,
+      "sha256": "a9ccb75cc307a568d0b84531716c2602f02e4d62d16c86676c3236fd49dde8f7"
+    },
+    "fr.webp": {
+      "bytes": 21136,
+      "sha256": "aff9e2751a4fc1f6ce00b1cc4c874d737a0566fb996abc2c68730d371c717d88"
+    },
+    "it.mp4": {
+      "bytes": 2967722,
+      "sha256": "feafc36f69f84b05dd002c918c308a385555b189e3b0f4212b6cff88c0b6ccac"
+    },
+    "it.gif": {
+      "bytes": 2252951,
+      "sha256": "10e5581c890d53b4dfb17b0e3f62c06d6a8999e9fbc49b1ca8a370ace51ec414"
+    },
+    "it.webp": {
+      "bytes": 20874,
+      "sha256": "7461241a4eb3d9127fda0fe613a3f5f265c6fc7305b7b32841f2e0cdd0ca7112"
+    },
+    "de.mp4": {
+      "bytes": 3013292,
+      "sha256": "f6018df52b9a913ccc6f26b391130d3c7aee5c20b0cbf42d47e7fc7d40faa58a"
+    },
+    "de.gif": {
+      "bytes": 2311268,
+      "sha256": "26bcfc0f657bec3dd92903d8e63890d6f5cd53fdc3bb47f1d77e241b9c990de6"
+    },
+    "de.webp": {
+      "bytes": 20838,
+      "sha256": "c4254ff25434e15a5c12103384f306805976ef7efe1b541b68895dee5215a5fe"
+    },
+    "ru.mp4": {
+      "bytes": 3020796,
+      "sha256": "7d5604b078530a56077f74f4dd7eddc59e3a1ab01256e834377ea1ea775c71dd"
+    },
+    "ru.gif": {
+      "bytes": 2273178,
+      "sha256": "d8aff9550d0d2c78c04e688c1f92875c84d412f7b3a567f0b3e6035f5f0a76b8"
+    },
+    "ru.webp": {
+      "bytes": 22184,
+      "sha256": "d5285bf6bc2c1374bc21fe3b6eb63d7911add3f37d0caf24fdf75a30c4888187"
+    }
+  }
+}

@@ -12,7 +12,7 @@ macOS, Linux, Windows의 **Zotero 7–10**을 지원합니다.
 [문서 목록](docs/README.md) ·
 [릴리스](https://github.com/ZorroStardust/zotero-vim-plus/releases)
 
-[![Zotero Vim Plus 무음 시연](BriefDemoVideo.gif)](BriefDemoVideo.gif)
+[![Zotero Vim Plus 무음 시연](https://zorrostardust.github.io/zotero-vim-plus/assets/demo/ko.gif)](https://zorrostardust.github.io/zotero-vim-plus/assets/demo/ko.gif)
 
 ## 설치
 

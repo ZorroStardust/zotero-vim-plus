@@ -12,7 +12,7 @@ macOS、Linux、Windows の **Zotero 7～10** に対応しています。
 [ドキュメント一覧](docs/README.md) ·
 [リリース](https://github.com/ZorroStardust/zotero-vim-plus/releases)
 
-[![Zotero Vim Plus の無音デモ](BriefDemoVideo.gif)](BriefDemoVideo.gif)
+[![Zotero Vim Plus の無音デモ](https://zorrostardust.github.io/zotero-vim-plus/assets/demo/ja.gif)](https://zorrostardust.github.io/zotero-vim-plus/assets/demo/ja.gif)
 
 ## インストール
 

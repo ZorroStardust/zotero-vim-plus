@@ -12,7 +12,7 @@ Le [site officiel de Zotero Vim Plus](https://zorrostardust.github.io/zotero-vim
 [Documentation](docs/README.md) ·
 [Versions](https://github.com/ZorroStardust/zotero-vim-plus/releases)
 
-[![Démonstration de Zotero Vim Plus sans son](BriefDemoVideo.gif)](BriefDemoVideo.gif)
+[![Démonstration de Zotero Vim Plus sans son](https://zorrostardust.github.io/zotero-vim-plus/assets/demo/fr.gif)](https://zorrostardust.github.io/zotero-vim-plus/assets/demo/fr.gif)
 
 ## Installation
 

@@ -3,6 +3,9 @@ layout: base
 body_class: home-page
 ---
 {% assign locale = site.data.locales[page.lang] %}
+{% assign demo_path = '/assets/demo/' | append: page.lang %}
+{% assign demo_video = demo_path | append: '.mp4' | relative_url %}
+{% assign demo_poster = demo_path | append: '.webp' | relative_url %}
 <section class="shell hero">
   <div class="hero-copy">
     <h1>{{ locale.headline | escape }}</h1>
@@ -16,15 +19,18 @@ body_class: home-page
   <figure class="demo" data-demo>
     <div class="demo-toolbar">
       <span class="demo-title"><img src="{{ '/assets/logo.png' | relative_url }}" alt="" width="22" height="22">Zotero Vim Plus</span>
-      <a class="demo-play" href="https://raw.githubusercontent.com/ZorroStardust/zotero-vim-plus/main/BriefDemoVideo.gif" data-demo-play data-pause="{{ locale.stop | escape }}" data-error="{{ locale.demo_error | escape }}">
+      <a class="demo-play" href="{{ demo_video }}" data-demo-play data-stop="{{ locale.stop | escape }}" data-error="{{ locale.demo_error | escape }}">
         <span class="play-symbol" aria-hidden="true"></span><span data-demo-label>{{ locale.play | escape }}</span>
       </a>
     </div>
     <div class="demo-window">
-      <img class="demo-poster" src="{{ '/assets/pdf-demo.webp' | relative_url }}" alt="{{ locale.demo_alt | escape }}" width="650" height="327" fetchpriority="high">
+      <video controls playsinline preload="none" poster="{{ demo_poster }}" width="800" height="450" aria-label="{{ locale.demo_caption | escape }}">
+        <source src="{{ demo_video }}" type="video/mp4">
+        <a href="{{ demo_video }}">{{ locale.play | escape }}</a>
+      </video>
+      <p class="demo-error" aria-live="polite" data-demo-status></p>
     </div>
-    <figcaption class="demo-caption"><span>{{ locale.demo_caption | escape }}</span><span><kbd>v</kbd> <kbd>z</kbd><kbd>y</kbd></span></figcaption>
-    <p class="visually-hidden" aria-live="polite" data-demo-status></p>
+    <figcaption class="demo-caption">{{ locale.demo_caption | escape }}</figcaption>
   </figure>
 </section>
 

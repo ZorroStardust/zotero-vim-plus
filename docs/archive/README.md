@@ -13,7 +13,7 @@ annotate, search and edit rich-text notes without touching the mouse.
 
 Vibe coded with Claude Sonnet 4.5.
 
-![Brief Demo Video (no audio)](../../BriefDemoVideo.gif)
+![Brief Demo Video (no audio)](https://raw.githubusercontent.com/ZorroStardust/zotero-vim-plus/v2.0.0/BriefDemoVideo.gif)
 
 ---
 

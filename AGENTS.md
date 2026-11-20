@@ -154,5 +154,13 @@ see [Zotero built-in shortcut conflicts (Read Aloud)](docs/development.md#zotero
   or browser APIs not available in Gecko.
 - **No external dependencies.** Do not add npm packages, CDN scripts, or external libraries.
 - **No TypeScript.** The codebase is plain JavaScript.
-- **No CI.** There are no automated checks. Code quality is maintained manually.
+- **Plugin testing is manual.** The Pages workflow only builds and deploys the website.
 - **No pre-commit hooks.** Linting is optional and manual.
+
+## Promotional Media
+
+On the maintainer's workstation, generate and keep editable promotional media in
+`/home/zorro/my_projects/zotero-vim-plus-promo`. Publish MP4, GIF, and WebP exports as versioned Release attachments in
+`ZorroStardust/zotero-vim-plus-media`. Update the tag and checksums in
+`docs/_data/demo_media.json`. The Pages workflow copies the verified files into
+the deployed site for the website player and README images.

@@ -12,7 +12,7 @@
 [Документация](docs/README.md) ·
 [Выпуски](https://github.com/ZorroStardust/zotero-vim-plus/releases)
 
-[![Демонстрация Zotero Vim Plus без звука](BriefDemoVideo.gif)](BriefDemoVideo.gif)
+[![Демонстрация Zotero Vim Plus без звука](https://zorrostardust.github.io/zotero-vim-plus/assets/demo/ru.gif)](https://zorrostardust.github.io/zotero-vim-plus/assets/demo/ru.gif)
 
 ## Установка
 

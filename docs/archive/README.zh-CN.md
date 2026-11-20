@@ -13,7 +13,7 @@
 
 由 Claude Sonnet 4.5 以 vibe coding 方式编写。
 
-![简短演示视频（无音频）](../../BriefDemoVideo.gif)
+![简短演示视频（无音频）](https://raw.githubusercontent.com/ZorroStardust/zotero-vim-plus/v2.0.0/BriefDemoVideo.gif)
 
 ---
 

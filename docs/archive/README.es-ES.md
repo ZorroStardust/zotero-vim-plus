@@ -13,7 +13,7 @@ Zotero 7–10. Navega, anota, busca y edita notas con formato sin usar el ratón
 
 Programado con emoción por Claude Sonnet 4.5.
 
-![Vídeo de demostración breve (sin audio)](../../BriefDemoVideo.gif)
+![Vídeo de demostración breve (sin audio)](https://raw.githubusercontent.com/ZorroStardust/zotero-vim-plus/v2.0.0/BriefDemoVideo.gif)
 
 ---
 

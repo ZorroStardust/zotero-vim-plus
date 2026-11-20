@@ -15,7 +15,7 @@
 [文档目录](docs/README.md) ·
 [发布记录](https://github.com/ZorroStardust/zotero-vim-plus/releases)
 
-[![Zotero Vim Plus 无声演示](BriefDemoVideo.gif)](BriefDemoVideo.gif)
+[![Zotero Vim Plus 无声演示](https://zorrostardust.github.io/zotero-vim-plus/assets/demo/zh-CN.gif)](https://zorrostardust.github.io/zotero-vim-plus/assets/demo/zh-CN.gif)
 
 ## 安装
 
